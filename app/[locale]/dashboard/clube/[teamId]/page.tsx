@@ -139,9 +139,10 @@ export default async function ClubDetailPage({
                   {lastFixtures.map((fx) => {
                     const result = matchResult(fx, teamId);
                     return (
-                      <div
+                      <Link
                         key={fx.fixture.id}
-                        className="rounded-lg border border-border bg-background p-3 text-sm"
+                        href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                        className="block rounded-lg border border-border bg-background p-3 text-sm transition-colors hover:border-accent"
                       >
                         <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
                           <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
@@ -168,7 +169,7 @@ export default async function ClubDetailPage({
                             </span>
                           }
                         />
-                      </div>
+                      </Link>
                     );
                   })}
                 </div>

@@ -5,6 +5,7 @@ import {
   fetchSquad,
   fetchNextFixtures,
   fetchLastFixtures,
+  fetchTeamSeasonFixtures,
   fetchCountries,
   fetchTeamsByCountry,
   fetchLeaguesByTeam,
@@ -16,6 +17,15 @@ import {
   fetchHeadToHead,
   fetchPlayerProfile,
   fetchAllPlayersStatistics,
+  fetchSidelined,
+  fetchPlayerTransfers,
+  fetchTrophies,
+  fetchFixturePlayers,
+  fetchFixtureById,
+  fetchFixtureEvents,
+  fetchFixtureLineups,
+  fetchFixtureStatistics,
+  fetchPredictions,
   type TeamSearchResult,
   type SquadResponse,
   type Fixture,
@@ -28,6 +38,14 @@ import {
   type TeamStatistics,
   type PlayerProfile,
   type PlayerSeasonStats,
+  type Sidelined,
+  type Trophy,
+  type FixturePlayersResponse,
+  type FixtureDetail,
+  type FixtureEvent,
+  type FixtureLineup,
+  type FixtureTeamStatistics,
+  type FixturePrediction,
 } from "./client";
 
 const TTL_MS = {
@@ -44,6 +62,13 @@ const TTL_MS = {
   teamStatistics: 24 * 60 * 60 * 1000,
   headToHead: 24 * 60 * 60 * 1000,
   playerProfile: 90 * 24 * 60 * 60 * 1000,
+  sidelined: 7 * 24 * 60 * 60 * 1000,
+  playerTransfers: 7 * 24 * 60 * 60 * 1000,
+  trophies: 30 * 24 * 60 * 60 * 1000,
+  fixturePlayers: 30 * 24 * 60 * 60 * 1000,
+  seasonFixtures: 6 * 60 * 60 * 1000,
+  fixtureDetail: 6 * 60 * 60 * 1000,
+  predictions: 6 * 60 * 60 * 1000,
 };
 
 async function cached<T>(
@@ -98,6 +123,14 @@ export const getNextFixtures = (teamId: number) =>
 export const getLastFixtures = (teamId: number) =>
   cached<Fixture[]>(`team:${teamId}:fixtures:last`, teamId, TTL_MS.fixtures, () =>
     fetchLastFixtures(teamId),
+  );
+
+export const getTeamSeasonFixtures = (teamId: number, season: number) =>
+  cached<Fixture[]>(
+    `team:${teamId}:${season}:fixtures:all`,
+    teamId,
+    TTL_MS.seasonFixtures,
+    () => fetchTeamSeasonFixtures(teamId, season),
   );
 
 export const getTeamLeague = (teamId: number) =>
@@ -158,6 +191,54 @@ export const getPlayersStatistics = (teamId: number, season: number) =>
 export const getPlayerProfile = (playerId: number) =>
   cached<PlayerProfile[]>(`player:${playerId}:profile`, null, TTL_MS.playerProfile, () =>
     fetchPlayerProfile(playerId),
+  );
+
+export const getSidelined = (playerId: number) =>
+  cached<Sidelined[]>(`player:${playerId}:sidelined`, null, TTL_MS.sidelined, () =>
+    fetchSidelined(playerId),
+  );
+
+export const getPlayerTransfers = (playerId: number) =>
+  cached<TeamTransfer[]>(`player:${playerId}:transfers`, null, TTL_MS.playerTransfers, () =>
+    fetchPlayerTransfers(playerId),
+  );
+
+export const getTrophies = (playerId: number) =>
+  cached<Trophy[]>(`player:${playerId}:trophies`, null, TTL_MS.trophies, () =>
+    fetchTrophies(playerId),
+  );
+
+export const getFixturePlayers = (fixtureId: number) =>
+  cached<FixturePlayersResponse[]>(
+    `fixture:${fixtureId}:players`,
+    null,
+    TTL_MS.fixturePlayers,
+    () => fetchFixturePlayers(fixtureId),
+  );
+
+export const getFixtureById = (fixtureId: number) =>
+  cached<FixtureDetail[]>(`fixture:${fixtureId}:detail`, null, TTL_MS.fixtureDetail, () =>
+    fetchFixtureById(fixtureId),
+  );
+
+export const getFixtureEvents = (fixtureId: number) =>
+  cached<FixtureEvent[]>(`fixture:${fixtureId}:events`, null, TTL_MS.fixturePlayers, () =>
+    fetchFixtureEvents(fixtureId),
+  );
+
+export const getFixtureLineups = (fixtureId: number) =>
+  cached<FixtureLineup[]>(`fixture:${fixtureId}:lineups`, null, TTL_MS.fixturePlayers, () =>
+    fetchFixtureLineups(fixtureId),
+  );
+
+export const getFixtureStatistics = (fixtureId: number) =>
+  cached<FixtureTeamStatistics[]>(`fixture:${fixtureId}:stats`, null, TTL_MS.fixturePlayers, () =>
+    fetchFixtureStatistics(fixtureId),
+  );
+
+export const getPredictions = (fixtureId: number) =>
+  cached<FixturePrediction[]>(`fixture:${fixtureId}:predictions`, null, TTL_MS.predictions, () =>
+    fetchPredictions(fixtureId),
   );
 
 /** Picks the team's current domestic league + season (favors "League" over "Cup"). */

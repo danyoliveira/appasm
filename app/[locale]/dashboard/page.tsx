@@ -235,9 +235,10 @@ export default async function DashboardOverviewPage({
                     <h3 className="text-sm font-semibold text-muted">{t("headToHeadTitle")}</h3>
                     <div className="mt-2 space-y-2">
                       {headToHead.map((fx) => (
-                        <div
+                        <Link
                           key={fx.fixture.id}
-                          className="rounded-lg border border-border bg-background p-2.5 text-sm"
+                          href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                          className="block rounded-lg border border-border bg-background p-2.5 text-sm transition-colors hover:border-accent"
                         >
                           <div className="text-xs text-muted">
                             {new Date(fx.fixture.date).toLocaleDateString(locale)}
@@ -246,7 +247,7 @@ export default async function DashboardOverviewPage({
                             {fx.teams.home.name} {fx.goals.home ?? "-"} -{" "}
                             {fx.goals.away ?? "-"} {fx.teams.away.name}
                           </div>
-                        </div>
+                        </Link>
                       ))}
                     </div>
                   </div>

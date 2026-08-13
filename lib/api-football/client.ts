@@ -125,6 +125,13 @@ export function fetchLastFixtures(teamId: number, count = 5) {
   return callApiFootball<Fixture[]>("/fixtures", { team: teamId, last: count });
 }
 
+// Every fixture for the team in a season (all competitions, past + future) —
+// used to find every match a specific player featured in, not just the
+// last few.
+export function fetchTeamSeasonFixtures(teamId: number, season: number) {
+  return callApiFootball<Fixture[]>("/fixtures", { team: teamId, season });
+}
+
 export interface TeamLeague {
   league: { id: number; name: string; type: string; logo: string };
   country: { name: string; flag: string | null };
@@ -226,6 +233,9 @@ export interface PlayerProfile {
     age: number | null;
     nationality: string | null;
     photo: string;
+    birth: { date: string | null; place: string | null; country: string | null };
+    height: string | null;
+    weight: string | null;
   };
 }
 
@@ -237,14 +247,167 @@ export interface PlayerSeasonStats {
   player: { id: number; name: string };
   statistics: {
     team: { id: number };
-    games: { minutes: number | null; position: string };
+    league: { id: number; name: string; logo: string; season: number };
+    games: {
+      appearences: number | null;
+      lineups: number | null;
+      minutes: number | null;
+      position: string;
+      rating: string | null;
+      captain: boolean;
+    };
+    shots: { total: number | null; on: number | null };
     goals: {
       total: number | null;
       assists: number | null;
       saves: number | null;
       conceded: number | null;
     };
+    passes: { total: number | null; key: number | null; accuracy: number | null };
+    tackles: { total: number | null; blocks: number | null; interceptions: number | null };
+    duels: { total: number | null; won: number | null };
+    dribbles: { attempts: number | null; success: number | null };
+    fouls: { drawn: number | null; committed: number | null };
+    cards: { yellow: number | null; yellowred: number | null; red: number | null };
   }[];
+}
+
+export interface FixturePlayersResponse {
+  team: { id: number };
+  players: {
+    player: { id: number; name: string; photo: string };
+    statistics: {
+      games: {
+        minutes: number | null;
+        number: number | null;
+        position: string;
+        rating: string | null;
+        substitute: boolean;
+      };
+      goals: { total: number | null; assists: number | null; saves: number | null };
+      cards: { yellow: number | null; red: number | null };
+    }[];
+  }[];
+}
+
+export function fetchFixturePlayers(fixtureId: number) {
+  return callApiFootball<FixturePlayersResponse[]>("/fixtures/players", { fixture: fixtureId });
+}
+
+export interface FixtureDetail {
+  fixture: {
+    id: number;
+    date: string;
+    venue: { name: string | null; city: string | null };
+    referee: string | null;
+    status: { long: string; short: string; elapsed: number | null };
+  };
+  league: { id: number; name: string; logo: string; round: string };
+  teams: {
+    home: { id: number; name: string; logo: string; winner: boolean | null };
+    away: { id: number; name: string; logo: string; winner: boolean | null };
+  };
+  goals: { home: number | null; away: number | null };
+}
+
+export function fetchFixtureById(fixtureId: number) {
+  return callApiFootball<FixtureDetail[]>("/fixtures", { id: fixtureId });
+}
+
+export interface FixtureEvent {
+  time: { elapsed: number; extra: number | null };
+  team: { id: number; name: string; logo: string };
+  player: { id: number | null; name: string | null };
+  assist: { id: number | null; name: string | null };
+  type: string;
+  detail: string;
+  comments: string | null;
+}
+
+export function fetchFixtureEvents(fixtureId: number) {
+  return callApiFootball<FixtureEvent[]>("/fixtures/events", { fixture: fixtureId });
+}
+
+export interface LineupPlayer {
+  player: {
+    id: number;
+    name: string;
+    number: number;
+    pos: string | null;
+    grid: string | null;
+  };
+}
+
+export interface FixtureLineup {
+  team: { id: number; name: string; logo: string };
+  coach: { id: number; name: string; photo: string | null };
+  formation: string;
+  startXI: LineupPlayer[];
+  substitutes: LineupPlayer[];
+}
+
+export function fetchFixtureLineups(fixtureId: number) {
+  return callApiFootball<FixtureLineup[]>("/fixtures/lineups", { fixture: fixtureId });
+}
+
+export interface FixtureTeamStatistics {
+  team: { id: number; name: string; logo: string };
+  statistics: { type: string; value: string | number | null }[];
+}
+
+export function fetchFixtureStatistics(fixtureId: number) {
+  return callApiFootball<FixtureTeamStatistics[]>("/fixtures/statistics", {
+    fixture: fixtureId,
+  });
+}
+
+export interface FixturePrediction {
+  predictions: {
+    winner: { id: number | null; name: string | null };
+    advice: string | null;
+    percent: { home: string; draw: string; away: string };
+  };
+  teams: {
+    home: { id: number; name: string; logo: string };
+    away: { id: number; name: string; logo: string };
+  };
+  comparison: {
+    form: { home: string; away: string };
+    att: { home: string; away: string };
+    def: { home: string; away: string };
+    h2h: { home: string; away: string };
+    goals: { home: string; away: string };
+    total: { home: string; away: string };
+  };
+}
+
+export function fetchPredictions(fixtureId: number) {
+  return callApiFootball<FixturePrediction[]>("/predictions", { fixture: fixtureId });
+}
+
+export interface Sidelined {
+  type: string;
+  start: string;
+  end: string;
+}
+
+export function fetchSidelined(playerId: number) {
+  return callApiFootball<Sidelined[]>("/sidelined", { player: playerId });
+}
+
+export function fetchPlayerTransfers(playerId: number) {
+  return callApiFootball<TeamTransfer[]>("/transfers", { player: playerId });
+}
+
+export interface Trophy {
+  league: string;
+  country: string;
+  season: string;
+  place: string;
+}
+
+export function fetchTrophies(playerId: number) {
+  return callApiFootball<Trophy[]>("/trophies", { player: playerId });
 }
 
 // /players is paginated (20 per page) when queried by team+season. Two pages

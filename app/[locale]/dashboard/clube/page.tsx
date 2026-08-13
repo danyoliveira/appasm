@@ -88,13 +88,14 @@ export default async function ClubPage({
         for (const p of playersStats) {
           const totals = p.statistics.reduce(
             (acc, s) => ({
+              appearances: acc.appearances + (s.games.appearences ?? 0),
               minutes: acc.minutes + (s.games.minutes ?? 0),
               goals: acc.goals + (s.goals.total ?? 0),
               assists: acc.assists + (s.goals.assists ?? 0),
               saves: acc.saves + (s.goals.saves ?? 0),
               conceded: acc.conceded + (s.goals.conceded ?? 0),
             }),
-            { minutes: 0, goals: 0, assists: 0, saves: 0, conceded: 0 },
+            { appearances: 0, minutes: 0, goals: 0, assists: 0, saves: 0, conceded: 0 },
           );
           playerStatsById.set(p.player.id, totals);
         }
@@ -112,8 +113,8 @@ export default async function ClubPage({
     sample.forEach((player, i) => {
       const isGoalkeeper = player.position === "Goalkeeper";
       playerStatsById.set(player.id, isGoalkeeper
-        ? { minutes: 450, goals: 0, assists: 0, saves: 12 + i, conceded: 3 }
-        : { minutes: 380 - i * 40, goals: 3 - i, assists: 2, saves: 0, conceded: 0 });
+        ? { appearances: 5, minutes: 450, goals: 0, assists: 0, saves: 12 + i, conceded: 3 }
+        : { appearances: 5 - i, minutes: 380 - i * 40, goals: 3 - i, assists: 2, saves: 0, conceded: 0 });
     });
   }
 
@@ -203,9 +204,10 @@ export default async function ClubPage({
                   {lastFixtures.slice(0, 3).map((fx) => {
                     const result = matchResult(fx, teamId);
                     return (
-                      <div
+                      <Link
                         key={fx.fixture.id}
-                        className="rounded-lg border border-border bg-surface p-3 text-sm"
+                        href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                        className="block rounded-lg border border-border bg-surface p-3 text-sm transition-colors hover:border-accent"
                       >
                         <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
                           <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
@@ -232,7 +234,7 @@ export default async function ClubPage({
                             </span>
                           }
                         />
-                      </div>
+                      </Link>
                     );
                   })}
                 </div>
@@ -267,7 +269,11 @@ export default async function ClubPage({
 
           <section className="mt-10">
             <h2 className="text-lg font-semibold">
-              {t("squadTitleWithCount", { count: squad?.[0]?.players.length ?? 0 })}
+              {t("squadTitleWithCount", {
+                count: (squad?.[0]?.players ?? []).filter(
+                  (p) => !availabilityByPlayerId.get(p.id)?.excluded,
+                ).length,
+              })}
             </h2>
             <div className="mt-4">
               <SquadSection

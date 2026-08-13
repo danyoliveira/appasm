@@ -187,6 +187,35 @@ export async function setPlayerAvailability(
   if (error) throw new Error(error.message);
 }
 
+export async function addPlayerNote(teamId: number, playerId: number, content: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase
+    .from("player_notes")
+    .insert({ team_id: teamId, player_id: playerId, content });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function updatePlayerNote(noteId: string, content: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase
+    .from("player_notes")
+    .update({ content, updated_at: new Date().toISOString() })
+    .eq("id", noteId);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function deletePlayerNote(noteId: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase.from("player_notes").delete().eq("id", noteId);
+
+  if (error) throw new Error(error.message);
+}
+
 export async function setPlayerExcluded(
   teamId: number,
   playerId: number,
