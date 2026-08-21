@@ -6,10 +6,15 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { routing } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
+import { cookies } from "next/headers";
 import Container from "@/components/Container";
 import Logo from "@/components/Logo";
 import ThemeToggle from "@/components/ThemeToggle";
 import LocaleSwitcher from "@/components/LocaleSwitcher";
+import CompetitionSwitcher from "./CompetitionSwitcher";
+import CompetitionInfoButton from "./CompetitionInfoButton";
+import { createClient } from "@/lib/supabase/server";
+import { getCurrentCompetitions, COMPETITION_FILTER_COOKIE } from "@/lib/api-football/teamStats";
 import "../globals.css";
 
 const geistSans = Geist({
@@ -53,6 +58,38 @@ export default async function LocaleLayout({
 
   setRequestLocale(locale);
   const t = await getTranslations({ locale, namespace: "common" });
+  const tDashboard = await getTranslations({ locale, namespace: "dashboard" });
+
+  let competitionSwitcher: { competitions: { id: number; name: string }[]; selected: string } | null =
+    null;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      const { data: coachProfile } = await supabase
+        .from("profiles")
+        .select("api_football_team_id")
+        .eq("role", "coach")
+        .maybeSingle();
+      const teamId = coachProfile?.api_football_team_id ?? null;
+
+      if (teamId) {
+        const { allCompetitions } = await getCurrentCompetitions(teamId);
+        if (allCompetitions.length > 1) {
+          const store = await cookies();
+          competitionSwitcher = {
+            competitions: allCompetitions.map((c) => ({ id: c.league.id, name: c.league.name })),
+            selected: store.get(COMPETITION_FILTER_COOKIE)?.value ?? "all",
+          };
+        }
+      }
+    }
+  } catch {
+    // Header still renders fine without the competition switcher.
+  }
 
   return (
     <html
@@ -75,6 +112,25 @@ export default async function LocaleLayout({
                 <Logo />
               </Link>
               <div className="flex items-center gap-4">
+                {competitionSwitcher && (
+                  <div className="flex items-center gap-2">
+                    <CompetitionSwitcher
+                      key={competitionSwitcher.selected}
+                      competitions={competitionSwitcher.competitions}
+                      selected={competitionSwitcher.selected}
+                      allLabel={tDashboard("allCompetitionsLabel")}
+                    />
+                    <CompetitionInfoButton
+                      label={tDashboard("competitionInfoLabel")}
+                      title={
+                        competitionSwitcher.competitions.find(
+                          (c) => String(c.id) === competitionSwitcher!.selected,
+                        )?.name ?? tDashboard("allCompetitionsLabel")
+                      }
+                      body={tDashboard("competitionDataDisclaimer")}
+                    />
+                  </div>
+                )}
                 <LocaleSwitcher label={t("languageLabel")} />
                 <ThemeToggle
                   toLightLabel={t("themeToggleToLight")}

@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { useLocale } from "next-intl";
+import { Link } from "@/i18n/navigation";
 
 export interface TransferRow {
   key: string;
+  playerId: number;
   playerName: string;
   photo?: string;
+  otherClubId: number;
   otherClubName: string;
   otherClubLogo: string;
   nationality?: string | null;
@@ -42,17 +45,27 @@ export default function TransferList({
           key={row.key}
           className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3 text-sm"
         >
-          {row.photo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={row.photo} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
-          ) : (
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-background text-xs font-medium text-muted">
-              {row.playerName.charAt(0).toUpperCase()}
-            </div>
-          )}
+          <Link href={`/dashboard/clube/jogador/${row.playerId}`} className="shrink-0">
+            {row.photo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={row.photo} alt="" className="h-9 w-9 rounded-full object-cover" />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-xs font-medium text-muted">
+                {row.playerName.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </Link>
           <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{row.playerName}</div>
-            <div className="flex items-center gap-1.5 text-xs text-muted">
+            <Link
+              href={`/dashboard/clube/jogador/${row.playerId}`}
+              className="block truncate font-medium hover:text-accent"
+            >
+              {row.playerName}
+            </Link>
+            <Link
+              href={`/dashboard/clube/${row.otherClubId}`}
+              className="flex items-center gap-1.5 text-xs text-muted hover:text-accent"
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={row.otherClubLogo}
@@ -64,7 +77,7 @@ export default function TransferList({
                 {row.nationality && ` · ${row.nationality}`}
                 {row.age != null && `, ${row.age}`}
               </span>
-            </div>
+            </Link>
           </div>
           <div className="shrink-0 text-right text-xs">
             <div className="font-medium text-foreground">{row.type ?? "—"}</div>

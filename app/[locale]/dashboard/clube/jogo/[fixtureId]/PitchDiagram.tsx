@@ -1,5 +1,6 @@
 import type { FixtureEvent, FixtureLineup } from "@/lib/api-football/client";
 import type { Locale } from "@/i18n/routing";
+import { Link } from "@/i18n/navigation";
 import { eventIcon, eventTooltipLine, playerEvents } from "./eventUtils";
 
 function parseGrid(grid: string | null): [number, number] | null {
@@ -56,8 +57,9 @@ function TeamPlayers({
             const isGK = p.player.pos === "G";
             const evts = playerEvents(p.player.id, events);
             return (
-              <div
+              <Link
                 key={p.player.id}
+                href={`/dashboard/clube/jogador/${p.player.id}`}
                 className="group absolute z-0 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center hover:z-50"
                 style={{ left: `${horizontalPct}%`, top: `${verticalPct}%` }}
               >
@@ -92,7 +94,7 @@ function TeamPlayers({
                     ))}
                   </div>
                 )}
-              </div>
+              </Link>
             );
           }),
       )}
@@ -150,14 +152,17 @@ function PenaltyArea({ position }: { position: "top" | "bottom" }) {
 
 function TeamLabel({ lineup, align }: { lineup: FixtureLineup; align: "left" | "right" }) {
   return (
-    <div className={`flex items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
+    <Link
+      href={`/dashboard/clube/${lineup.team.id}`}
+      className={`flex items-center gap-2 hover:text-accent ${align === "right" ? "flex-row-reverse text-right" : ""}`}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={lineup.team.logo} alt="" className="h-6 w-6 shrink-0 object-contain" />
       <div className="min-w-0">
         <p className="truncate text-xs font-semibold">{lineup.team.name}</p>
         <p className="text-[11px] text-muted">{lineup.formation}</p>
       </div>
-    </div>
+    </Link>
   );
 }
 

@@ -1,17 +1,27 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
+import { cookies } from "next/headers";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import {
   getTeamInfo,
   getTransfers,
-  getLastFixtures,
-  getNextFixtures,
+  getTeamSeasonFixtures,
   getSquad,
   getPlayerProfile,
+  getCountries,
 } from "@/lib/api-football/cache";
-import type { Fixture } from "@/lib/api-football/client";
+import {
+  getCurrentCompetitions,
+  resolveSelectedCompetition,
+  COMPETITION_FILTER_COOKIE,
+} from "@/lib/api-football/teamStats";
 import TransferList, { type TransferRow } from "./TransferList";
-import { matchResult, FixtureTeamsRow } from "../fixtureHelpers";
+import { toCalendarRow } from "../fixtureHelpers";
+import FixtureCalendar, { type CalendarRow } from "../FixtureCalendar";
+import OpponentSquadTable from "./OpponentSquadTable";
+import { buildFlagResolver } from "@/lib/api-football/flags";
+
+const NEW_SIGNING_WINDOW_DAYS = 180;
 
 export default async function ClubDetailPage({
   params,
@@ -25,19 +35,43 @@ export default async function ClubDetailPage({
 
   let teamInfo = null;
   let transfers: Awaited<ReturnType<typeof getTransfers>> = [];
-  let lastFixtures: Fixture[] = [];
-  let nextFixtures: Fixture[] = [];
+  let pastCalendarRows: CalendarRow[] = [];
+  let futureCalendarRows: CalendarRow[] = [];
   let squad: Awaited<ReturnType<typeof getSquad>> = [];
+  let countries: Awaited<ReturnType<typeof getCountries>> = [];
   let error = false;
 
   try {
-    [teamInfo, transfers, lastFixtures, nextFixtures, squad] = await Promise.all([
+    const [current, store] = await Promise.all([getCurrentCompetitions(teamId), cookies()]);
+    const selectedCompetitionId = resolveSelectedCompetition(
+      store.get(COMPETITION_FILTER_COOKIE)?.value,
+      current.allCompetitions,
+    );
+
+    let seasonFixtures: Awaited<ReturnType<typeof getTeamSeasonFixtures>> = [];
+    [teamInfo, transfers, seasonFixtures, squad, countries] = await Promise.all([
       getTeamInfo(teamId),
       getTransfers(teamId),
-      getLastFixtures(teamId),
-      getNextFixtures(teamId),
+      current.defaultSeason
+        ? getTeamSeasonFixtures(teamId, current.defaultSeason).catch(() => [])
+        : Promise.resolve([]),
       getSquad(teamId),
+      getCountries().catch(() => []),
     ]);
+
+    // "All competitions" (no specific selection) never includes friendlies.
+    const friendlyIds = new Set(current.friendlyCompetitions.map((c) => c.league.id));
+    const relevantFixtures = seasonFixtures.filter((fx) =>
+      selectedCompetitionId ? fx.league.id === selectedCompetitionId : !friendlyIds.has(fx.league.id),
+    );
+    const pastFixtures = relevantFixtures
+      .filter((fx) => fx.goals.home != null && fx.goals.away != null)
+      .sort((a, b) => new Date(b.fixture.date).getTime() - new Date(a.fixture.date).getTime());
+    const futureFixtures = relevantFixtures
+      .filter((fx) => fx.goals.home == null || fx.goals.away == null)
+      .sort((a, b) => new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime());
+    pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId));
+    futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId));
   } catch {
     error = true;
   }
@@ -49,6 +83,13 @@ export default async function ClubDetailPage({
   const squadPhotoByPlayerId = new Map(
     squad[0]?.players.map((p) => [p.id, p.photo]) ?? [],
   );
+
+  // Same recency window used for the "new signing" badge below — only
+  // transfers from that period are worth showing here, not the club's
+  // entire multi-year transfer history.
+  const now = new Date().getTime();
+  const isWithinNewSigningWindow = (date: string) =>
+    (now - new Date(date).getTime()) / (24 * 60 * 60 * 1000) <= NEW_SIGNING_WINDOW_DAYS;
 
   const seenTransferKeys = new Set<string>();
   const recentTransfers = transfers
@@ -63,19 +104,22 @@ export default async function ClubDetailPage({
       const key = `${transfer.playerId}|${transfer.playerName.trim().toLowerCase()}|${transfer.teams.in.id}|${transfer.teams.out.id}`;
       if (seenTransferKeys.has(key)) return false;
       seenTransferKeys.add(key);
-      return true;
+      return isWithinNewSigningWindow(transfer.date);
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // No cap here — the full list is handed to a client-side "show more"
-  // pager instead, so nothing from the transfer window gets cut off.
   const transfersIn = recentTransfers.filter((tr) => tr.teams.in.id === teamId);
   const transfersOut = recentTransfers.filter((tr) => tr.teams.out.id === teamId);
 
-  // Bio (photo, age, nationality) for every transferred player, one cached
-  // request each — free after the first visit (cached for 90 days).
+  // Bio (photo, age, nationality) for every transferred player and every
+  // current squad member (for the flag next to their name below), one
+  // cached request each — free after the first visit (cached for 90 days).
   const uniquePlayerIds = Array.from(
-    new Set([...transfersIn, ...transfersOut].map((tr) => tr.playerId)),
+    new Set([
+      ...transfersIn.map((tr) => tr.playerId),
+      ...transfersOut.map((tr) => tr.playerId),
+      ...(squad[0]?.players.map((p) => p.id) ?? []),
+    ]),
   );
   const profileEntries = await Promise.all(
     uniquePlayerIds.map((id) =>
@@ -86,12 +130,29 @@ export default async function ClubDetailPage({
   );
   const profileByPlayerId = new Map(profileEntries);
 
-  function toRow(transfer: (typeof transfersIn)[number], otherClub: { name: string; logo: string }): TransferRow {
+  const resolveFlagUrl = buildFlagResolver(countries);
+  const flagUrlByPlayerId = new Map(
+    Array.from(profileByPlayerId.entries()).map(([id, profile]) => [
+      id,
+      resolveFlagUrl(profile?.nationality),
+    ]),
+  );
+
+  // transfersIn is already limited to the new-signing window above, so
+  // every player in it qualifies for the badge.
+  const newSigningPlayerIds = new Set(transfersIn.map((tr) => tr.playerId));
+
+  function toRow(
+    transfer: (typeof transfersIn)[number],
+    otherClub: { id: number; name: string; logo: string },
+  ): TransferRow {
     const profile = profileByPlayerId.get(transfer.playerId);
     return {
       key: `${transfer.playerId}-${transfer.date}-${transfer.teams.in.id}-${transfer.teams.out.id}`,
+      playerId: transfer.playerId,
       playerName: transfer.playerName,
       photo: squadPhotoByPlayerId.get(transfer.playerId) ?? profile?.photo,
+      otherClubId: otherClub.id,
       otherClubName: otherClub.name,
       otherClubLogo: otherClub.logo,
       nationality: profile?.nationality,
@@ -103,6 +164,20 @@ export default async function ClubDetailPage({
 
   const transfersInRows = transfersIn.map((tr) => toRow(tr, tr.teams.out));
   const transfersOutRows = transfersOut.map((tr) => toRow(tr, tr.teams.in));
+
+  // Goalkeepers first, then tactical order (defence → attack), then name —
+  // same convention as the squad table on the coach's own club page.
+  const SQUAD_POSITION_ORDER: Record<string, number> = {
+    Goalkeeper: 0,
+    Defender: 1,
+    Midfielder: 2,
+    Attacker: 3,
+  };
+  const squadPlayers = [...(squad[0]?.players ?? [])].sort((a, b) => {
+    const posDiff = (SQUAD_POSITION_ORDER[a.position] ?? 99) - (SQUAD_POSITION_ORDER[b.position] ?? 99);
+    if (posDiff !== 0) return posDiff;
+    return a.name.localeCompare(b.name);
+  });
 
   return (
     <div>
@@ -129,78 +204,39 @@ export default async function ClubDetailPage({
 
       {!error && (
         <>
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
-              <h2 className="text-lg font-semibold">{t("recentFormTitle")}</h2>
-              {lastFixtures.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {lastFixtures.map((fx) => {
-                    const result = matchResult(fx, teamId);
-                    return (
-                      <Link
-                        key={fx.fixture.id}
-                        href={`/dashboard/clube/jogo/${fx.fixture.id}`}
-                        className="block rounded-lg border border-border bg-background p-3 text-sm transition-colors hover:border-accent"
-                      >
-                        <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                          <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
-                          {result && (
-                            <span
-                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                                result === "W"
-                                  ? "bg-green-600"
-                                  : result === "L"
-                                    ? "bg-red-500"
-                                    : "bg-muted"
-                              }`}
-                            >
-                              {result}
-                            </span>
-                          )}
-                        </div>
-                        <FixtureTeamsRow
-                          home={fx.teams.home}
-                          away={fx.teams.away}
-                          center={
-                            <span className="font-semibold">
-                              {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                            </span>
-                          }
-                        />
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+          <section className="mt-8">
+            <h2 className="text-lg font-semibold">{t("fixtureCalendarTitle")}</h2>
+            <FixtureCalendar
+              past={pastCalendarRows}
+              future={futureCalendarRows}
+              locale={locale}
+              labels={{
+                dateTime: t("columnDateTime"),
+                opponent: t("columnOpponent"),
+                competition: t("columnCompetition"),
+                venue: t("columnVenue"),
+                result: t("columnResult"),
+                home: t("homeLabel"),
+                away: t("awayLabel"),
+                showMorePast: t("showMorePastButton"),
+                showMoreFuture: t("showMoreFutureButton"),
+                noFixturesFound: t("noFixturesFoundInCalendar"),
+              }}
+            />
+          </section>
 
-            <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
-              <h2 className="text-lg font-semibold">{t("fixturesTitle")}</h2>
-              {nextFixtures.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">{t("noUpcomingFixtures")}</p>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {nextFixtures.map((fx) => (
-                    <div
-                      key={fx.fixture.id}
-                      className="rounded-lg border border-border bg-background p-3 text-sm"
-                    >
-                      <div className="mb-1.5 text-xs text-muted">
-                        {new Date(fx.fixture.date).toLocaleDateString(locale)}
-                      </div>
-                      <FixtureTeamsRow
-                        home={fx.teams.home}
-                        away={fx.teams.away}
-                        center={<span className="text-xs text-muted">vs</span>}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
+          <section className="mt-10">
+            <h2 className="text-lg font-semibold">
+              {t("squadTitleWithCount", { count: squadPlayers.length })}
+            </h2>
+            <div className="mt-4">
+              <OpponentSquadTable
+                players={squadPlayers}
+                flagUrlByPlayerId={flagUrlByPlayerId}
+                newSigningPlayerIds={newSigningPlayerIds}
+              />
+            </div>
+          </section>
 
           <section className="mt-10">
             <h2 className="text-lg font-semibold">{t("transfersTitle")}</h2>

@@ -13,6 +13,16 @@ function DashboardIcon() {
   );
 }
 
+function PreparationIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" strokeWidth={1.75}>
+      <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" />
+      <path d="M8 9h8M8 13h5" stroke="currentColor" strokeLinecap="round" />
+      <path d="m14.5 16 1.5 1.5L19 14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ClubIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" strokeWidth={1.75}>
@@ -57,6 +67,12 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
   const navItems = [
     { href: "/dashboard", label: t("navDashboard"), icon: <DashboardIcon />, exact: true },
     { href: "/dashboard/clube", label: t("navClub"), icon: <ClubIcon />, exact: false },
+    {
+      href: "/dashboard/preparacoes",
+      label: t("navPreparation"),
+      icon: <PreparationIcon />,
+      exact: false,
+    },
     { href: "/dashboard/perfil", label: t("navProfile"), icon: <ProfileIcon />, exact: false },
   ];
 

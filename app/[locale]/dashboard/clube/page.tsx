@@ -1,20 +1,32 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
+import { cookies } from "next/headers";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   getTeamInfo,
   getSquad,
-  getNextFixtures,
-  getLastFixtures,
-  getCurrentLeagueAndSeason,
   getInjuries,
-  getTeamStatistics,
   getPlayersStatistics,
+  getTeamSeasonFixtures,
+  getCountries,
+  getPlayerProfile,
 } from "@/lib/api-football/cache";
-import type { Injury, TeamStatistics } from "@/lib/api-football/client";
-import { matchResult, FixtureTeamsRow } from "./fixtureHelpers";
+import {
+  getCurrentCompetitions,
+  combineTeamStats,
+  getStatsPerCompetition,
+  resolveSelectedCompetition,
+  COMPETITION_FILTER_COOKIE,
+} from "@/lib/api-football/teamStats";
+import { getFixtureAppearances } from "@/lib/api-football/verifyParticipation";
+import { buildFlagResolver } from "@/lib/api-football/flags";
+import type { Injury, TeamStatistics, TeamLeague } from "@/lib/api-football/client";
+import { toCalendarRow } from "./fixtureHelpers";
+import { translateInjuryType } from "./playerShared";
 import SeasonStatsGrid from "../SeasonStatsGrid";
+import FixtureCalendar, { type CalendarRow } from "./FixtureCalendar";
+import RefreshButton from "./RefreshButton";
 import SquadSection, {
   type AvailabilityInfo,
   type PendingInjury,
@@ -53,52 +65,154 @@ export default async function ClubPage({
 
   let teamInfo = null;
   let squad = null;
-  let fixtures = null;
-  let lastFixtures = null;
+  let pastCalendarRows: CalendarRow[] = [];
+  let futureCalendarRows: CalendarRow[] = [];
   let clubDataError = false;
+  let injuries: Injury[] = [];
+  let teamStats: TeamStatistics | null = null;
+  let competitions: TeamLeague[] = [];
+  let allCompetitions: TeamLeague[] = [];
+  let friendlyCompetitionIds = new Set<number>();
+  let selectedCompetitionId: number | null = null;
+  const playerStatsById = new Map<number, PlayerSeasonStat>();
+  const flagUrlByPlayerId = new Map<number, string | null>();
+
+  let defaultCompetition: TeamLeague | null = null;
+  let defaultSeason: number | null = null;
 
   if (teamId) {
     try {
-      [teamInfo, squad, fixtures, lastFixtures] = await Promise.all([
-        getTeamInfo(teamId),
-        getSquad(teamId),
-        getNextFixtures(teamId),
-        getLastFixtures(teamId),
-      ]);
+      [teamInfo, squad] = await Promise.all([getTeamInfo(teamId), getSquad(teamId)]);
     } catch {
       clubDataError = true;
     }
   }
 
-  let injuries: Injury[] = [];
-  let teamStats: TeamStatistics | null = null;
-  const playerStatsById = new Map<number, PlayerSeasonStat>();
+  if (teamId && !clubDataError && squad?.[0]?.players.length) {
+    try {
+      const squadPlayers = squad[0].players;
+      const [countries, profiles] = await Promise.all([
+        getCountries().catch(() => []),
+        Promise.all(squadPlayers.map((p) => getPlayerProfile(p.id).catch(() => []))),
+      ]);
+      const resolveFlagUrl = buildFlagResolver(countries);
+      squadPlayers.forEach((p, i) => {
+        const flag = resolveFlagUrl(profiles[i][0]?.player.nationality);
+        if (flag) flagUrlByPlayerId.set(p.id, flag);
+      });
+    } catch {
+      // Bonus data — silently skip if unavailable.
+    }
+  }
+
   if (teamId && !clubDataError) {
     try {
-      const current = await getCurrentLeagueAndSeason(teamId);
-      if (current) {
-        const [injuriesResult, teamStatsResult, playersStats] = await Promise.all([
-          getInjuries(teamId, current.season).catch(() => []),
-          getTeamStatistics(teamId, current.league.id, current.season).catch(() => null),
-          getPlayersStatistics(teamId, current.season).catch(() => []),
-        ]);
-        injuries = injuriesResult;
-        teamStats = teamStatsResult;
+      const result = await getCurrentCompetitions(teamId);
+      competitions = result.competitions;
+      allCompetitions = result.allCompetitions;
+      friendlyCompetitionIds = new Set(result.friendlyCompetitions.map((c) => c.league.id));
+      defaultCompetition = result.defaultCompetition;
+      defaultSeason = result.defaultSeason;
 
-        for (const p of playersStats) {
-          const totals = p.statistics.reduce(
-            (acc, s) => ({
-              appearances: acc.appearances + (s.games.appearences ?? 0),
-              minutes: acc.minutes + (s.games.minutes ?? 0),
-              goals: acc.goals + (s.goals.total ?? 0),
-              assists: acc.assists + (s.goals.assists ?? 0),
-              saves: acc.saves + (s.goals.saves ?? 0),
-              conceded: acc.conceded + (s.goals.conceded ?? 0),
-            }),
-            { appearances: 0, minutes: 0, goals: 0, assists: 0, saves: 0, conceded: 0 },
-          );
-          playerStatsById.set(p.player.id, totals);
+      const store = await cookies();
+      selectedCompetitionId = resolveSelectedCompetition(
+        store.get(COMPETITION_FILTER_COOKIE)?.value,
+        allCompetitions,
+      );
+    } catch {
+      // Bonus data — silently skip if unavailable.
+    }
+  }
+
+  if (teamId && !clubDataError && defaultCompetition && defaultSeason) {
+    try {
+      const [injuriesResult, playersStats, statsByCompetitionId, seasonFixtures] = await Promise.all([
+        getInjuries(teamId, defaultSeason).catch(() => []),
+        getPlayersStatistics(teamId, defaultSeason).catch(() => []),
+        getStatsPerCompetition(teamId, allCompetitions, defaultSeason),
+        getTeamSeasonFixtures(teamId, defaultSeason).catch(() => []),
+      ]);
+      injuries = injuriesResult;
+
+      // "All competitions" (no specific selection) never includes friendlies.
+      const relevantAllFixtures = seasonFixtures.filter((fx) =>
+        selectedCompetitionId
+          ? fx.league.id === selectedCompetitionId
+          : !friendlyCompetitionIds.has(fx.league.id),
+      );
+      const pastFixtures = relevantAllFixtures
+        .filter((fx) => fx.goals.home != null && fx.goals.away != null)
+        .sort((a, b) => new Date(b.fixture.date).getTime() - new Date(a.fixture.date).getTime());
+      const futureFixtures = relevantAllFixtures
+        .filter((fx) => fx.goals.home == null || fx.goals.away == null)
+        .sort((a, b) => new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime());
+      pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId));
+      futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId));
+
+      // "All competitions" never includes friendlies — only real
+      // competitions (League/Cup) get summed for the combined view.
+      const combinedStats = combineTeamStats(
+        competitions
+          .map((c) => statsByCompetitionId.get(c.league.id))
+          .filter((s): s is TeamStatistics => s != null),
+      );
+      teamStats = selectedCompetitionId
+        ? (statsByCompetitionId.get(selectedCompetitionId) ?? combinedStats)
+        : combinedStats;
+
+      for (const p of playersStats) {
+        const relevant = selectedCompetitionId
+          ? p.statistics.filter((s) => s.league.id === selectedCompetitionId)
+          : p.statistics.filter((s) => !friendlyCompetitionIds.has(s.league.id));
+        const totals = relevant.reduce(
+          (acc, s) => ({
+            appearances: acc.appearances + (s.games.appearences ?? 0),
+            minutes: acc.minutes + (s.games.minutes ?? 0),
+            goals: acc.goals + (s.goals.total ?? 0),
+            assists: acc.assists + (s.goals.assists ?? 0),
+            saves: acc.saves + (s.goals.saves ?? 0),
+            conceded: acc.conceded + (s.goals.conceded ?? 0),
+          }),
+          { appearances: 0, minutes: 0, goals: 0, assists: 0, saves: 0, conceded: 0 },
+        );
+        playerStatsById.set(p.player.id, totals);
+      }
+
+      // The bulk /players endpoint is sometimes stale/incomplete per
+      // competition (minutes/appearances can be wrong even after the
+      // by-id refetch in fetchAllPlayersStatistics). Verify against every
+      // season fixture's actual lineup/appearance data instead — one
+      // request per fixture (cached, shared across every player and this
+      // page), not per player, so it scales with fixtures, not squad size.
+      const appearancesPerFixture = await Promise.all(
+        pastFixtures.map((fx) => getFixtureAppearances(fx.fixture.id)),
+      );
+
+      const verifiedById = new Map<number, PlayerSeasonStat>();
+      for (const appearances of appearancesPerFixture) {
+        for (const [playerId, appearance] of appearances) {
+          const existing = verifiedById.get(playerId) ?? {
+            appearances: 0,
+            minutes: 0,
+            goals: 0,
+            assists: 0,
+            saves: 0,
+            conceded: 0,
+          };
+          verifiedById.set(playerId, {
+            appearances: existing.appearances + 1,
+            minutes: existing.minutes + appearance.minutes,
+            goals: existing.goals + appearance.goals,
+            assists: existing.assists + appearance.assists,
+            saves: existing.saves + appearance.saves,
+            conceded: existing.conceded + appearance.conceded,
+          });
         }
+      }
+
+      // Verified fixture data wins wherever it's available for a player.
+      for (const [playerId, verified] of verifiedById) {
+        playerStatsById.set(playerId, verified);
       }
     } catch {
       // Bonus data — silently skip if unavailable.
@@ -121,7 +235,7 @@ export default async function ClubPage({
   const injuriesByPlayerId = new Map<number, PendingInjury>(
     injuries.map((injury) => [
       injury.player.id,
-      { key: injury.player.reason, reason: injury.player.reason },
+      { key: injury.player.reason, reason: translateInjuryType(injury.player.reason, locale) },
     ]),
   );
 
@@ -139,6 +253,16 @@ export default async function ClubPage({
         excluded: row.excluded ?? false,
       });
     });
+  }
+
+  let lastUpdatedAt: string | null = null;
+  if (teamId) {
+    const { data: cacheRow } = await supabase
+      .from("api_football_cache")
+      .select("fetched_at")
+      .eq("cache_key", `team:${teamId}:squad`)
+      .maybeSingle();
+    lastUpdatedAt = cacheRow?.fetched_at ?? null;
   }
 
   return (
@@ -194,78 +318,26 @@ export default async function ClubPage({
             </section>
           )}
 
-          <div className="mt-10 grid gap-6 lg:grid-cols-2">
-            <section>
-              <h2 className="text-lg font-semibold">{t("recentFormTitle")}</h2>
-              {!lastFixtures || lastFixtures.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {lastFixtures.slice(0, 3).map((fx) => {
-                    const result = matchResult(fx, teamId);
-                    return (
-                      <Link
-                        key={fx.fixture.id}
-                        href={`/dashboard/clube/jogo/${fx.fixture.id}`}
-                        className="block rounded-lg border border-border bg-surface p-3 text-sm transition-colors hover:border-accent"
-                      >
-                        <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                          <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
-                          {result && (
-                            <span
-                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                                result === "W"
-                                  ? "bg-green-600"
-                                  : result === "L"
-                                    ? "bg-red-500"
-                                    : "bg-muted"
-                              }`}
-                            >
-                              {result}
-                            </span>
-                          )}
-                        </div>
-                        <FixtureTeamsRow
-                          home={fx.teams.home}
-                          away={fx.teams.away}
-                          center={
-                            <span className="font-semibold">
-                              {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                            </span>
-                          }
-                        />
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <h2 className="text-lg font-semibold">{t("fixturesTitle")}</h2>
-              {!fixtures || fixtures.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">{t("noUpcomingFixtures")}</p>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {fixtures.slice(0, 3).map((fx) => (
-                    <div
-                      key={fx.fixture.id}
-                      className="rounded-lg border border-border bg-surface p-3 text-sm"
-                    >
-                      <div className="mb-1.5 text-xs text-muted">
-                        {new Date(fx.fixture.date).toLocaleDateString(locale)}
-                      </div>
-                      <FixtureTeamsRow
-                        home={fx.teams.home}
-                        away={fx.teams.away}
-                        center={<span className="text-xs text-muted">vs</span>}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
+          <section className="mt-10">
+            <h2 className="text-lg font-semibold">{t("fixtureCalendarTitle")}</h2>
+            <FixtureCalendar
+              past={pastCalendarRows}
+              future={futureCalendarRows}
+              locale={locale}
+              labels={{
+                dateTime: t("columnDateTime"),
+                opponent: t("columnOpponent"),
+                competition: t("columnCompetition"),
+                venue: t("columnVenue"),
+                result: t("columnResult"),
+                home: t("homeLabel"),
+                away: t("awayLabel"),
+                showMorePast: t("showMorePastButton"),
+                showMoreFuture: t("showMoreFutureButton"),
+                noFixturesFound: t("noFixturesFoundInCalendar"),
+              }}
+            />
+          </section>
 
           <section className="mt-10">
             <h2 className="text-lg font-semibold">
@@ -282,7 +354,20 @@ export default async function ClubPage({
                 availabilityByPlayerId={availabilityByPlayerId}
                 injuriesByPlayerId={injuriesByPlayerId}
                 statsByPlayerId={playerStatsById}
+                flagUrlByPlayerId={flagUrlByPlayerId}
                 isCoach={isCoach}
+              />
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 text-xs text-muted">
+              <span>
+                {lastUpdatedAt
+                  ? t("lastUpdatedLabel", { date: new Date(lastUpdatedAt).toLocaleDateString(locale) })
+                  : t("lastUpdatedNever")}
+              </span>
+              <RefreshButton
+                teamId={teamId}
+                label={t("refreshDataButton")}
+                refreshingLabel={t("refreshingDataButton")}
               />
             </div>
           </section>

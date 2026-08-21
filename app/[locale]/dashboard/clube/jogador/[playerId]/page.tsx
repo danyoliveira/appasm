@@ -5,16 +5,21 @@ import { createClient } from "@/lib/supabase/server";
 import {
   getSquad,
   getPlayerProfile,
-  getCurrentLeagueAndSeason,
   getPlayersStatistics,
   getInjuries,
   getSidelined,
   getPlayerTransfers,
   getTrophies,
   getTeamSeasonFixtures,
-  getFixturePlayers,
 } from "@/lib/api-football/cache";
-import type { Fixture } from "@/lib/api-football/client";
+import {
+  getCurrentCompetitions,
+  resolveSelectedCompetition,
+  COMPETITION_FILTER_COOKIE,
+} from "@/lib/api-football/teamStats";
+import { getFixtureAppearances } from "@/lib/api-football/verifyParticipation";
+import { cookies } from "next/headers";
+import type { Fixture, TeamTransfer } from "@/lib/api-football/client";
 
 interface PlayerMatch {
   fixture: Fixture;
@@ -22,19 +27,34 @@ interface PlayerMatch {
   rating: string | null;
   goals: number;
   assists: number;
+  saves: number;
+  conceded: number;
   yellow: number;
   red: number;
+  started: boolean;
 }
 import type { PlayerStatus } from "../../../actions";
-import { translatePosition } from "../../playerShared";
+import { translatePosition, translateInjuryType } from "../../playerShared";
 import { matchResult, FixtureTeamsRow } from "../../fixtureHelpers";
 import { HeaderStatusChip, PendingInjuryBanner } from "./PlayerHeaderStatus";
 import PlayerNotesList from "./PlayerNotesList";
+import MatchesScrollList from "./MatchesScrollList";
 
-function StatRow({ label, value }: { label: string; value: string | number }) {
+function StatRow({
+  label,
+  value,
+  verified,
+}: {
+  label: string;
+  value: string | number;
+  verified?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between py-2 text-sm">
-      <span className="text-muted">{label}</span>
+      <span className="text-muted">
+        {label}
+        {verified && <span className="ml-1 text-green-600">✓</span>}
+      </span>
       <span className="font-semibold">{value}</span>
     </div>
   );
@@ -49,72 +69,6 @@ function StatGroup({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-// The API only gives injury/absence types in English free text — translate
-// the common ones, and fall back to the original string for anything not
-// covered (better than nothing, not guaranteed complete).
-const INJURY_TYPE_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
-  "Missing Fixture": { pt: "Jogo em falta", es: "Partido no disputado", fr: "Match manqué" },
-  Suspended: { pt: "Suspenso", es: "Sancionado", fr: "Suspendu" },
-  Illness: { pt: "Doença", es: "Enfermedad", fr: "Maladie" },
-  Injured: { pt: "Lesionado", es: "Lesionado", fr: "Blessé" },
-  Knock: { pt: "Pancada", es: "Golpe", fr: "Coup" },
-  "COVID-19": { pt: "Covid-19", es: "Covid-19", fr: "Covid-19" },
-  "Personal Reasons": { pt: "Razões pessoais", es: "Razones personales", fr: "Raisons personnelles" },
-  "Not With Squad": { pt: "Fora do plantel", es: "Fuera de la plantilla", fr: "Hors groupe" },
-  "Coach's Decision": { pt: "Decisão técnica", es: "Decisión técnica", fr: "Décision technique" },
-  "International Duty": { pt: "Seleção nacional", es: "Selección nacional", fr: "Sélection nacional" },
-  "Cruciate Ligament": { pt: "Ligamento cruzado", es: "Ligamento cruzado", fr: "Ligament croisé" },
-  "Ligament Damage": { pt: "Lesão ligamentar", es: "Lesión de ligamentos", fr: "Lésion ligamentaire" },
-  Concussion: { pt: "Concussão", es: "Conmoción cerebral", fr: "Commotion cérébrale" },
-  "Broken Foot": { pt: "Fratura no pé", es: "Fractura de pie", fr: "Fracture du pied" },
-  "Broken Leg": { pt: "Fratura na perna", es: "Fractura de pierna", fr: "Fracture de la jambe" },
-  "Broken Arm": { pt: "Fratura no braço", es: "Fractura de brazo", fr: "Fracture du bras" },
-  Fracture: { pt: "Fratura", es: "Fractura", fr: "Fracture" },
-  Surgery: { pt: "Cirurgia", es: "Cirugía", fr: "Chirurgie" },
-  Operation: { pt: "Operação", es: "Operación", fr: "Opération" },
-};
-
-const BODY_PART_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
-  Muscle: { pt: "muscular", es: "muscular", fr: "musculaire" },
-  Knee: { pt: "no joelho", es: "de rodilla", fr: "au genou" },
-  Ankle: { pt: "no tornozelo", es: "de tobillo", fr: "à la cheville" },
-  Thigh: { pt: "na coxa", es: "de muslo", fr: "à la cuisse" },
-  Calf: { pt: "no gémeo", es: "de gemelo", fr: "au mollet" },
-  Groin: { pt: "na virilha", es: "de ingle", fr: "à l'aine" },
-  Back: { pt: "nas costas", es: "de espalda", fr: "au dos" },
-  Hamstring: { pt: "nos isquiotibiais", es: "isquiotibial", fr: "aux ischio-jambiers" },
-  Shoulder: { pt: "no ombro", es: "de hombro", fr: "à l'épaule" },
-  Foot: { pt: "no pé", es: "de pie", fr: "au pied" },
-  Hand: { pt: "na mão", es: "de mano", fr: "à la main" },
-  Wrist: { pt: "no pulso", es: "de muñeca", fr: "au poignet" },
-  Head: { pt: "na cabeça", es: "de cabeza", fr: "à la tête" },
-  Rib: { pt: "nas costelas", es: "de costillas", fr: "aux côtes" },
-  Hip: { pt: "na anca", es: "de cadera", fr: "à la hanche" },
-  Elbow: { pt: "no cotovelo", es: "de codo", fr: "au coude" },
-  Achilles: { pt: "no tendão de Aquiles", es: "de tendón de Aquiles", fr: "au tendon d'Achille" },
-};
-
-const INJURY_WORD: Record<"pt" | "es" | "fr", string> = {
-  pt: "Lesão",
-  es: "Lesión",
-  fr: "Blessure",
-};
-
-function translateInjuryType(type: string, locale: string): string {
-  if (locale !== "pt" && locale !== "es" && locale !== "fr") return type;
-
-  const exact = INJURY_TYPE_TRANSLATIONS[type];
-  if (exact) return exact[locale];
-
-  const match = type.match(/^(\w+)\s+Injury$/i);
-  if (match) {
-    const part = BODY_PART_TRANSLATIONS[match[1]];
-    if (part) return `${INJURY_WORD[locale]} ${part[locale]}`;
-  }
-
-  return type;
-}
-
 export default async function PlayerDetailPage({
   params,
 }: {
@@ -124,6 +78,7 @@ export default async function PlayerDetailPage({
   setRequestLocale(locale);
   const t = await getTranslations("dashboard");
   const playerId = Number(playerIdParam);
+  let selectedCompetitionId: number | null = null;
 
   const supabase = await createClient();
   const {
@@ -153,50 +108,46 @@ export default async function PlayerDetailPage({
   let sidelined: Awaited<ReturnType<typeof getSidelined>> = [];
   let transfers: Awaited<ReturnType<typeof getPlayerTransfers>> = [];
   let trophies: Awaited<ReturnType<typeof getTrophies>> = [];
-  let playerMatches: PlayerMatch[] = [];
+  const playerMatches: PlayerMatch[] = [];
   let pendingInjuryReason: string | null = null;
   let error = false;
+  let competitions: Awaited<ReturnType<typeof getCurrentCompetitions>>["allCompetitions"] = [];
+  let friendlyCompetitionIds = new Set<number>();
 
   try {
     const [squad, profiles, current] = await Promise.all([
       getSquad(teamId),
       getPlayerProfile(playerId),
-      getCurrentLeagueAndSeason(teamId),
+      getCurrentCompetitions(teamId),
     ]);
     squadPlayer = squad[0]?.players.find((p) => p.id === playerId) ?? null;
     bio = profiles[0]?.player ?? null;
+    competitions = current.allCompetitions;
+    friendlyCompetitionIds = new Set(current.friendlyCompetitions.map((c) => c.league.id));
+    const defaultSeason = current.defaultSeason;
 
-    if (current) {
+    const store = await cookies();
+    selectedCompetitionId = resolveSelectedCompetition(
+      store.get(COMPETITION_FILTER_COOKIE)?.value,
+      competitions,
+    );
+
+    if (defaultSeason) {
       // Every finished fixture of the season, not just the last few — one
       // cached, long-TTL request per past fixture (shared across every
       // player's page, so only the first-ever view per fixture pays for it).
-      const seasonFixtures = await getTeamSeasonFixtures(teamId, current.season).catch(() => []);
+      const seasonFixtures = await getTeamSeasonFixtures(teamId, defaultSeason).catch(() => []);
       const playedFixtures = seasonFixtures.filter(
         (fx) => fx.goals.home != null && fx.goals.away != null,
       );
 
-      const fixturePlayerResults = await Promise.all(
-        playedFixtures.map((fx) => getFixturePlayers(fx.fixture.id).catch(() => [])),
+      const appearancesPerFixture = await Promise.all(
+        playedFixtures.map((fx) => getFixtureAppearances(fx.fixture.id)),
       );
       playedFixtures.forEach((fx, i) => {
-        for (const team of fixturePlayerResults[i]) {
-          const entry = team.players.find((p) => p.player.id === playerId);
-          if (entry) {
-            const stats = entry.statistics[0];
-            const minutes = stats?.games.minutes ?? 0;
-            if (minutes > 0) {
-              playerMatches.push({
-                fixture: fx,
-                minutes,
-                rating: stats.games.rating,
-                goals: stats.goals.total ?? 0,
-                assists: stats.goals.assists ?? 0,
-                yellow: stats.cards.yellow ?? 0,
-                red: stats.cards.red ?? 0,
-              });
-            }
-            break;
-          }
+        const appearance = appearancesPerFixture[i].get(playerId);
+        if (appearance) {
+          playerMatches.push({ fixture: fx, ...appearance });
         }
       });
       playerMatches.sort(
@@ -209,8 +160,8 @@ export default async function PlayerDetailPage({
         getSidelined(playerId).catch(() => []),
         getPlayerTransfers(playerId).catch(() => []),
         getTrophies(playerId).catch(() => []),
-        current ? getPlayersStatistics(teamId, current.season).catch(() => []) : [],
-        current ? getInjuries(teamId, current.season).catch(() => []) : [],
+        defaultSeason ? getPlayersStatistics(teamId, defaultSeason).catch(() => []) : [],
+        defaultSeason ? getInjuries(teamId, defaultSeason).catch(() => []) : [],
       ]);
     sidelined = sidelinedResult;
     transfers = transfersResult;
@@ -245,7 +196,15 @@ export default async function PlayerDetailPage({
     notes = notesData ?? [];
   }
 
-  const totals = seasonStats.reduce(
+  const relevantSeasonStats = selectedCompetitionId
+    ? seasonStats.filter((s) => s.league.id === selectedCompetitionId)
+    : seasonStats.filter((s) => !friendlyCompetitionIds.has(s.league.id));
+
+  const displayedMatches = selectedCompetitionId
+    ? playerMatches.filter((pm) => pm.fixture.league.id === selectedCompetitionId)
+    : playerMatches.filter((pm) => !friendlyCompetitionIds.has(pm.fixture.league.id));
+
+  const totals = relevantSeasonStats.reduce(
     (acc, s) => ({
       appearances: acc.appearances + (s.games.appearences ?? 0),
       lineups: acc.lineups + (s.games.lineups ?? 0),
@@ -294,20 +253,85 @@ export default async function PlayerDetailPage({
     },
   );
 
-  const rating = seasonStats.find((s) => s.games.rating)?.games.rating;
+  // The bulk /players endpoint is sometimes stale or incomplete per
+  // competition (see fetchAllPlayersStatistics — minutes/appearances can be
+  // wrong even after the by-id refetch). We already check every team
+  // fixture individually to build "Jogos que fez", so that per-match data
+  // is more trustworthy — use it to override the fields it actually
+  // covers instead of trusting the aggregate endpoint for them.
+  const hasVerifiedTotals = displayedMatches.length > 0;
+  if (hasVerifiedTotals) {
+    totals.appearances = displayedMatches.length;
+    totals.lineups = displayedMatches.filter((pm) => pm.started).length;
+    totals.minutes = displayedMatches.reduce((sum, pm) => sum + pm.minutes, 0);
+    totals.goals = displayedMatches.reduce((sum, pm) => sum + pm.goals, 0);
+    totals.assists = displayedMatches.reduce((sum, pm) => sum + pm.assists, 0);
+    totals.saves = displayedMatches.reduce((sum, pm) => sum + pm.saves, 0);
+    totals.conceded = displayedMatches.reduce((sum, pm) => sum + pm.conceded, 0);
+    totals.yellow = displayedMatches.reduce((sum, pm) => sum + pm.yellow, 0);
+    totals.red = displayedMatches.reduce((sum, pm) => sum + pm.red, 0);
+  }
+
+  const ratedMatches = displayedMatches.filter((pm) => pm.rating != null);
+  const ratingIsVerified = ratedMatches.length > 0;
+  const rating = ratingIsVerified
+    ? (
+        ratedMatches.reduce((sum, pm) => sum + Number(pm.rating), 0) / ratedMatches.length
+      ).toFixed(1)
+    : relevantSeasonStats.find((s) => s.games.rating)?.games.rating;
   const isGoalkeeper = (squadPlayer?.position ?? seasonStats[0]?.games.position) === "Goalkeeper";
   const displayName = squadPlayer?.name ?? bio?.name ?? "";
 
-  const uniqueTrophies = Array.from(
-    new Map(
-      trophies
-        .filter((tr) => tr.place === "Winner" && tr.season?.trim())
-        .map((tr) => [
-          `${tr.league.trim().toLowerCase()}|${tr.country.trim().toLowerCase()}|${tr.season.trim().toLowerCase()}`,
-          tr,
-        ]),
-    ).values(),
+  // "N/A" and "Return from loan" entries are loan returns, not a real
+  // move — noise we don't need to show.
+  const isLoanReturn = (type: string | null) => {
+    if (!type) return false;
+    const normalized = type.trim().toLowerCase();
+    return normalized === "n/a" || /(return from loan|end of loan|loan return)/.test(normalized);
+  };
+
+  // The API sometimes logs the same move twice (e.g. announced, then
+  // confirmed) — drop repeats of the same club pair within 3 months.
+  const withoutDuplicateMoves = (transfers[0]?.transfers ?? [])
+    .filter((tr) => !isLoanReturn(tr.type))
+    .slice()
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .reduce<TeamTransfer["transfers"]>((kept, tr) => {
+      const isNearDuplicate = kept.some((k) => {
+        if (k.teams.out.id !== tr.teams.out.id || k.teams.in.id !== tr.teams.in.id) return false;
+        const diffDays =
+          Math.abs(new Date(tr.date).getTime() - new Date(k.date).getTime()) / (24 * 60 * 60 * 1000);
+        return diffDays < 90;
+      });
+      if (!isNearDuplicate) kept.push(tr);
+      return kept;
+    }, []);
+
+  const realTransfers = withoutDuplicateMoves
+    .slice()
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const realSidelined = sidelined.filter(
+    (s) => s.type !== "Yellow Cards" && s.type !== "Red Card",
   );
+
+  const trophyGroups = new Map<string, { league: string; country: string; years: string[] }>();
+  trophies
+    .filter((tr) => tr.place === "Winner" && tr.season?.trim())
+    .forEach((tr) => {
+      const key = `${tr.league.trim().toLowerCase()}|${tr.country.trim().toLowerCase()}`;
+      const year = tr.season.trim();
+      const existing = trophyGroups.get(key);
+      if (existing) {
+        if (!existing.years.includes(year)) existing.years.push(year);
+      } else {
+        trophyGroups.set(key, { league: tr.league.trim(), country: tr.country.trim(), years: [year] });
+      }
+    });
+  const groupedTrophies = Array.from(trophyGroups.values()).map((group) => ({
+    ...group,
+    years: group.years.sort((a, b) => b.localeCompare(a)),
+  }));
 
   return (
     <div>
@@ -399,31 +423,59 @@ export default async function PlayerDetailPage({
           )}
 
           {(seasonStats.length > 0 || playerMatches.length > 0) && (
-            <section className="mt-10 grid gap-6 lg:grid-cols-2">
-              {seasonStats.length > 0 && (
-                <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+            <section className="mt-10 grid items-start gap-6 lg:grid-cols-2">
+              {(seasonStats.length > 0 || hasVerifiedTotals) && (
+                <div
+                  id="player-season-stats-card"
+                  className="rounded-2xl border border-border bg-surface p-5 shadow-sm"
+                >
                   <h2 className="text-lg font-semibold">📊 {t("seasonStatsTitle")}</h2>
 
                   <StatGroup title={t("statGroupGeneral")}>
-                    <StatRow label={t("playerStatAppearances")} value={totals.appearances} />
-                    <StatRow label={t("statLineups")} value={totals.lineups} />
-                    <StatRow label={t("playerStatMinutes")} value={totals.minutes} />
+                    <StatRow
+                      label={t("playerStatAppearances")}
+                      value={totals.appearances}
+                      verified={hasVerifiedTotals}
+                    />
+                    <StatRow label={t("statLineups")} value={totals.lineups} verified={hasVerifiedTotals} />
+                    <StatRow
+                      label={t("playerStatMinutes")}
+                      value={totals.minutes}
+                      verified={hasVerifiedTotals}
+                    />
                     <StatRow
                       label={t("statRating")}
                       value={rating ? Number(rating).toFixed(1) : "-"}
+                      verified={ratingIsVerified}
                     />
                   </StatGroup>
 
                   {isGoalkeeper ? (
                     <StatGroup title={t("statGroupGoalkeeping")}>
-                      <StatRow label={t("playerStatSaves")} value={totals.saves} />
-                      <StatRow label={t("playerStatConceded")} value={totals.conceded} />
+                      <StatRow
+                        label={t("playerStatSaves")}
+                        value={totals.saves}
+                        verified={hasVerifiedTotals}
+                      />
+                      <StatRow
+                        label={t("playerStatConceded")}
+                        value={totals.conceded}
+                        verified={hasVerifiedTotals}
+                      />
                     </StatGroup>
                   ) : (
                     <>
                       <StatGroup title={t("statGroupAttack")}>
-                        <StatRow label={t("playerStatGoals")} value={totals.goals} />
-                        <StatRow label={t("playerStatAssists")} value={totals.assists} />
+                        <StatRow
+                          label={t("playerStatGoals")}
+                          value={totals.goals}
+                          verified={hasVerifiedTotals}
+                        />
+                        <StatRow
+                          label={t("playerStatAssists")}
+                          value={totals.assists}
+                          verified={hasVerifiedTotals}
+                        />
                         <StatRow label={t("statShots")} value={totals.shotsTotal} />
                         <StatRow label={t("statShotsOn")} value={totals.shotsOn} />
                         <StatRow
@@ -450,29 +502,41 @@ export default async function PlayerDetailPage({
                   <StatGroup title={t("statGroupDiscipline")}>
                     <StatRow label={t("statFoulsDrawn")} value={totals.foulsDrawn} />
                     <StatRow label={t("statFoulsCommitted")} value={totals.foulsCommitted} />
-                    <StatRow label={t("statYellowCards")} value={totals.yellow} />
-                    <StatRow label={t("statRedCards")} value={totals.red} />
+                    <StatRow
+                      label={t("statYellowCards")}
+                      value={totals.yellow}
+                      verified={hasVerifiedTotals}
+                    />
+                    <StatRow label={t("statRedCards")} value={totals.red} verified={hasVerifiedTotals} />
                   </StatGroup>
+
+                  <p className="mt-4 border-t border-border pt-3 text-xs text-muted">
+                    <span className="text-green-600">✓</span> {t("verifiedStatsLegend")}
+                  </p>
                 </div>
               )}
 
-              <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+              <div className="js-matches-card flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-sm">
                 <h2 className="text-lg font-semibold">⚽ {t("playerMatchesTitle")}</h2>
-                {playerMatches.length === 0 ? (
+                {displayedMatches.length === 0 ? (
                   <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
                 ) : (
-                  <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1">
-                    {playerMatches.map((pm) => {
+                  <MatchesScrollList statsCardId="player-season-stats-card">
+                    {displayedMatches.map((pm) => {
                       const fx = pm.fixture;
                       const result = matchResult(fx, teamId);
                       return (
-                        <Link
+                        <div
                           key={fx.fixture.id}
-                          href={`/dashboard/clube/jogo/${fx.fixture.id}`}
-                          className="block rounded-lg border border-border bg-background p-3 text-sm transition-colors hover:border-accent"
+                          className="rounded-lg border border-border bg-background p-3 text-sm"
                         >
                           <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                            <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
+                            <Link
+                              href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                              className="hover:text-accent"
+                            >
+                              {new Date(fx.fixture.date).toLocaleDateString(locale)}
+                            </Link>
                             {result && (
                               <span
                                 className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
@@ -491,9 +555,12 @@ export default async function PlayerDetailPage({
                             home={fx.teams.home}
                             away={fx.teams.away}
                             center={
-                              <span className="font-semibold">
+                              <Link
+                                href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                                className="font-semibold hover:text-accent"
+                              >
                                 {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                              </span>
+                              </Link>
                             }
                           />
                           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -504,10 +571,10 @@ export default async function PlayerDetailPage({
                             {pm.yellow > 0 && <span>🟨 {pm.yellow}</span>}
                             {pm.red > 0 && <span>🟥 {pm.red}</span>}
                           </div>
-                        </Link>
+                        </div>
                       );
                     })}
-                  </div>
+                  </MatchesScrollList>
                 )}
               </div>
             </section>
@@ -521,11 +588,11 @@ export default async function PlayerDetailPage({
                 <h3 className="text-sm font-semibold text-muted">
                   🩹 {t("injuryHistoryTitle")}
                 </h3>
-                {sidelined.length === 0 ? (
+                {realSidelined.length === 0 ? (
                   <p className="mt-2 text-sm text-muted">{t("noInjuryHistory")}</p>
                 ) : (
                   <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {sidelined.map((s, i) => (
+                    {realSidelined.map((s, i) => (
                       <div
                         key={i}
                         className="rounded-lg border border-border bg-background p-3 text-sm"
@@ -545,34 +612,41 @@ export default async function PlayerDetailPage({
                 <h3 className="text-sm font-semibold text-muted">
                   🔄 {t("careerTransfersTitle")}
                 </h3>
-                {transfers.length === 0 || !transfers[0]?.transfers.length ? (
+                {realTransfers.length === 0 ? (
                   <p className="mt-2 text-sm text-muted">{t("noTransfersFound")}</p>
                 ) : (
                   <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {transfers[0].transfers
-                      .slice()
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                      .map((transfer, i) => (
+                    {realTransfers.map((transfer, i) => (
                         <div
                           key={i}
                           className="rounded-lg border border-border bg-background p-3 text-sm"
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={transfer.teams.out.logo}
-                              alt=""
-                              className="h-4 w-4 shrink-0 object-contain"
-                            />
-                            <span className="truncate">{transfer.teams.out.name}</span>
+                            <Link
+                              href={`/dashboard/clube/${transfer.teams.out.id}`}
+                              className="flex min-w-0 items-center gap-1.5 hover:text-accent"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={transfer.teams.out.logo}
+                                alt=""
+                                className="h-4 w-4 shrink-0 object-contain"
+                              />
+                              <span className="truncate">{transfer.teams.out.name}</span>
+                            </Link>
                             <span className="shrink-0 text-muted">→</span>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={transfer.teams.in.logo}
-                              alt=""
-                              className="h-4 w-4 shrink-0 object-contain"
-                            />
-                            <span className="truncate">{transfer.teams.in.name}</span>
+                            <Link
+                              href={`/dashboard/clube/${transfer.teams.in.id}`}
+                              className="flex min-w-0 items-center gap-1.5 hover:text-accent"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={transfer.teams.in.logo}
+                                alt=""
+                                className="h-4 w-4 shrink-0 object-contain"
+                              />
+                              <span className="truncate">{transfer.teams.in.name}</span>
+                            </Link>
                           </div>
                           <div className="mt-1 flex items-center justify-between text-xs text-muted">
                             <span>{transfer.type ?? "—"}</span>
@@ -587,20 +661,26 @@ export default async function PlayerDetailPage({
 
             <div className="mt-6 border-t border-border pt-6">
               <h3 className="text-sm font-semibold text-muted">🏆 {t("trophiesTitle")}</h3>
-              {uniqueTrophies.length === 0 ? (
+              {groupedTrophies.length === 0 ? (
                 <p className="mt-2 text-sm text-muted">{t("noTrophiesFound")}</p>
               ) : (
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {uniqueTrophies.map((trophy, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between rounded-lg border border-border bg-background p-3 text-sm"
-                    >
+                  {groupedTrophies.map((trophy, i) => (
+                    <div key={i} className="rounded-lg border border-border bg-background p-3 text-sm">
                       <div className="min-w-0">
                         <div className="truncate font-medium">{trophy.league}</div>
                         <div className="truncate text-xs text-muted">{trophy.country}</div>
                       </div>
-                      <span className="shrink-0 text-xs text-muted">{trophy.season}</span>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {trophy.years.map((year) => (
+                          <span
+                            key={year}
+                            className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+                          >
+                            {year}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>

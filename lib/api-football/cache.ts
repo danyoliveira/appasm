@@ -115,14 +115,20 @@ export const getSquad = (teamId: number) =>
     fetchSquad(teamId),
   );
 
-export const getNextFixtures = (teamId: number) =>
-  cached<Fixture[]>(`team:${teamId}:fixtures:next`, teamId, TTL_MS.fixtures, () =>
-    fetchNextFixtures(teamId),
+export const getNextFixtures = (teamId: number, league?: number, season?: number) =>
+  cached<Fixture[]>(
+    `team:${teamId}:fixtures:next:${league ?? "all"}`,
+    teamId,
+    TTL_MS.fixtures,
+    () => fetchNextFixtures(teamId, 5, league, season),
   );
 
-export const getLastFixtures = (teamId: number) =>
-  cached<Fixture[]>(`team:${teamId}:fixtures:last`, teamId, TTL_MS.fixtures, () =>
-    fetchLastFixtures(teamId),
+export const getLastFixtures = (teamId: number, league?: number, season?: number) =>
+  cached<Fixture[]>(
+    `team:${teamId}:fixtures:last:${league ?? "all"}`,
+    teamId,
+    TTL_MS.fixtures,
+    () => fetchLastFixtures(teamId, 5, league, season),
   );
 
 export const getTeamSeasonFixtures = (teamId: number, season: number) =>

@@ -12,6 +12,105 @@ export function translatePosition(position: string, t: (key: string) => string) 
   return key ? t(key) : position;
 }
 
+// The API only gives injury/absence reasons in English free text — translate
+// the common ones, and fall back to the original string for anything not
+// covered (better than nothing, not guaranteed complete).
+const INJURY_TYPE_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
+  "Missing Fixture": { pt: "Jogo em falta", es: "Partido no disputado", fr: "Match manqué" },
+  Suspended: { pt: "Suspenso", es: "Sancionado", fr: "Suspendu" },
+  Illness: { pt: "Doença", es: "Enfermedad", fr: "Maladie" },
+  Injured: { pt: "Lesionado", es: "Lesionado", fr: "Blessé" },
+  Knock: { pt: "Pancada", es: "Golpe", fr: "Coup" },
+  "COVID-19": { pt: "Covid-19", es: "Covid-19", fr: "Covid-19" },
+  "Personal Reasons": { pt: "Razões pessoais", es: "Razones personales", fr: "Raisons personnelles" },
+  "Not With Squad": { pt: "Fora do plantel", es: "Fuera de la plantilla", fr: "Hors groupe" },
+  "Coach's Decision": { pt: "Decisão técnica", es: "Decisión técnica", fr: "Décision technique" },
+  "International Duty": { pt: "Seleção nacional", es: "Selección nacional", fr: "Sélection nacional" },
+  "Cruciate Ligament": { pt: "Ligamento cruzado", es: "Ligamento cruzado", fr: "Ligament croisé" },
+  "Ligament Damage": { pt: "Lesão ligamentar", es: "Lesión de ligamentos", fr: "Lésion ligamentaire" },
+  Concussion: { pt: "Concussão", es: "Conmoción cerebral", fr: "Commotion cérébrale" },
+  "Broken Foot": { pt: "Fratura no pé", es: "Fractura de pie", fr: "Fracture du pied" },
+  "Broken Leg": { pt: "Fratura na perna", es: "Fractura de pierna", fr: "Fracture de la jambe" },
+  "Broken Arm": { pt: "Fratura no braço", es: "Fractura de brazo", fr: "Fracture du bras" },
+  Fracture: { pt: "Fratura", es: "Fractura", fr: "Fracture" },
+  Surgery: { pt: "Cirurgia", es: "Cirugía", fr: "Chirurgie" },
+  Operation: { pt: "Operação", es: "Operación", fr: "Opération" },
+  Inactive: { pt: "Inativo", es: "Inactivo", fr: "Inactif" },
+  Injury: { pt: "Lesão", es: "Lesión", fr: "Blessure" },
+  "Not In Squad": { pt: "Fora do plantel", es: "Fuera de la plantilla", fr: "Hors groupe" },
+  "Coach Decision": { pt: "Decisão técnica", es: "Decisión técnica", fr: "Décision technique" },
+  "National Team": { pt: "Seleção nacional", es: "Selección nacional", fr: "Sélection nacional" },
+};
+
+const BODY_PART_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
+  Muscle: { pt: "muscular", es: "muscular", fr: "musculaire" },
+  Knee: { pt: "no joelho", es: "de rodilla", fr: "au genou" },
+  Ankle: { pt: "no tornozelo", es: "de tobillo", fr: "à la cheville" },
+  Thigh: { pt: "na coxa", es: "de muslo", fr: "à la cuisse" },
+  Calf: { pt: "no gémeo", es: "de gemelo", fr: "au mollet" },
+  Groin: { pt: "na virilha", es: "de ingle", fr: "à l'aine" },
+  Back: { pt: "nas costas", es: "de espalda", fr: "au dos" },
+  Hamstring: { pt: "nos isquiotibiais", es: "isquiotibial", fr: "aux ischio-jambiers" },
+  Shoulder: { pt: "no ombro", es: "de hombro", fr: "à l'épaule" },
+  Foot: { pt: "no pé", es: "de pie", fr: "au pied" },
+  Hand: { pt: "na mão", es: "de mano", fr: "à la main" },
+  Wrist: { pt: "no pulso", es: "de muñeca", fr: "au poignet" },
+  Head: { pt: "na cabeça", es: "de cabeza", fr: "à la tête" },
+  Rib: { pt: "nas costelas", es: "de costillas", fr: "aux côtes" },
+  Hip: { pt: "na anca", es: "de cadera", fr: "à la hanche" },
+  Elbow: { pt: "no cotovelo", es: "de codo", fr: "au coude" },
+  Achilles: { pt: "no tendão de Aquiles", es: "de tendón de Aquiles", fr: "au tendon d'Achille" },
+};
+
+const INJURY_WORD: Record<"pt" | "es" | "fr", string> = {
+  pt: "Lesão",
+  es: "Lesión",
+  fr: "Blessure",
+};
+
+export function translateInjuryType(type: string, locale: string): string {
+  if (locale !== "pt" && locale !== "es" && locale !== "fr") return type;
+
+  const exact = INJURY_TYPE_TRANSLATIONS[type];
+  if (exact) return exact[locale];
+
+  const match = type.match(/^(.+?)\s+Injury$/i);
+  if (match) {
+    const prefix = match[1];
+    const exactPart = BODY_PART_TRANSLATIONS[prefix];
+    if (exactPart) return `${INJURY_WORD[locale]} ${exactPart[locale]}`;
+
+    const partKey = Object.keys(BODY_PART_TRANSLATIONS).find((key) =>
+      new RegExp(`\\b${key}\\b`, "i").test(prefix),
+    );
+    if (partKey) return `${INJURY_WORD[locale]} ${BODY_PART_TRANSLATIONS[partKey][locale]}`;
+  }
+
+  return type;
+}
+
+// Reasons in /injuries and /sidelined that aren't an actual medical injury —
+// used to split "suspended / not in squad / inactive / on national duty"
+// players into their own "unavailable" list instead of lumping them in with
+// injuries. Matched by keyword (not exact string) since the API isn't
+// consistent about exact wording/casing across leagues.
+const NON_INJURY_KEYWORDS = [
+  "suspend",
+  "squad",
+  "decision",
+  "personal",
+  "duty",
+  "national",
+  "inactive",
+  "quota",
+  "missing fixture",
+];
+
+export function isNonInjuryReason(reason: string): boolean {
+  const lower = reason.toLowerCase();
+  return NON_INJURY_KEYWORDS.some((keyword) => lower.includes(keyword));
+}
+
 export interface AvailabilityInfo {
   status: PlayerStatus;
   lastSeenInjuryKey: string | null;

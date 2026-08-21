@@ -109,7 +109,7 @@ export function fetchSquad(teamId: number) {
 
 export interface Fixture {
   fixture: { id: number; date: string; venue: { name: string | null } };
-  league: { name: string; logo: string };
+  league: { id: number; name: string; logo: string };
   teams: {
     home: { id: number; name: string; logo: string };
     away: { id: number; name: string; logo: string };
@@ -117,12 +117,18 @@ export interface Fixture {
   goals: { home: number | null; away: number | null };
 }
 
-export function fetchNextFixtures(teamId: number, count = 5) {
-  return callApiFootball<Fixture[]>("/fixtures", { team: teamId, next: count });
+export function fetchNextFixtures(teamId: number, count = 5, league?: number, season?: number) {
+  const params: Record<string, string | number> = { team: teamId, next: count };
+  if (league) params.league = league;
+  if (season) params.season = season;
+  return callApiFootball<Fixture[]>("/fixtures", params);
 }
 
-export function fetchLastFixtures(teamId: number, count = 5) {
-  return callApiFootball<Fixture[]>("/fixtures", { team: teamId, last: count });
+export function fetchLastFixtures(teamId: number, count = 5, league?: number, season?: number) {
+  const params: Record<string, string | number> = { team: teamId, last: count };
+  if (league) params.league = league;
+  if (season) params.season = season;
+  return callApiFootball<Fixture[]>("/fixtures", params);
 }
 
 // Every fixture for the team in a season (all competitions, past + future) —
@@ -421,12 +427,43 @@ export async function fetchAllPlayersStatistics(
     season,
     page: 1,
   });
-  if (page1.length < 20) return page1;
+  const combined =
+    page1.length < 20
+      ? page1
+      : [
+          ...page1,
+          ...(await callApiFootball<PlayerSeasonStats[]>("/players", {
+            team: teamId,
+            season,
+            page: 2,
+          })),
+        ];
 
-  const page2 = await callApiFootball<PlayerSeasonStats[]>("/players", {
-    team: teamId,
-    season,
-    page: 2,
-  });
-  return [...page1, ...page2];
+  // The team-scoped bulk endpoint sometimes returns stale/incomplete
+  // per-competition entries (e.g. minutes: null despite appearances > 0 —
+  // most often for cup/continental competitions). Querying the same
+  // player directly by id gives fresher data, so re-fetch just the
+  // players affected and use that instead of the bulk entry.
+  const gappyPlayerIds = combined
+    .filter((p) =>
+      p.statistics.some((s) => s.games.minutes == null && (s.games.appearences ?? 0) > 0),
+    )
+    .map((p) => p.player.id);
+
+  if (gappyPlayerIds.length === 0) return combined;
+
+  const refetched = await Promise.all(
+    gappyPlayerIds.map((id) =>
+      callApiFootball<PlayerSeasonStats[]>("/players", { id, season })
+        .then((res) => res[0] ?? null)
+        .catch(() => null),
+    ),
+  );
+  const refetchedById = new Map(
+    gappyPlayerIds
+      .map((id, i) => [id, refetched[i]] as const)
+      .filter((entry): entry is [number, PlayerSeasonStats] => entry[1] !== null),
+  );
+
+  return combined.map((p) => refetchedById.get(p.player.id) ?? p);
 }

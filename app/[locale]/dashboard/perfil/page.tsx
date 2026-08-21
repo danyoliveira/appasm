@@ -1,5 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
+import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getTeamInfo, getCountries } from "@/lib/api-football/cache";
 import type { Country } from "@/lib/api-football/client";
@@ -77,13 +78,13 @@ export default async function ProfilePage({
             <h2 className="text-lg font-semibold">{t("clubSectionTitle")}</h2>
 
             {currentClubName && (
-              <div className="mt-4 flex items-center gap-3">
+              <Link href="/dashboard/clube" className="mt-4 flex items-center gap-3 hover:text-accent">
                 {currentClubLogo && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={currentClubLogo} alt="" className="h-10 w-10 object-contain" />
                 )}
                 <div className="font-medium">{currentClubName}</div>
-              </div>
+              </Link>
             )}
 
             {!currentClubName && (

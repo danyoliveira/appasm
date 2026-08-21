@@ -159,6 +159,7 @@ export default function SquadSection({
   availabilityByPlayerId,
   injuriesByPlayerId,
   statsByPlayerId,
+  flagUrlByPlayerId,
   isCoach,
 }: {
   teamId: number;
@@ -166,6 +167,7 @@ export default function SquadSection({
   availabilityByPlayerId: Map<number, AvailabilityInfo>;
   injuriesByPlayerId: Map<number, PendingInjury>;
   statsByPlayerId: Map<number, PlayerSeasonStat>;
+  flagUrlByPlayerId: Map<number, string | null>;
   isCoach: boolean;
 }) {
   const t = useTranslations("dashboard");
@@ -380,6 +382,9 @@ export default function SquadSection({
                   currentSort={sort}
                   onSort={onSort}
                 />
+                <th className="w-6 px-1 py-2 text-left">
+                  <span className="sr-only">{t("squadColumnFlag")}</span>
+                </th>
                 {!isGoalkeeperTable && (
                   <SortableHeader
                     label={t("squadColumnPosition")}
@@ -427,6 +432,7 @@ export default function SquadSection({
             <tbody className="divide-y divide-border">
               {list.map((player) => {
                 const stats = statsByPlayerId.get(player.id);
+                const flagUrl = flagUrlByPlayerId.get(player.id);
                 return (
                   <tr
                     key={player.id}
@@ -452,6 +458,12 @@ export default function SquadSection({
                           {player.name}
                         </Link>
                       </div>
+                    </td>
+                    <td className="px-1 py-2">
+                      {flagUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={flagUrl} alt="" className="h-3.5 w-5 rounded-sm object-cover" />
+                      )}
                     </td>
                     {!isGoalkeeperTable && (
                       <td className="px-2 py-2">

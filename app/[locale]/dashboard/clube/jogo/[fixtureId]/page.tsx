@@ -109,26 +109,32 @@ export default async function FixtureDetailPage({
         </div>
 
         <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
-          <div className="flex flex-col items-center gap-2">
+          <Link
+            href={`/dashboard/clube/${detail.teams.home.id}`}
+            className="flex flex-col items-center gap-2 hover:text-accent"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={detail.teams.home.logo} alt="" className="h-12 w-12 object-contain" />
             <span className="max-w-[110px] truncate text-center text-sm font-medium">
               {detail.teams.home.name}
             </span>
-          </div>
+          </Link>
           <div className="text-center">
             <div className="text-3xl font-bold tracking-tight">
               {detail.goals.home ?? "-"} - {detail.goals.away ?? "-"}
             </div>
             <div className="mt-1 text-xs text-muted">{detail.fixture.status.long}</div>
           </div>
-          <div className="flex flex-col items-center gap-2">
+          <Link
+            href={`/dashboard/clube/${detail.teams.away.id}`}
+            className="flex flex-col items-center gap-2 hover:text-accent"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={detail.teams.away.logo} alt="" className="h-12 w-12 object-contain" />
             <span className="max-w-[110px] truncate text-center text-sm font-medium">
               {detail.teams.away.name}
             </span>
-          </div>
+          </Link>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted">
@@ -159,11 +165,14 @@ export default async function FixtureDetailPage({
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             {[homeLineup, awayLineup].map((lineup) => (
               <div key={lineup.team.id} className="rounded-xl border border-border bg-surface p-4">
-                <div className="flex items-center gap-2">
+                <Link
+                  href={`/dashboard/clube/${lineup.team.id}`}
+                  className="flex items-center gap-2 hover:text-accent"
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={lineup.team.logo} alt="" className="h-5 w-5 object-contain" />
                   <span className="text-sm font-semibold">{lineup.team.name}</span>
-                </div>
+                </Link>
                 {lineup.coach.name && (
                   <p className="mt-1 text-xs text-muted">
                     {t("coachLabel")}: {lineup.coach.name}
@@ -176,9 +185,10 @@ export default async function FixtureDetailPage({
                   {lineup.substitutes.map((p) => {
                     const evts = playerEvents(p.player.id, events);
                     return (
-                      <div
+                      <Link
                         key={p.player.id}
-                        className="group relative flex items-center gap-1.5 rounded-full bg-background px-2 py-1 text-xs"
+                        href={`/dashboard/clube/jogador/${p.player.id}`}
+                        className="group relative flex items-center gap-1.5 rounded-full bg-background px-2 py-1 text-xs transition-colors hover:bg-border"
                       >
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-border text-[10px] font-bold">
                           {p.player.number}
@@ -203,7 +213,7 @@ export default async function FixtureDetailPage({
                             ))}
                           </div>
                         )}
-                      </div>
+                      </Link>
                     );
                   })}
                 </div>
