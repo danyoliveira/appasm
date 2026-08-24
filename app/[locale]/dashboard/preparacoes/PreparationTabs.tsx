@@ -25,12 +25,16 @@ export default function PreparationTabs({
   generalInfoContent,
   preGameContent,
   preGameContentFocus,
+  inGameContent,
+  inGameContentFocus,
   matchDate,
   opponentName,
 }: {
   generalInfoContent?: ReactNode;
   preGameContent?: ReactNode;
   preGameContentFocus?: ReactNode;
+  inGameContent?: ReactNode;
+  inGameContentFocus?: ReactNode;
   matchDate: string;
   opponentName: string;
 }) {
@@ -54,6 +58,7 @@ export default function PreparationTabs({
   function contentFor(key: TabKey, isFocusModeArg: boolean) {
     if (key === "general") return generalInfoContent ?? comingSoon;
     if (key === "pre") return (isFocusModeArg ? preGameContentFocus : preGameContent) ?? comingSoon;
+    if (key === "in") return (isFocusModeArg ? inGameContentFocus : inGameContent) ?? comingSoon;
     return comingSoon;
   }
 

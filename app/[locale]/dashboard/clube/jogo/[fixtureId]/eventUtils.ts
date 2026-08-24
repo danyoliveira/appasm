@@ -1,5 +1,6 @@
 import type { FixtureEvent } from "@/lib/api-football/client";
 import type { Locale } from "@/i18n/routing";
+import { shortenPlayerName } from "../../playerShared";
 
 const EVENT_LABELS: Record<string, { pt: string; es: string; fr: string }> = {
   "Normal Goal": { pt: "Golo", es: "Gol", fr: "But" },
@@ -45,10 +46,10 @@ export function eventTooltipLine(
   if (event.type === "subst") {
     const cameOn = forPlayerId !== undefined && event.assist.id === forPlayerId;
     const other = cameOn ? event.player.name : event.assist.name;
-    return other ? `${base} ↔ ${other}` : base;
+    return other ? `${base} ↔ ${shortenPlayerName(other)}` : base;
   }
   if (event.assist.name && event.type === "Goal") {
-    return `${base} (${assistLabel}: ${event.assist.name})`;
+    return `${base} (${assistLabel}: ${shortenPlayerName(event.assist.name)})`;
   }
   return base;
 }

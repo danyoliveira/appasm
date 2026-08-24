@@ -2,6 +2,7 @@ import type { FixtureEvent, FixtureLineup } from "@/lib/api-football/client";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { eventIcon, eventTooltipLine, playerEvents } from "./eventUtils";
+import { shortenPlayerName } from "../../playerShared";
 
 function parseGrid(grid: string | null): [number, number] | null {
   if (!grid) return null;
@@ -85,7 +86,7 @@ function TeamPlayers({
                   )}
                 </div>
                 <span className="mt-1.5 max-w-[66px] truncate rounded bg-black/60 px-1 text-center text-[9px] font-medium text-white">
-                  {p.player.name}
+                  {shortenPlayerName(p.player.name)}
                 </span>
                 {evts.length > 0 && (
                   <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 hidden -translate-x-1/2 flex-col gap-0.5 whitespace-nowrap rounded-md bg-black/90 px-2 py-1.5 text-[10px] text-white shadow-lg group-hover:flex">

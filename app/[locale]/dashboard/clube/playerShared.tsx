@@ -12,6 +12,17 @@ export function translatePosition(position: string, t: (key: string) => string) 
   return key ? t(key) : position;
 }
 
+// API-Football's player "name" field is inconsistent — some players get a
+// short "known as" name (e.g. "R. Silva"), others their full birth name
+// with multiple given/surnames (e.g. "Diogo Filipe Spencer Marques"). Trim
+// the latter down to "first initial + last surname" so display length is
+// consistent regardless of which form the API returned.
+export function shortenPlayerName(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length <= 2) return name;
+  return `${parts[0].charAt(0)}. ${parts[parts.length - 1]}`;
+}
+
 // The API only gives injury/absence reasons in English free text — translate
 // the common ones, and fall back to the original string for anything not
 // covered (better than nothing, not guaranteed complete).

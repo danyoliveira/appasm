@@ -15,9 +15,11 @@ function getRemaining(targetMs: number) {
 
 export default function Countdown({
   target,
+  finished = false,
   labels,
 }: {
   target: string;
+  finished?: boolean;
   labels: { days: string; hours: string; minutes: string; seconds: string; live: string };
 }) {
   const targetMs = new Date(target).getTime();
@@ -27,6 +29,8 @@ export default function Countdown({
     const interval = setInterval(() => setRemaining(getRemaining(targetMs)), 1000);
     return () => clearInterval(interval);
   }, [targetMs]);
+
+  if (finished) return null;
 
   if (remaining.diff <= 0) {
     return (

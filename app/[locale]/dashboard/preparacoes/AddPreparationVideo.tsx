@@ -4,13 +4,37 @@ import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { addPreparationVideo } from "../actions";
+import {
+  VIDEO_CATEGORIES,
+  type VideoCategory,
+  type VideoPlayerOption,
+  type VideoSnapshotOption,
+} from "./videoCategories";
 
-export default function AddPreparationVideo({ preparationKey }: { preparationKey: string }) {
+const CATEGORY_LABEL_KEYS: Record<VideoCategory, string> = {
+  attack: "videoCategoryAttack",
+  defense: "videoCategoryDefense",
+  set_pieces: "videoCategorySetPieces",
+  transitions: "videoCategoryTransitions",
+};
+
+export default function AddPreparationVideo({
+  preparationKey,
+  players = [],
+  snapshots = [],
+}: {
+  preparationKey: string;
+  players?: VideoPlayerOption[];
+  snapshots?: VideoSnapshotOption[];
+}) {
   const t = useTranslations("dashboard");
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [category, setCategory] = useState("");
+  const [playerId, setPlayerId] = useState("");
+  const [snapshotId, setSnapshotId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
 
@@ -19,9 +43,19 @@ export default function AddPreparationVideo({ preparationKey }: { preparationKey
     setError(null);
     startSaving(async () => {
       try {
-        await addPreparationVideo(preparationKey, url.trim(), notes);
+        await addPreparationVideo(
+          preparationKey,
+          url.trim(),
+          notes,
+          (category || null) as VideoCategory | null,
+          playerId ? Number(playerId) : null,
+          snapshotId || null,
+        );
         setUrl("");
         setNotes("");
+        setCategory("");
+        setPlayerId("");
+        setSnapshotId("");
         setIsOpen(false);
         router.refresh();
       } catch {
@@ -75,6 +109,61 @@ export default function AddPreparationVideo({ preparationKey }: { preparationKey
             className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
           />
         </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs text-muted">{t("videoCategoryLabel")}</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+            >
+              <option value="">{t("videoCategoryNone")}</option>
+              {VIDEO_CATEGORIES.map((key) => (
+                <option key={key} value={key}>
+                  {t(CATEGORY_LABEL_KEYS[key])}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {players.length > 0 && (
+            <div>
+              <label className="mb-1 block text-xs text-muted">{t("videoPlayerLabel")}</label>
+              <select
+                value={playerId}
+                onChange={(e) => setPlayerId(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              >
+                <option value="">{t("videoPlayerNone")}</option>
+                {players.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {snapshots.length > 0 && (
+            <div>
+              <label className="mb-1 block text-xs text-muted">{t("videoSnapshotLabel")}</label>
+              <select
+                value={snapshotId}
+                onChange={(e) => setSnapshotId(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              >
+                <option value="">{t("videoSnapshotNone")}</option>
+                {snapshots.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           disabled={!url.trim() || isSaving}

@@ -252,7 +252,7 @@ export function fetchPlayerProfile(playerId: number) {
 export interface PlayerSeasonStats {
   player: { id: number; name: string };
   statistics: {
-    team: { id: number };
+    team: { id: number; name: string; logo: string };
     league: { id: number; name: string; logo: string; season: number };
     games: {
       appearences: number | null;
@@ -466,4 +466,11 @@ export async function fetchAllPlayersStatistics(
   );
 
   return combined.map((p) => refetchedById.get(p.player.id) ?? p);
+}
+
+// Same shape as fetchAllPlayersStatistics but for a single player id — used
+// to resolve position/current club for a player outside our own squad (an
+// opponent), where there's no team-scoped bulk fetch to look them up in.
+export function fetchPlayerSeasonStatsById(playerId: number, season: number) {
+  return callApiFootball<PlayerSeasonStats[]>("/players", { id: playerId, season });
 }

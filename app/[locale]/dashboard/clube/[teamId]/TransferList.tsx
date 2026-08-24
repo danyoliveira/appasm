@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useLocale } from "next-intl";
 import { Link } from "@/i18n/navigation";
+import { shortenPlayerName } from "../playerShared";
 
 export interface TransferRow {
   key: string;
@@ -51,7 +52,7 @@ export default function TransferList({
               <img src={row.photo} alt="" className="h-9 w-9 rounded-full object-cover" />
             ) : (
               <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-xs font-medium text-muted">
-                {row.playerName.charAt(0).toUpperCase()}
+                {shortenPlayerName(row.playerName).charAt(0).toUpperCase()}
               </div>
             )}
           </Link>
@@ -60,7 +61,7 @@ export default function TransferList({
               href={`/dashboard/clube/jogador/${row.playerId}`}
               className="block truncate font-medium hover:text-accent"
             >
-              {row.playerName}
+              {shortenPlayerName(row.playerName)}
             </Link>
             <Link
               href={`/dashboard/clube/${row.otherClubId}`}

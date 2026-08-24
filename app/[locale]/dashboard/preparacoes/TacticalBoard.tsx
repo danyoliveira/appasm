@@ -5,11 +5,13 @@ import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import {
   addTacticalSnapshot,
+  updateTacticalSnapshot,
   type TacticalArrow,
   type TacticalMarker,
   type TacticalPosition,
 } from "../actions";
 import { translatePosition } from "../clube/playerShared";
+import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 
 interface SquadOption {
   id: number;
@@ -58,11 +60,17 @@ export default function TacticalBoard({
   squad,
   isCoach,
   sideBySide = false,
+  editingSnapshot = null,
+  onCancelEdit,
+  onSaved,
 }: {
   preparationKey: string;
   squad: SquadOption[];
   isCoach: boolean;
   sideBySide?: boolean;
+  editingSnapshot?: TacticalSnapshotRow | null;
+  onCancelEdit?: () => void;
+  onSaved?: () => void;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -74,6 +82,7 @@ export default function TacticalBoard({
   const [activeTool, setActiveTool] = useState<"select" | "arrow">("select");
   const [drawingArrow, setDrawingArrow] = useState<DrawingArrow | null>(null);
   const [notes, setNotes] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
   const [customPlayers, setCustomPlayers] = useState<SquadOption[]>([]);
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
   const [newName, setNewName] = useState("");
@@ -83,6 +92,27 @@ export default function TacticalBoard({
   const [simpleDrag, setSimpleDrag] = useState<SimpleDragState | null>(null);
   const [isSaving, startSaving] = useTransition();
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!editingSnapshot) return;
+    setPositions(editingSnapshot.positions);
+    setBall(editingSnapshot.ball);
+    setMarkers(editingSnapshot.markers);
+    setArrows(editingSnapshot.arrows);
+    setNotes(editingSnapshot.notes ?? "");
+    setVideoUrl(editingSnapshot.videoUrl ?? "");
+    setCustomPlayers(
+      editingSnapshot.positions
+        .filter((p) => !squad.some((s) => s.id === p.playerId))
+        .map((p) => ({
+          id: p.playerId,
+          name: p.name,
+          number: p.number,
+          photo: p.photo,
+          position: "Midfielder",
+        })),
+    );
+  }, [editingSnapshot, squad]);
 
   useEffect(() => {
     if (!drag) return;
@@ -290,19 +320,45 @@ export default function TacticalBoard({
 
   const hasContent = positions.length > 0 || ball !== null || markers.length > 0 || arrows.length > 0;
 
+  function resetBoard() {
+    setPositions([]);
+    setBall(null);
+    setMarkers([]);
+    setArrows([]);
+    setNotes("");
+    setVideoUrl("");
+    setCustomPlayers([]);
+  }
+
   function handleSave() {
     startSaving(async () => {
-      await addTacticalSnapshot(preparationKey, { players: positions, ball, markers, arrows }, notes);
-      setPositions([]);
-      setBall(null);
-      setMarkers([]);
-      setArrows([]);
-      setNotes("");
-      setCustomPlayers([]);
+      if (editingSnapshot) {
+        await updateTacticalSnapshot(
+          editingSnapshot.id,
+          { players: positions, ball, markers, arrows },
+          notes,
+          videoUrl,
+        );
+        resetBoard();
+        onSaved?.();
+      } else {
+        await addTacticalSnapshot(
+          preparationKey,
+          { players: positions, ball, markers, arrows },
+          notes,
+          videoUrl,
+        );
+        resetBoard();
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       router.refresh();
     });
+  }
+
+  function handleCancelEdit() {
+    resetBoard();
+    onCancelEdit?.();
   }
 
   const benchByPosition = useMemo(() => {
@@ -322,8 +378,21 @@ export default function TacticalBoard({
   return (
     <div className="select-none">
       {isCoach && (
-        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-          {t("tacticalNewSnapshotTitle")}
+        <h4 className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted">
+          <span>
+            {editingSnapshot
+              ? t("tacticalEditingSnapshotTitle", { title: editingSnapshot.title })
+              : t("tacticalNewSnapshotTitle")}
+          </span>
+          {editingSnapshot && (
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              className="text-[11px] font-medium normal-case text-muted hover:text-foreground"
+            >
+              {t("cancelButton")}
+            </button>
+          )}
         </h4>
       )}
       <div className={sideBySide ? "grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start" : ""}>
@@ -391,16 +460,32 @@ export default function TacticalBoard({
             </marker>
           </defs>
           {arrows.map((a) => (
-            <line
-              key={a.id}
-              x1={(a.x1 * PITCH_VIEWBOX_WIDTH) / 100}
-              y1={a.y1}
-              x2={(a.x2 * PITCH_VIEWBOX_WIDTH) / 100}
-              y2={a.y2}
-              stroke="#ffffff"
-              strokeWidth={0.6}
-              markerEnd="url(#tactical-arrowhead)"
-            />
+            <g key={a.id}>
+              {/* Fat, invisible hit area — the visible line below is too
+                  thin to click reliably, so clicking anywhere near it
+                  (not just the tiny delete button) removes the arrow. */}
+              {isCoach && (
+                <line
+                  x1={(a.x1 * PITCH_VIEWBOX_WIDTH) / 100}
+                  y1={a.y1}
+                  x2={(a.x2 * PITCH_VIEWBOX_WIDTH) / 100}
+                  y2={a.y2}
+                  stroke="transparent"
+                  strokeWidth={4}
+                  className="pointer-events-auto cursor-pointer"
+                  onClick={() => removeArrow(a.id)}
+                />
+              )}
+              <line
+                x1={(a.x1 * PITCH_VIEWBOX_WIDTH) / 100}
+                y1={a.y1}
+                x2={(a.x2 * PITCH_VIEWBOX_WIDTH) / 100}
+                y2={a.y2}
+                stroke="#ffffff"
+                strokeWidth={0.6}
+                markerEnd="url(#tactical-arrowhead)"
+              />
+            </g>
           ))}
           {drawingArrow && (
             <line
@@ -423,7 +508,7 @@ export default function TacticalBoard({
               type="button"
               onClick={() => removeArrow(a.id)}
               title={t("deleteButton")}
-              className="absolute z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-xs font-bold text-red-600 shadow hover:bg-white"
+              className="absolute z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white shadow-md hover:bg-red-500"
               style={{ left: `${(a.x1 + a.x2) / 2}%`, top: `${(a.y1 + a.y2) / 2}%` }}
             >
               ×
@@ -635,6 +720,21 @@ export default function TacticalBoard({
           className="w-full select-text resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent disabled:opacity-70"
         />
       </div>
+
+      {isCoach && (
+        <div className="mt-3">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+            {t("videoUrlLabel")}
+          </label>
+          <input
+            type="url"
+            value={videoUrl}
+            onChange={(e) => setVideoUrl(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+          />
+        </div>
+      )}
 
       {isCoach && (
         <div className="mt-3 flex items-center gap-3">

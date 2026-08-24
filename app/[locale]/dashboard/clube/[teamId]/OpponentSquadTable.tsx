@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Link } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import type { SquadPlayer } from "@/lib/api-football/client";
-import { translatePosition } from "../playerShared";
+import { translatePosition, shortenPlayerName } from "../playerShared";
 
 export default function OpponentSquadTable({
   players,
@@ -85,15 +86,20 @@ export default function OpponentSquadTable({
                       className="odd:bg-surface even:bg-background/60 transition-colors hover:bg-accent/5"
                     >
                       <td className="px-2 py-2">
-                        <div className="flex items-center gap-1.5">
+                        <Link
+                          href={`/dashboard/clube/jogador/${player.id}`}
+                          className="flex items-center gap-1.5 hover:text-accent"
+                        >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={player.photo}
                             alt=""
                             className="h-6 w-6 shrink-0 rounded-full object-cover"
                           />
-                          <span className="truncate font-medium">{player.name}</span>
-                        </div>
+                          <span className="truncate font-medium hover:underline">
+                            {shortenPlayerName(player.name)}
+                          </span>
+                        </Link>
                       </td>
                       <td className="px-1 py-2">
                         {flagUrl && (

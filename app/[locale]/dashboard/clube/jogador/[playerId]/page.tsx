@@ -4,8 +4,10 @@ import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   getSquad,
+  getTeamInfo,
   getPlayerProfile,
   getPlayersStatistics,
+  getPlayerSeasonStatsById,
   getInjuries,
   getSidelined,
   getPlayerTransfers,
@@ -19,7 +21,12 @@ import {
 } from "@/lib/api-football/teamStats";
 import { getFixtureAppearances } from "@/lib/api-football/verifyParticipation";
 import { cookies } from "next/headers";
-import type { Fixture, TeamTransfer } from "@/lib/api-football/client";
+import type { Fixture, TeamTransfer, PlayerSeasonStats } from "@/lib/api-football/client";
+import { getVideoEmbedUrl } from "@/lib/videoEmbed";
+import PreparationVideoList, {
+  type PreparationVideoRow,
+} from "../../../preparacoes/PreparationVideoList";
+import BackLink from "../../../BackLink";
 
 interface PlayerMatch {
   fixture: Fixture;
@@ -69,6 +76,16 @@ function StatGroup({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
+// For a player not on our squad, the by-id fetch can return one entry per
+// competition/team they featured for this season — the one with the most
+// appearances stands in for "their club this season".
+function bestSeasonEntry(stats: PlayerSeasonStats[]): PlayerSeasonStats["statistics"][number] | null {
+  return (stats[0]?.statistics ?? []).reduce<PlayerSeasonStats["statistics"][number] | null>(
+    (best, s) => ((s.games.appearences ?? 0) > (best?.games.appearences ?? -1) ? s : best),
+    null,
+  );
+}
+
 export default async function PlayerDetailPage({
   params,
 }: {
@@ -104,6 +121,8 @@ export default async function PlayerDetailPage({
 
   let squadPlayer = null;
   let bio = null;
+  let ourTeam: { id: number; name: string; logo: string } | null = null;
+  let opponentStats: Awaited<ReturnType<typeof getPlayerSeasonStatsById>> = [];
   let seasonStats: Awaited<ReturnType<typeof getPlayersStatistics>>[number]["statistics"] = [];
   let sidelined: Awaited<ReturnType<typeof getSidelined>> = [];
   let transfers: Awaited<ReturnType<typeof getPlayerTransfers>> = [];
@@ -115,12 +134,14 @@ export default async function PlayerDetailPage({
   let friendlyCompetitionIds = new Set<number>();
 
   try {
-    const [squad, profiles, current] = await Promise.all([
+    const [squad, teamInfo, profiles, current] = await Promise.all([
       getSquad(teamId),
+      getTeamInfo(teamId),
       getPlayerProfile(playerId),
       getCurrentCompetitions(teamId),
     ]);
     squadPlayer = squad[0]?.players.find((p) => p.id === playerId) ?? null;
+    ourTeam = teamInfo[0]?.team ?? null;
     bio = profiles[0]?.player ?? null;
     competitions = current.allCompetitions;
     friendlyCompetitionIds = new Set(current.friendlyCompetitions.map((c) => c.league.id));
@@ -132,11 +153,20 @@ export default async function PlayerDetailPage({
       competitions,
     );
 
-    if (defaultSeason) {
+    // Not our player — no team-scoped bulk fetch has them, so look them up
+    // directly. Needed before the fixtures block below: their own matches
+    // live under their own club's season fixtures, not ours.
+    if (!squadPlayer && defaultSeason) {
+      opponentStats = await getPlayerSeasonStatsById(playerId, defaultSeason).catch(() => []);
+    }
+    const opponentEntry = bestSeasonEntry(opponentStats);
+    const matchTeamId = squadPlayer ? teamId : (opponentEntry?.team.id ?? null);
+
+    if (defaultSeason && matchTeamId) {
       // Every finished fixture of the season, not just the last few — one
       // cached, long-TTL request per past fixture (shared across every
       // player's page, so only the first-ever view per fixture pays for it).
-      const seasonFixtures = await getTeamSeasonFixtures(teamId, defaultSeason).catch(() => []);
+      const seasonFixtures = await getTeamSeasonFixtures(matchTeamId, defaultSeason).catch(() => []);
       const playedFixtures = seasonFixtures.filter(
         (fx) => fx.goals.home != null && fx.goals.away != null,
       );
@@ -155,18 +185,21 @@ export default async function PlayerDetailPage({
       );
     }
 
-    const [sidelinedResult, transfersResult, trophiesResult, playersStats, injuries] =
-      await Promise.all([
-        getSidelined(playerId).catch(() => []),
-        getPlayerTransfers(playerId).catch(() => []),
-        getTrophies(playerId).catch(() => []),
-        defaultSeason ? getPlayersStatistics(teamId, defaultSeason).catch(() => []) : [],
-        defaultSeason ? getInjuries(teamId, defaultSeason).catch(() => []) : [],
-      ]);
+    const [sidelinedResult, transfersResult, trophiesResult, playersStats, injuries] = await Promise.all([
+      getSidelined(playerId).catch(() => []),
+      getPlayerTransfers(playerId).catch(() => []),
+      getTrophies(playerId).catch(() => []),
+      defaultSeason ? getPlayersStatistics(teamId, defaultSeason).catch(() => []) : [],
+      defaultSeason ? getInjuries(teamId, defaultSeason).catch(() => []) : [],
+    ]);
     sidelined = sidelinedResult;
     transfers = transfersResult;
     trophies = trophiesResult;
-    seasonStats = playersStats.find((p) => p.player.id === playerId)?.statistics ?? [];
+    // Our player: the team-scoped bulk fetch has them. Someone else's
+    // player: fall back to the by-id fetch above — same shape, just sourced
+    // differently, so the stats card below doesn't need to know which case.
+    seasonStats =
+      playersStats.find((p) => p.player.id === playerId)?.statistics ?? opponentStats[0]?.statistics ?? [];
     pendingInjuryReason = injuries.find((i) => i.player.id === playerId)?.player.reason ?? null;
   } catch {
     error = true;
@@ -195,6 +228,25 @@ export default async function PlayerDetailPage({
       .order("created_at", { ascending: true });
     notes = notesData ?? [];
   }
+
+  const { data: videoData } = await supabase
+    .from("preparation_videos")
+    .select("id, url, notes, category, tactical_snapshot_id, preparation_tactics(notes)")
+    .eq("team_id", teamId)
+    .eq("player_id", playerId)
+    .order("created_at", { ascending: false });
+
+  const playerVideoRows: PreparationVideoRow[] = (videoData ?? []).map((row) => ({
+    id: row.id,
+    url: row.url,
+    notes: row.notes,
+    embedUrl: getVideoEmbedUrl(row.url),
+    category: row.category,
+    player: null,
+    snapshotLabel: row.tactical_snapshot_id
+      ? (row.preparation_tactics?.notes ?? t("videoSnapshotGeneric"))
+      : null,
+  }));
 
   const relevantSeasonStats = selectedCompetitionId
     ? seasonStats.filter((s) => s.league.id === selectedCompetitionId)
@@ -311,6 +363,17 @@ export default async function PlayerDetailPage({
     .slice()
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  const opponentEntry = bestSeasonEntry(opponentStats);
+
+  const position = squadPlayer?.position ?? opponentEntry?.games.position ?? null;
+  const currentClub = squadPlayer
+    ? ourTeam
+    : opponentEntry
+      ? { id: opponentEntry.team.id, name: opponentEntry.team.name, logo: opponentEntry.team.logo }
+      : realTransfers[0]
+        ? { id: realTransfers[0].teams.in.id, name: realTransfers[0].teams.in.name, logo: realTransfers[0].teams.in.logo }
+        : null;
+
   const realSidelined = sidelined.filter(
     (s) => s.type !== "Yellow Cards" && s.type !== "Red Card",
   );
@@ -335,9 +398,7 @@ export default async function PlayerDetailPage({
 
   return (
     <div>
-      <Link href="/dashboard/clube" className="text-sm text-muted hover:text-foreground">
-        ← {t("clubSectionTitle")}
-      </Link>
+      <BackLink href="/dashboard/clube" label={t("clubSectionTitle")} />
 
       {error && (
         <p className="mt-8 rounded-lg border border-dashed border-border bg-surface p-4 text-sm text-muted">
@@ -370,9 +431,16 @@ export default async function PlayerDetailPage({
                   {displayName}
                 </h1>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {squadPlayer && (
+                  {currentClub && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={currentClub.logo} alt="" className="h-3.5 w-3.5 object-contain" />
+                      {currentClub.name}
+                    </span>
+                  )}
+                  {position && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium">
-                      🎽 {translatePosition(squadPlayer.position, t)}
+                      🎽 {translatePosition(position, t)}
                     </span>
                   )}
                   {bio?.age != null && (
@@ -395,13 +463,15 @@ export default async function PlayerDetailPage({
                       ⚖️ {bio.weight}
                     </span>
                   )}
-                  <HeaderStatusChip
-                    teamId={teamId}
-                    playerId={playerId}
-                    playerName={displayName}
-                    status={status}
-                    isCoach={isCoach}
-                  />
+                  {squadPlayer && (
+                    <HeaderStatusChip
+                      teamId={teamId}
+                      playerId={playerId}
+                      playerName={displayName}
+                      status={status}
+                      isCoach={isCoach}
+                    />
+                  )}
                 </div>
               </div>
             </div>
@@ -419,6 +489,13 @@ export default async function PlayerDetailPage({
           {isCoach && (
             <div className="mt-8">
               <PlayerNotesList teamId={teamId} playerId={playerId} notes={notes} />
+            </div>
+          )}
+
+          {playerVideoRows.length > 0 && (
+            <div className="mt-8">
+              <h3 className="text-sm font-semibold text-muted">{t("playerVideosTitle")}</h3>
+              <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
             </div>
           )}
 

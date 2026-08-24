@@ -70,6 +70,19 @@ export async function proxy(request: NextRequest) {
     return redirectResponse;
   }
 
+  // ASM Live Stats guest links (/live/<token>) are the "focus mode" the
+  // header's platform chrome (competition switcher, stats disclaimer)
+  // doesn't belong on — flag the request so the root layout can skip just
+  // those two pieces. Root layouts have no direct pathname access, so this
+  // has to travel in as a request header set here in middleware.
+  if (firstSegment === "live") {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-live-route", "1");
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    intlResponse.cookies.getAll().forEach((c) => response.cookies.set(c));
+    return response;
+  }
+
   return intlResponse;
 }
 

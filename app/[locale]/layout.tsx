@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { routing } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { cookies } from "next/headers";
@@ -60,35 +61,43 @@ export default async function LocaleLayout({
   const t = await getTranslations({ locale, namespace: "common" });
   const tDashboard = await getTranslations({ locale, namespace: "dashboard" });
 
+  // ASM Live Stats guest links (/live/<token>) are a stripped-down "focus
+  // mode" for people with no platform access — the competition switcher and
+  // stats disclaimer don't belong there. Everywhere else keeps them in the
+  // header, same as always.
+  const isLiveRoute = (await headers()).get("x-live-route") === "1";
+
   let competitionSwitcher: { competitions: { id: number; name: string }[]; selected: string } | null =
     null;
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  if (!isLiveRoute) {
+    try {
+      const supabase = await createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (user) {
-      const { data: coachProfile } = await supabase
-        .from("profiles")
-        .select("api_football_team_id")
-        .eq("role", "coach")
-        .maybeSingle();
-      const teamId = coachProfile?.api_football_team_id ?? null;
+      if (user) {
+        const { data: coachProfile } = await supabase
+          .from("profiles")
+          .select("api_football_team_id")
+          .eq("role", "coach")
+          .maybeSingle();
+        const teamId = coachProfile?.api_football_team_id ?? null;
 
-      if (teamId) {
-        const { allCompetitions } = await getCurrentCompetitions(teamId);
-        if (allCompetitions.length > 1) {
-          const store = await cookies();
-          competitionSwitcher = {
-            competitions: allCompetitions.map((c) => ({ id: c.league.id, name: c.league.name })),
-            selected: store.get(COMPETITION_FILTER_COOKIE)?.value ?? "all",
-          };
+        if (teamId) {
+          const { allCompetitions } = await getCurrentCompetitions(teamId);
+          if (allCompetitions.length > 1) {
+            const store = await cookies();
+            competitionSwitcher = {
+              competitions: allCompetitions.map((c) => ({ id: c.league.id, name: c.league.name })),
+              selected: store.get(COMPETITION_FILTER_COOKIE)?.value ?? "all",
+            };
+          }
         }
       }
+    } catch {
+      // Header still renders fine without the competition switcher.
     }
-  } catch {
-    // Header still renders fine without the competition switcher.
   }
 
   return (

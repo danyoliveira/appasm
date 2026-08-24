@@ -20,7 +20,7 @@ import {
 import type { StandingRow, Fixture, Injury, TeamStatistics } from "@/lib/api-football/client";
 import SeasonStatsGrid from "./SeasonStatsGrid";
 import Countdown from "./Countdown";
-import { isNonInjuryReason, translateInjuryType } from "./clube/playerShared";
+import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "./clube/playerShared";
 import { matchResult } from "./clube/fixtureHelpers";
 
 export default async function DashboardOverviewPage({
@@ -72,7 +72,10 @@ export default async function DashboardOverviewPage({
         getCurrentCompetitions(teamId),
         cookies(),
       ]);
-      nextFixture = fixtures[0] ?? null;
+      // API-Football's "next" fixtures endpoint can lag in marking a match as
+      // finished — guard against picking one back up here by requiring it to
+      // still have no final score, not just a future-looking date.
+      nextFixture = fixtures.find((fx) => fx.goals.home == null && fx.goals.away == null) ?? null;
       const cookieValue = store.get(COMPETITION_FILTER_COOKIE)?.value;
       const selectedCompetitionId = resolveSelectedCompetition(cookieValue, current.allCompetitions);
 
@@ -330,7 +333,7 @@ export default async function DashboardOverviewPage({
                           />
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium">
-                              {injury.player.name}
+                              {shortenPlayerName(injury.player.name)}
                             </div>
                             <div className="line-clamp-2 text-xs text-muted">
                               {translateInjuryType(injury.player.reason, locale)}
@@ -360,7 +363,7 @@ export default async function DashboardOverviewPage({
                           />
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium">
-                              {injury.player.name}
+                              {shortenPlayerName(injury.player.name)}
                             </div>
                             <div className="line-clamp-2 text-xs text-muted">
                               {translateInjuryType(injury.player.reason, locale)}

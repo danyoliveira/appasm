@@ -9,6 +9,8 @@ import {
 } from "@/lib/api-football/cache";
 import PitchDiagram from "./PitchDiagram";
 import { eventIcon, eventTooltipLine, playerEvents } from "./eventUtils";
+import { shortenPlayerName } from "../../playerShared";
+import BackLink from "../../../BackLink";
 
 const STAT_LABELS: Record<string, { pt: string; es: string; fr: string; en: string }> = {
   "Shots on Goal": { pt: "Remates à baliza", es: "Tiros a puerta", fr: "Tirs cadrés", en: "Shots on target" },
@@ -70,9 +72,7 @@ export default async function FixtureDetailPage({
   if (!detail) {
     return (
       <div>
-        <Link href="/dashboard/clube" className="text-sm text-muted hover:text-foreground">
-          ← {t("clubSectionTitle")}
-        </Link>
+        <BackLink href="/dashboard/clube" label={t("clubSectionTitle")} />
         <p className="mt-8 rounded-lg border border-dashed border-border bg-surface p-4 text-sm text-muted">
           {error
             ? "Não foi possível carregar os dados deste jogo agora. Tenta recarregar a página daqui a pouco."
@@ -95,9 +95,7 @@ export default async function FixtureDetailPage({
 
   return (
     <div>
-      <Link href="/dashboard/clube" className="text-sm text-muted hover:text-foreground">
-        ← {t("clubSectionTitle")}
-      </Link>
+      <BackLink href="/dashboard/clube" label={t("clubSectionTitle")} />
 
       <div className="mt-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
         <div className="flex items-center justify-center gap-2 text-xs text-muted">
@@ -193,7 +191,7 @@ export default async function FixtureDetailPage({
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-border text-[10px] font-bold">
                           {p.player.number}
                         </span>
-                        <span className="truncate">{p.player.name}</span>
+                        <span className="truncate">{shortenPlayerName(p.player.name)}</span>
                         {evts.length > 0 && (
                           <span className="ml-auto flex shrink-0 -space-x-1">
                             {evts.slice(0, 3).map((ev, idx) => (

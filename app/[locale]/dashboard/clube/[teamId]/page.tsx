@@ -1,7 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { cookies } from "next/headers";
 import type { Locale } from "@/i18n/routing";
-import { Link } from "@/i18n/navigation";
 import {
   getTeamInfo,
   getTransfers,
@@ -20,6 +19,7 @@ import { toCalendarRow } from "../fixtureHelpers";
 import FixtureCalendar, { type CalendarRow } from "../FixtureCalendar";
 import OpponentSquadTable from "./OpponentSquadTable";
 import { buildFlagResolver } from "@/lib/api-football/flags";
+import BackLink from "../../BackLink";
 
 const NEW_SIGNING_WINDOW_DAYS = 180;
 
@@ -181,9 +181,7 @@ export default async function ClubDetailPage({
 
   return (
     <div>
-      <Link href="/dashboard/clube" className="text-sm text-muted hover:text-foreground">
-        ← {t("backToClubButton")}
-      </Link>
+      <BackLink href="/dashboard/clube" label={t("backToClubButton")} />
 
       {teamInfo?.[0] && (
         <div className="mt-4 flex items-center gap-4">

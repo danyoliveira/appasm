@@ -12,6 +12,7 @@ import {
 import type { SquadPlayer } from "@/lib/api-football/client";
 import {
   translatePosition,
+  shortenPlayerName,
   StatusControl,
   InjuryConfirmBanner,
   type AvailabilityInfo,
@@ -318,7 +319,7 @@ export default function SquadSection({
               href={`/dashboard/clube/jogador/${player.id}`}
               className="block truncate text-sm font-semibold hover:text-accent hover:underline"
             >
-              {player.name}
+              {shortenPlayerName(player.name)}
             </Link>
             <span className="mt-1 block w-fit rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
               {translatePosition(player.position, t)}
@@ -455,7 +456,7 @@ export default function SquadSection({
                           href={`/dashboard/clube/jogador/${player.id}`}
                           className="truncate font-medium hover:text-accent hover:underline"
                         >
-                          {player.name}
+                          {shortenPlayerName(player.name)}
                         </Link>
                       </div>
                     </td>

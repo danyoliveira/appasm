@@ -11,6 +11,7 @@ import {
   type ApiFootballReason,
 } from "@/lib/api-football/client";
 import { getTeamsByCountry } from "@/lib/api-football/cache";
+import type { VideoCategory } from "./preparacoes/videoCategories";
 
 export type ClubsResult = {
   results: TeamSearchResult[];
@@ -91,9 +92,26 @@ export async function deleteManualPreparation(id: string) {
   revalidatePath("/", "layout");
 }
 
+function parseOptionalUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  const parsed = new URL(trimmed);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Invalid URL");
+  }
+  return parsed.toString();
+}
+
 // preparationKey mirrors the /dashboard/preparacoes/[fixtureId] route param
 // as-is — either a numeric API-Football fixture id or "manual-<uuid>".
-export async function addPreparationVideo(preparationKey: string, url: string, notes: string) {
+export async function addPreparationVideo(
+  preparationKey: string,
+  url: string,
+  notes: string,
+  category: VideoCategory | null,
+  playerId: number | null,
+  tacticalSnapshotId: string | null,
+) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -123,8 +141,50 @@ export async function addPreparationVideo(preparationKey: string, url: string, n
     preparation_key: preparationKey,
     url: parsedUrl.toString(),
     notes: notes.trim() || null,
+    category,
+    player_id: playerId,
+    tactical_snapshot_id: tacticalSnapshotId,
     created_by: user.id,
   });
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
+}
+
+export async function updatePreparationVideo(
+  id: string,
+  url: string,
+  notes: string,
+  category: VideoCategory | null,
+  playerId: number | null,
+  tacticalSnapshotId: string | null,
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error("Invalid URL");
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    throw new Error("Invalid URL");
+  }
+
+  const { error } = await supabase
+    .from("preparation_videos")
+    .update({
+      url: parsedUrl.toString(),
+      notes: notes.trim() || null,
+      category,
+      player_id: playerId,
+      tactical_snapshot_id: tacticalSnapshotId,
+    })
+    .eq("id", id);
 
   if (error) throw new Error(error.message);
   revalidatePath("/", "layout");
@@ -181,6 +241,7 @@ export async function addTacticalSnapshot(
   preparationKey: string,
   data: TacticalSnapshotData,
   notes: string,
+  videoUrl: string,
 ) {
   const supabase = await createClient();
   const {
@@ -201,8 +262,30 @@ export async function addTacticalSnapshot(
     preparation_key: preparationKey,
     positions: data,
     notes: notes.trim() || null,
+    video_url: parseOptionalUrl(videoUrl),
     created_by: user.id,
   });
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
+}
+
+export async function updateTacticalSnapshot(
+  id: string,
+  data: TacticalSnapshotData,
+  notes: string,
+  videoUrl: string,
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("preparation_tactics")
+    .update({ positions: data, notes: notes.trim() || null, video_url: parseOptionalUrl(videoUrl) })
+    .eq("id", id);
 
   if (error) throw new Error(error.message);
   revalidatePath("/", "layout");

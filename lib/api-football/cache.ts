@@ -26,6 +26,7 @@ import {
   fetchFixtureLineups,
   fetchFixtureStatistics,
   fetchPredictions,
+  fetchPlayerSeasonStatsById,
   type TeamSearchResult,
   type SquadResponse,
   type Fixture,
@@ -66,6 +67,10 @@ const TTL_MS = {
   playerTransfers: 7 * 24 * 60 * 60 * 1000,
   trophies: 30 * 24 * 60 * 60 * 1000,
   fixturePlayers: 30 * 24 * 60 * 60 * 1000,
+  // Short-lived — unlike fixturePlayers (a fixed post-match record), lineups
+  // flip from unavailable to published in the ~1h before kickoff, so a long
+  // cache would keep reporting "not available" past the point it isn't true.
+  lineups: 5 * 60 * 1000,
   seasonFixtures: 6 * 60 * 60 * 1000,
   fixtureDetail: 6 * 60 * 60 * 1000,
   predictions: 6 * 60 * 60 * 1000,
@@ -194,6 +199,14 @@ export const getPlayersStatistics = (teamId: number, season: number) =>
     () => fetchAllPlayersStatistics(teamId, season),
   );
 
+export const getPlayerSeasonStatsById = (playerId: number, season: number) =>
+  cached<PlayerSeasonStats[]>(
+    `player:${playerId}:${season}:stats-by-id`,
+    null,
+    TTL_MS.teamStatistics,
+    () => fetchPlayerSeasonStatsById(playerId, season),
+  );
+
 export const getPlayerProfile = (playerId: number) =>
   cached<PlayerProfile[]>(`player:${playerId}:profile`, null, TTL_MS.playerProfile, () =>
     fetchPlayerProfile(playerId),
@@ -233,7 +246,7 @@ export const getFixtureEvents = (fixtureId: number) =>
   );
 
 export const getFixtureLineups = (fixtureId: number) =>
-  cached<FixtureLineup[]>(`fixture:${fixtureId}:lineups`, null, TTL_MS.fixturePlayers, () =>
+  cached<FixtureLineup[]>(`fixture:${fixtureId}:lineups`, null, TTL_MS.lineups, () =>
     fetchFixtureLineups(fixtureId),
   );
 
