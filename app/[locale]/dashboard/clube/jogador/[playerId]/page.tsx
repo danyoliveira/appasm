@@ -243,8 +243,9 @@ export default async function PlayerDetailPage({
     embedUrl: getVideoEmbedUrl(row.url),
     category: row.category,
     player: null,
+    tacticalSnapshotId: row.tactical_snapshot_id,
     snapshotLabel: row.tactical_snapshot_id
-      ? (row.preparation_tactics?.notes ?? t("videoSnapshotGeneric"))
+      ? (row.preparation_tactics?.[0]?.notes ?? t("videoSnapshotGeneric"))
       : null,
   }));
 
