@@ -64,6 +64,7 @@ export default async function PreparationListPage({
             opponentLogo: opponent.logo,
             competitionName: fx.league.name,
             competitionLogo: fx.league.logo,
+            isHome: fx.teams.home.id === teamId,
             isPrepared: preparedFixtureIds.has(fx.fixture.id),
           };
         };
@@ -125,6 +126,8 @@ export default async function PreparationListPage({
           dateTime: t("columnDateTime"),
           opponent: t("columnOpponent"),
           competition: t("columnCompetition"),
+          home: t("homeLabel"),
+          away: t("awayLabel"),
           prepareAction: t("preparationStartButton"),
           resumeAction: t("preparationResumeButton"),
           confirmStart: t("preparationConfirmStart"),

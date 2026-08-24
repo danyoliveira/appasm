@@ -6,14 +6,21 @@ import { useTranslations } from "next-intl";
 import {
   addTacticalSnapshot,
   updateTacticalSnapshot,
+  type PlayerStatus,
   type TacticalArrow,
   type TacticalMarker,
   type TacticalPosition,
 } from "../actions";
-import { translatePosition } from "../clube/playerShared";
+import { translatePosition, STATUS_DOT } from "../clube/playerShared";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
+import type { TeamColors } from "./useTeamColors";
 
-interface SquadOption {
+// Fixed, team-independent color for the generic marker ("boneco") — team
+// pins are now derived from club crests, which can land on almost any
+// color, so the marker needs a color that never coincides with either.
+const MARKER_COLOR = "#7c3aed";
+
+export interface OpponentSquadOption {
   id: number;
   name: string;
   number: number | null;
@@ -21,11 +28,31 @@ interface SquadOption {
   position: string;
 }
 
+export interface OurSquadOption extends OpponentSquadOption {
+  status: PlayerStatus;
+}
+
+export type Team = "us" | "opponent";
+
+// The bench merges both squads (plus any custom players added on either
+// side) into one shape tagged by team, so drag/placement logic doesn't
+// need to care which squad a player came from.
+interface BenchOption {
+  id: number;
+  name: string;
+  number: number | null;
+  photo: string;
+  position: string;
+  team: Team;
+  status?: PlayerStatus;
+}
+
 interface DragState {
   playerId: number;
   name: string;
   number: number | null;
   photo: string;
+  team: Team;
   fromBench: boolean;
   clientX: number;
   clientY: number;
@@ -57,20 +84,28 @@ let nextArrowId = 1;
 
 export default function TacticalBoard({
   preparationKey,
-  squad,
+  opponentSquad,
+  ourSquad,
   isCoach,
   sideBySide = false,
   editingSnapshot = null,
   onCancelEdit,
   onSaved,
+  duplicateSeed = null,
+  teamColors,
+  activeTeam,
 }: {
   preparationKey: string;
-  squad: SquadOption[];
+  opponentSquad: OpponentSquadOption[];
+  ourSquad: OurSquadOption[];
   isCoach: boolean;
   sideBySide?: boolean;
   editingSnapshot?: TacticalSnapshotRow | null;
   onCancelEdit?: () => void;
   onSaved?: () => void;
+  duplicateSeed?: TacticalSnapshotRow | null;
+  teamColors: TeamColors;
+  activeTeam: Team;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -83,7 +118,11 @@ export default function TacticalBoard({
   const [drawingArrow, setDrawingArrow] = useState<DrawingArrow | null>(null);
   const [notes, setNotes] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
-  const [customPlayers, setCustomPlayers] = useState<SquadOption[]>([]);
+  const pinStyle = (team: Team) => ({
+    backgroundColor: team === "us" ? teamColors.usColor : teamColors.opponentColor,
+    color: team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
+  });
+  const [customPlayers, setCustomPlayers] = useState<BenchOption[]>([]);
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
   const [newName, setNewName] = useState("");
   const [newNumber, setNewNumber] = useState("");
@@ -93,8 +132,14 @@ export default function TacticalBoard({
   const [isSaving, startSaving] = useTransition();
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    if (!editingSnapshot) return;
+  // Pre-filling the board when a saved snapshot is selected for editing or
+  // duplicating is state derived from props, not a side effect — done here
+  // during render (React's documented pattern for "adjusting state when a
+  // prop changes") instead of in a useEffect, so it applies before paint
+  // and doesn't trigger an extra render pass.
+  const [appliedEditingId, setAppliedEditingId] = useState<string | null>(null);
+  if (editingSnapshot && editingSnapshot.id !== appliedEditingId) {
+    setAppliedEditingId(editingSnapshot.id);
     setPositions(editingSnapshot.positions);
     setBall(editingSnapshot.ball);
     setMarkers(editingSnapshot.markers);
@@ -103,16 +148,51 @@ export default function TacticalBoard({
     setVideoUrl(editingSnapshot.videoUrl ?? "");
     setCustomPlayers(
       editingSnapshot.positions
-        .filter((p) => !squad.some((s) => s.id === p.playerId))
+        .filter(
+          (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
+        )
         .map((p) => ({
           id: p.playerId,
           name: p.name,
           number: p.number,
           photo: p.photo,
           position: "Midfielder",
+          team: p.team ?? "opponent",
         })),
     );
-  }, [editingSnapshot, squad]);
+  } else if (!editingSnapshot && appliedEditingId !== null) {
+    setAppliedEditingId(null);
+  }
+
+  // Duplicating a saved snapshot pre-fills the (always-new) board with its
+  // content, but leaves editingSnapshot untouched — so Guardar still inserts
+  // a fresh row via addTacticalSnapshot instead of overwriting the original.
+  const [appliedDuplicateId, setAppliedDuplicateId] = useState<string | null>(null);
+  if (duplicateSeed && duplicateSeed.id !== appliedDuplicateId) {
+    setAppliedDuplicateId(duplicateSeed.id);
+    setPositions(duplicateSeed.positions);
+    setBall(duplicateSeed.ball);
+    setMarkers(duplicateSeed.markers);
+    setArrows(duplicateSeed.arrows);
+    setNotes(duplicateSeed.notes ?? "");
+    setVideoUrl("");
+    setCustomPlayers(
+      duplicateSeed.positions
+        .filter(
+          (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
+        )
+        .map((p) => ({
+          id: p.playerId,
+          name: p.name,
+          number: p.number,
+          photo: p.photo,
+          position: "Midfielder",
+          team: p.team ?? "opponent",
+        })),
+    );
+  } else if (!duplicateSeed && appliedDuplicateId !== null) {
+    setAppliedDuplicateId(null);
+  }
 
   useEffect(() => {
     if (!drag) return;
@@ -142,6 +222,7 @@ export default function TacticalBoard({
               name: current.name,
               number: current.number,
               photo: current.photo,
+              team: current.team,
               x: Math.min(96, Math.max(4, x)),
               y: Math.min(96, Math.max(4, y)),
             },
@@ -245,13 +326,14 @@ export default function TacticalBoard({
     };
   }, [drawingArrow]);
 
-  function startDragFromBench(player: SquadOption, e: React.PointerEvent) {
+  function startDragFromBench(player: BenchOption, e: React.PointerEvent) {
     if (!isCoach) return;
     setDrag({
       playerId: player.id,
       name: player.name,
       number: player.number,
       photo: player.photo,
+      team: player.team,
       fromBench: true,
       clientX: e.clientX,
       clientY: e.clientY,
@@ -266,6 +348,7 @@ export default function TacticalBoard({
       name: pos.name,
       number: pos.number,
       photo: pos.photo,
+      team: pos.team ?? "opponent",
       fromBench: false,
       clientX: e.clientX,
       clientY: e.clientY,
@@ -305,12 +388,13 @@ export default function TacticalBoard({
 
   function handleAddCustomPlayer() {
     if (!newName.trim()) return;
-    const player: SquadOption = {
+    const player: BenchOption = {
       id: nextCustomId--,
       name: newName.trim(),
       number: newNumber.trim() ? Number(newNumber.trim()) : null,
       photo: "",
       position: newPosition,
+      team: activeTeam,
     };
     setCustomPlayers((prev) => [...prev, player]);
     setNewName("");
@@ -335,7 +419,7 @@ export default function TacticalBoard({
       if (editingSnapshot) {
         await updateTacticalSnapshot(
           editingSnapshot.id,
-          { players: positions, ball, markers, arrows },
+          { players: positions, ball, markers, arrows, team: activeTeam },
           notes,
           videoUrl,
         );
@@ -344,7 +428,7 @@ export default function TacticalBoard({
       } else {
         await addTacticalSnapshot(
           preparationKey,
-          { players: positions, ball, markers, arrows },
+          { players: positions, ball, markers, arrows, team: activeTeam },
           notes,
           videoUrl,
         );
@@ -362,9 +446,13 @@ export default function TacticalBoard({
   }
 
   const benchByPosition = useMemo(() => {
-    const allOptions = [...squad, ...customPlayers];
+    const squadForTeam: BenchOption[] =
+      activeTeam === "us"
+        ? ourSquad.map((p) => ({ ...p, team: "us" as const }))
+        : opponentSquad.map((p) => ({ ...p, team: "opponent" as const }));
+    const allOptions = [...squadForTeam, ...customPlayers.filter((p) => p.team === activeTeam)];
     const unplaced = allOptions.filter((p) => !positions.some((pos) => pos.playerId === p.id));
-    const groups = new Map<string, SquadOption[]>();
+    const groups = new Map<string, BenchOption[]>();
     for (const player of unplaced) {
       const key = POSITION_GROUPS.includes(player.position as (typeof POSITION_GROUPS)[number])
         ? player.position
@@ -373,7 +461,7 @@ export default function TacticalBoard({
       groups.get(key)!.push(player);
     }
     return groups;
-  }, [squad, customPlayers, positions]);
+  }, [activeTeam, ourSquad, opponentSquad, customPlayers, positions]);
 
   return (
     <div className="select-none">
@@ -412,7 +500,8 @@ export default function TacticalBoard({
           <div
             onPointerDown={(e) => startMarkerDrag(e, null)}
             title={t("tacticalMarkerLabel")}
-            className="flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full border border-border bg-red-600 text-white active:cursor-grabbing"
+            style={{ backgroundColor: MARKER_COLOR }}
+            className="flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full border border-border text-white active:cursor-grabbing"
           >
             <PlayerIcon />
           </div>
@@ -527,7 +616,10 @@ export default function TacticalBoard({
               visibility: drag?.playerId === pos.playerId ? "hidden" : "visible",
             }}
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white shadow ring-2 ring-white/40">
+            <div
+              style={pinStyle(pos.team ?? "opponent")}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold shadow ring-2 ring-white/40"
+            >
               {pos.number ?? "-"}
             </div>
             <span className="mt-1 max-w-[70px] truncate rounded bg-black/60 px-1 text-center text-[9px] font-medium text-white">
@@ -541,10 +633,11 @@ export default function TacticalBoard({
             key={m.id}
             type="button"
             onPointerDown={(e) => startMarkerDrag(e, m)}
-            className="absolute flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-full bg-red-600 text-white shadow ring-2 ring-white/40 active:cursor-grabbing"
+            className="absolute flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-full text-white shadow ring-2 ring-white/40 active:cursor-grabbing"
             style={{
               left: `${m.x}%`,
               top: `${m.y}%`,
+              backgroundColor: MARKER_COLOR,
               visibility: simpleDrag?.kind === "marker" && simpleDrag.id === m.id ? "hidden" : "visible",
             }}
           >
@@ -574,7 +667,10 @@ export default function TacticalBoard({
           className="pointer-events-none fixed z-[60] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
           style={{ left: drag.clientX, top: drag.clientY }}
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white shadow-lg ring-2 ring-accent">
+          <div
+            style={pinStyle(drag.team)}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold shadow-lg ring-2 ring-accent"
+          >
             {drag.number ?? "-"}
           </div>
           <span className="mt-1 max-w-[70px] truncate rounded bg-black/60 px-1 text-center text-[9px] font-medium text-white">
@@ -593,7 +689,10 @@ export default function TacticalBoard({
               ⚽
             </div>
           ) : (
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow-lg ring-2 ring-accent">
+            <div
+              style={{ backgroundColor: MARKER_COLOR }}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-white shadow-lg ring-2 ring-accent"
+            >
               <PlayerIcon />
             </div>
           )}
@@ -602,9 +701,16 @@ export default function TacticalBoard({
 
       {isCoach && (
         <div className="mt-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            {t("tacticalBenchTitle")}
-          </h4>
+          <div className="flex items-center gap-2">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: activeTeam === "us" ? teamColors.usColor : teamColors.opponentColor }}
+            />
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+              {t("tacticalBenchTitle")} —{" "}
+              {activeTeam === "us" ? t("tacticalOurTeamTab") : t("preparationOpponentLabel")}
+            </h4>
+          </div>
           <div className="mt-2 space-y-3">
             {POSITION_GROUPS.map((group) => {
               const players = benchByPosition.get(group);
@@ -621,18 +727,25 @@ export default function TacticalBoard({
                         onPointerDown={(e) => startDragFromBench(player, e)}
                         className="flex cursor-grab touch-none items-center gap-2 rounded-full border border-border bg-surface px-2 py-1 text-xs active:cursor-grabbing"
                       >
-                        {player.photo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={player.photo}
-                            alt=""
-                            className="h-5 w-5 shrink-0 rounded-full object-cover"
-                          />
-                        ) : (
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/20 text-[9px] font-semibold text-accent">
-                            {player.name.charAt(0).toUpperCase()}
-                          </span>
-                        )}
+                        <span className="relative shrink-0">
+                          {player.photo ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={player.photo}
+                              alt=""
+                              className="h-5 w-5 rounded-full object-cover"
+                            />
+                          ) : (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/20 text-[9px] font-semibold text-accent">
+                              {player.name.charAt(0).toUpperCase()}
+                            </span>
+                          )}
+                          {player.status && player.status !== "available" && (
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-1 ring-surface ${STATUS_DOT[player.status]}`}
+                            />
+                          )}
+                        </span>
                         <span className="truncate">{player.name}</span>
                       </div>
                     ))}

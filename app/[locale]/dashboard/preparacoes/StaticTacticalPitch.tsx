@@ -1,20 +1,40 @@
 import type { TacticalArrow, TacticalMarker, TacticalPosition } from "../actions";
+import type { TeamColors } from "./useTeamColors";
 
 const PITCH_VIEWBOX_WIDTH = 75;
+const MARKER_COLOR = "#7c3aed";
+// Matches TacticalBoard's pre-extraction default — used as-is by callers
+// that don't pass teamColors (e.g. LiveFormationTeam, which has no teams).
+const DEFAULT_TEAM_COLORS: TeamColors = {
+  usColor: "#dc2626",
+  usTextColor: "#ffffff",
+  opponentColor: "#0f172a",
+  opponentTextColor: "#ffffff",
+};
 
 // Read-only rendering of a saved tactical snapshot — same pitch visuals as
 // the interactive TacticalBoard, minus the drag handling.
+// "sm" (default) suits the tactical-analysis grid of several small preview
+// cards; "lg" matches LiveFormationPitch's token size, for when this is the
+// only/main pitch on screen (e.g. Live Mode's read-only formation view).
 export default function StaticTacticalPitch({
   positions,
   ball,
   markers,
   arrows,
+  teamColors = DEFAULT_TEAM_COLORS,
+  size = "sm",
 }: {
   positions: TacticalPosition[];
   ball?: { x: number; y: number } | null;
   markers?: TacticalMarker[];
   arrows?: TacticalArrow[];
+  teamColors?: TeamColors;
+  size?: "sm" | "lg";
 }) {
+  const tokenClass = size === "lg" ? "h-11 w-11 text-sm" : "h-7 w-7 text-[10px]";
+  const labelClass =
+    size === "lg" ? "max-w-[80px] px-1.5 py-0.5 text-[11px]" : "max-w-[60px] px-1 text-[8px]";
   return (
     <div
       className="relative aspect-[3/4] w-full overflow-hidden rounded-lg shadow-inner"
@@ -63,10 +83,18 @@ export default function StaticTacticalPitch({
           className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
           style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
         >
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white shadow ring-2 ring-white/40">
+          <div
+            style={{
+              backgroundColor: pos.team === "us" ? teamColors.usColor : teamColors.opponentColor,
+              color: pos.team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
+            }}
+            className={`flex items-center justify-center rounded-full font-bold shadow ring-2 ring-white/40 ${tokenClass}`}
+          >
             {pos.number ?? "-"}
           </div>
-          <span className="mt-1 max-w-[60px] truncate rounded bg-black/60 px-1 text-center text-[8px] font-medium text-white">
+          <span
+            className={`mt-1 truncate rounded bg-black/60 text-center font-medium text-white ${labelClass}`}
+          >
             {pos.name}
           </span>
         </div>
@@ -75,8 +103,8 @@ export default function StaticTacticalPitch({
       {markers?.map((m) => (
         <div
           key={m.id}
-          className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-red-600 text-white shadow ring-2 ring-white/40"
-          style={{ left: `${m.x}%`, top: `${m.y}%` }}
+          className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-white shadow ring-2 ring-white/40"
+          style={{ left: `${m.x}%`, top: `${m.y}%`, backgroundColor: MARKER_COLOR }}
         >
           <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current">
             <circle cx="12" cy="6" r="4" />

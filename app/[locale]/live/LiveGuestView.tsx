@@ -601,14 +601,6 @@ export default function LiveGuestView({
         ) : (
           <>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {t("liveStatsMatchSheetTitle")}
-            </h3>
-            <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <LineupEditor teamName={match.homeName} lineup={match.homeLineup} canEdit={false} />
-              <LineupEditor teamName={match.awayName} lineup={match.awayLineup} canEdit={false} />
-            </div>
-
-            <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">
               {t("liveStatsFormationTitle")}
             </h3>
             <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -622,6 +614,14 @@ export default function LiveGuestView({
                 players={match.awayLineup.players.filter((p) => p.starting)}
                 canEdit={false}
               />
+            </div>
+
+            <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">
+              {t("liveStatsMatchSheetTitle")}
+            </h3>
+            <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <LineupEditor teamName={match.homeName} lineup={match.homeLineup} canEdit={false} />
+              <LineupEditor teamName={match.awayName} lineup={match.awayLineup} canEdit={false} />
             </div>
 
             {match.benchNotes && (

@@ -20,6 +20,7 @@ import {
 import type { StandingRow, Fixture, Injury, TeamStatistics } from "@/lib/api-football/client";
 import SeasonStatsGrid from "./SeasonStatsGrid";
 import Countdown from "./Countdown";
+import NextFixturePrepareButton from "./NextFixturePrepareButton";
 import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "./clube/playerShared";
 import { matchResult } from "./clube/fixtureHelpers";
 
@@ -64,6 +65,7 @@ export default async function DashboardOverviewPage({
   let opponentLastFixture: Fixture | null = null;
   let opponentNextFixture: Fixture | null = null;
   let headToHead: Fixture[] = [];
+  let isNextFixturePrepared = false;
 
   if (teamId) {
     try {
@@ -119,13 +121,21 @@ export default async function DashboardOverviewPage({
             opponentStatsByCompetitionId,
             opponentLastFixturesResult,
             opponentNextFixturesResult,
+            preparationRow,
           ] = await Promise.all([
             getInjuries(opponentId, opponentSeason).catch(() => []),
             getHeadToHead(teamId, opponentId).catch(() => []),
             getStatsPerCompetition(opponentId, opponentCompetitions.allCompetitions, opponentSeason),
             getLastFixtures(opponentId).catch(() => []),
             getNextFixtures(opponentId).catch(() => []),
+            supabase
+              .from("fixture_preparations")
+              .select("id")
+              .eq("team_id", teamId)
+              .eq("fixture_id", nextFixture.fixture.id)
+              .maybeSingle(),
           ]);
+          isNextFixturePrepared = preparationRow.data != null;
           opponentInjuries = opponentInjuriesResult;
           opponentLastFixture = opponentLastFixturesResult[0] ?? null;
           opponentNextFixture =
@@ -313,6 +323,18 @@ export default async function DashboardOverviewPage({
                   }}
                 />
 
+                <NextFixturePrepareButton
+                  fixtureId={nextFixture.fixture.id}
+                  isPrepared={isNextFixturePrepared}
+                  opponentName={opponent.name}
+                  labels={{
+                    prepareAction: t("preparationStartButton"),
+                    inProgressAction: t("preparationInProgressButton"),
+                    confirmStart: t("preparationConfirmStart"),
+                    cancel: t("cancelButton"),
+                  }}
+                />
+
                 <div className="mt-6">
                   <h3 className="text-sm font-semibold text-muted">{t("injuriesTitle")}</h3>
                   {opponentInjuries.length === 0 ? (
@@ -386,9 +408,13 @@ export default async function DashboardOverviewPage({
                         >
                           <Link
                             href={`/dashboard/clube/jogo/${fx.fixture.id}`}
-                            className="block text-xs text-muted hover:text-accent"
+                            className="flex items-center gap-1 text-xs text-muted hover:text-accent"
                           >
-                            {new Date(fx.fixture.date).toLocaleDateString(locale)}
+                            <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
+                            <span>·</span>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
+                            <span className="truncate">{fx.league.name}</span>
                           </Link>
                           <div className="mt-0.5 font-medium">
                             <Link
@@ -423,56 +449,78 @@ export default async function DashboardOverviewPage({
                       {opponentLastFixture && opponentLastOpponent && (
                         <Link
                           href={`/dashboard/clube/jogo/${opponentLastFixture.fixture.id}`}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background p-2.5 text-sm transition-colors hover:border-accent"
+                          className="block rounded-lg border border-border bg-background p-2.5 text-sm transition-colors hover:border-accent"
                         >
-                          <span className="shrink-0 text-xs text-muted">
-                            {t("opponentLastMatchLabel")}
-                          </span>
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            {opponentLastResult && (
-                              <span
-                                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                                  opponentLastResult === "W"
-                                    ? "bg-green-600"
-                                    : opponentLastResult === "L"
-                                      ? "bg-red-500"
-                                      : "bg-muted"
-                                }`}
-                              >
-                                {opponentLastResult}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="shrink-0 text-xs text-muted">
+                              {t("opponentLastMatchLabel")}
+                            </span>
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {opponentLastResult && (
+                                <span
+                                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
+                                    opponentLastResult === "W"
+                                      ? "bg-green-600"
+                                      : opponentLastResult === "L"
+                                        ? "bg-red-500"
+                                        : "bg-muted"
+                                  }`}
+                                >
+                                  {opponentLastResult}
+                                </span>
+                              )}
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={opponentLastOpponent.logo}
+                                alt=""
+                                className="h-4 w-4 shrink-0 object-contain"
+                              />
+                              <span className="truncate">{opponentLastOpponent.name}</span>
+                              <span className="shrink-0 font-medium">
+                                {opponentLastFixture.goals.home ?? "-"} -{" "}
+                                {opponentLastFixture.goals.away ?? "-"}
                               </span>
-                            )}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={opponentLastOpponent.logo}
+                              src={opponentLastFixture.league.logo}
                               alt=""
-                              className="h-4 w-4 shrink-0 object-contain"
+                              className="h-3 w-3 shrink-0 object-contain"
                             />
-                            <span className="truncate">{opponentLastOpponent.name}</span>
-                            <span className="shrink-0 font-medium">
-                              {opponentLastFixture.goals.home ?? "-"} -{" "}
-                              {opponentLastFixture.goals.away ?? "-"}
-                            </span>
-                          </span>
+                            <span className="truncate">{opponentLastFixture.league.name}</span>
+                          </div>
                         </Link>
                       )}
                       {opponentNextFixture && opponentNextOpponent && (
-                        <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background p-2.5 text-sm">
-                          <span className="shrink-0 text-xs text-muted">
-                            {t("opponentNextMatchLabel")}
-                          </span>
-                          <span className="flex min-w-0 items-center gap-1.5">
+                        <div className="rounded-lg border border-border bg-background p-2.5 text-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="shrink-0 text-xs text-muted">
+                              {t("opponentNextMatchLabel")}
+                            </span>
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={opponentNextOpponent.logo}
+                                alt=""
+                                className="h-4 w-4 shrink-0 object-contain"
+                              />
+                              <span className="truncate">{opponentNextOpponent.name}</span>
+                              <span className="shrink-0 text-xs text-muted">
+                                {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
+                              </span>
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={opponentNextOpponent.logo}
+                              src={opponentNextFixture.league.logo}
                               alt=""
-                              className="h-4 w-4 shrink-0 object-contain"
+                              className="h-3 w-3 shrink-0 object-contain"
                             />
-                            <span className="truncate">{opponentNextOpponent.name}</span>
-                            <span className="shrink-0 text-xs text-muted">
-                              {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
-                            </span>
-                          </span>
+                            <span className="truncate">{opponentNextFixture.league.name}</span>
+                          </div>
                         </div>
                       )}
                     </div>
