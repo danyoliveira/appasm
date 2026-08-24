@@ -225,7 +225,7 @@ export function fetchTeamStatistics(teamId: number, league: number, season: numb
   });
 }
 
-export function fetchHeadToHead(teamIdA: number, teamIdB: number, count = 5) {
+export function fetchHeadToHead(teamIdA: number, teamIdB: number, count = 3) {
   return callApiFootball<Fixture[]>("/fixtures/headtohead", {
     h2h: `${teamIdA}-${teamIdB}`,
     last: count,

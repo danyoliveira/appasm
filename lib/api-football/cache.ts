@@ -183,12 +183,14 @@ export const getTeamStatistics = (teamId: number, league: number, season: number
     () => fetchTeamStatistics(teamId, league, season),
   );
 
-export const getHeadToHead = (teamIdA: number, teamIdB: number) =>
+export const getHeadToHead = (teamIdA: number, teamIdB: number, count = 3) =>
   cached<Fixture[]>(
-    `h2h:${[teamIdA, teamIdB].sort((a, b) => a - b).join("-")}`,
+    // `count` is part of the key so bumping it invalidates the old,
+    // larger-window cache entries instead of serving them until TTL expiry.
+    `h2h:${[teamIdA, teamIdB].sort((a, b) => a - b).join("-")}:${count}`,
     null,
     TTL_MS.headToHead,
-    () => fetchHeadToHead(teamIdA, teamIdB),
+    () => fetchHeadToHead(teamIdA, teamIdB, count),
   );
 
 export const getPlayersStatistics = (teamId: number, season: number) =>
