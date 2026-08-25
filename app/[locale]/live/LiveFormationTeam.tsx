@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import StaticTacticalPitch from "../dashboard/preparations/StaticTacticalPitch";
 import LiveFormationPitch from "./LiveFormationPitch";
-import { lastName, type LineupPlayer } from "./liveStatsShared";
+import { defaultFormationPosition, lastName, type LineupPlayer } from "./liveStatsShared";
 
 // Controlled — the wizard/Match Mode owns the starting-XI array so saves can
 // be batched (Seguinte) or immediate (a drag in Match Mode), whichever fits.
@@ -43,16 +43,26 @@ export default function LiveFormationTeam({
           />
         ) : (
           <StaticTacticalPitch
+            size="lg"
             positions={players
-              .filter((p) => p.name.trim())
-              .map((p, i) => ({
-                playerId: i,
-                name: lastName(p.name),
-                number: p.number,
-                photo: "",
-                x: p.x ?? 50,
-                y: p.y ?? 50,
-              }))}
+              .map((p, i) => ({ p, i }))
+              .filter(({ p }) => p.name.trim())
+              .map(({ p, i }) => {
+                // Same fallback as LiveFormationPitch (edit mode), keyed by
+                // each player's original index — a filled-in x/y always
+                // wins, an unset one falls back to the formation layout
+                // instead of collapsing every unpositioned player onto the
+                // center spot.
+                const pos = p.x != null && p.y != null ? { x: p.x, y: p.y } : defaultFormationPosition(i);
+                return {
+                  playerId: i,
+                  name: lastName(p.name),
+                  number: p.number,
+                  photo: "",
+                  x: pos.x,
+                  y: pos.y,
+                };
+              })}
           />
         )}
       </div>

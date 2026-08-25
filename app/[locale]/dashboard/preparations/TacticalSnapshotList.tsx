@@ -11,11 +11,13 @@ import {
 } from "../actions";
 import StaticTacticalPitch from "./StaticTacticalPitch";
 import ConfirmDialog from "../ConfirmDialog";
+import type { TeamColors } from "./useTeamColors";
 
 export interface TacticalSnapshotRow {
   id: string;
   title: string;
   positions: TacticalPosition[];
+  team: "us" | "opponent";
   ball: { x: number; y: number } | null;
   markers: TacticalMarker[];
   arrows: TacticalArrow[];
@@ -29,11 +31,15 @@ export default function TacticalSnapshotList({
   isCoach,
   editingId,
   onEdit,
+  onDuplicate,
+  teamColors,
 }: {
   rows: TacticalSnapshotRow[];
   isCoach: boolean;
   editingId?: string | null;
   onEdit?: (row: TacticalSnapshotRow) => void;
+  onDuplicate?: (row: TacticalSnapshotRow) => void;
+  teamColors?: TeamColors;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -73,6 +79,7 @@ export default function TacticalSnapshotList({
                 ball={row.ball}
                 markers={row.markers}
                 arrows={row.arrows}
+                teamColors={teamColors}
               />
             </div>
 
@@ -111,6 +118,13 @@ export default function TacticalSnapshotList({
                       className="text-xs font-medium text-accent hover:underline"
                     >
                       {t("editButton")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDuplicate?.(row)}
+                      className="text-xs font-medium text-accent hover:underline"
+                    >
+                      {t("tacticalDuplicateButton")}
                     </button>
                     <button
                       type="button"

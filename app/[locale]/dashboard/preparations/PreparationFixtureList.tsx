@@ -11,6 +11,7 @@ export interface PreparationFixtureRow {
   opponentLogo: string;
   competitionName: string;
   competitionLogo: string;
+  isHome: boolean;
   isPrepared: boolean;
 }
 
@@ -29,6 +30,8 @@ export default function PreparationFixtureList({
     dateTime: string;
     opponent: string;
     competition: string;
+    home: string;
+    away: string;
     prepareAction: string;
     resumeAction: string;
     confirmStart: string;
@@ -111,6 +114,9 @@ export default function PreparationFixtureList({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={row.opponentLogo} alt="" className="h-5 w-5 object-contain" />
                       {row.opponentName}
+                      <span className="text-xs text-muted">
+                        ({row.isHome ? labels.home : labels.away})
+                      </span>
                     </div>
                   </td>
                   <td className="px-3 py-2">

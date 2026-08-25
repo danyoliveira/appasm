@@ -110,7 +110,7 @@ export async function addPreparationVideo(
   notes: string,
   category: VideoCategory | null,
   playerId: number | null,
-  tacticalSnapshotId: string | null,
+  team: "us" | "opponent",
 ) {
   const supabase = await createClient();
   const {
@@ -143,7 +143,7 @@ export async function addPreparationVideo(
     notes: notes.trim() || null,
     category,
     player_id: playerId,
-    tactical_snapshot_id: tacticalSnapshotId,
+    team,
     created_by: user.id,
   });
 
@@ -157,7 +157,7 @@ export async function updatePreparationVideo(
   notes: string,
   category: VideoCategory | null,
   playerId: number | null,
-  tacticalSnapshotId: string | null,
+  team: "us" | "opponent",
 ) {
   const supabase = await createClient();
   const {
@@ -182,7 +182,7 @@ export async function updatePreparationVideo(
       notes: notes.trim() || null,
       category,
       player_id: playerId,
-      tactical_snapshot_id: tacticalSnapshotId,
+      team,
     })
     .eq("id", id);
 
@@ -209,6 +209,12 @@ export interface TacticalPosition {
   photo: string;
   x: number;
   y: number;
+  // Optional: StaticTacticalPitch is also reused to render live-match
+  // formations (see LiveFormationTeam), which have no team of their own.
+  // Missing on old tactical snapshots too (saved before both squads could
+  // be placed on the board, back when everyone placed was the opponent) —
+  // callers treat an absent team as "opponent".
+  team?: "us" | "opponent";
 }
 
 export interface TacticalMarker {
@@ -232,6 +238,10 @@ export interface TacticalSnapshotData {
   ball: { x: number; y: number } | null;
   markers: TacticalMarker[];
   arrows: TacticalArrow[];
+  // Which bench tab was active when this analysis was saved — lets the
+  // saved-analyses list filter by team the same way the board's bench does.
+  // Optional: missing on snapshots saved before both squads existed.
+  team?: "us" | "opponent";
 }
 
 // Each save is a new, separately-kept snapshot (like preparation_videos) —

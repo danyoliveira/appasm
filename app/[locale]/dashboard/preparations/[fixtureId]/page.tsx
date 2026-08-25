@@ -23,11 +23,10 @@ import Countdown from "../../Countdown";
 import { matchResult } from "../../club/fixtureHelpers";
 import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "../../club/playerShared";
 import { getVideoEmbedUrl } from "@/lib/videoEmbed";
-import AddPreparationVideo from "../AddPreparationVideo";
-import PreparationVideoList, { type PreparationVideoRow } from "../PreparationVideoList";
-import TacticalAnalysisSection from "../TacticalAnalysisSection";
+import { type PreparationVideoRow } from "../PreparationVideoList";
+import PreGameAnalysis from "../PreGameAnalysis";
 import type { TacticalSnapshotRow } from "../TacticalSnapshotList";
-import type { TacticalArrow, TacticalMarker, TacticalPosition } from "../../actions";
+import type { PlayerStatus, TacticalArrow, TacticalMarker, TacticalPosition } from "../../actions";
 import LiveStatsPanel from "../LiveStatsPanel";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
 
@@ -240,16 +239,32 @@ export default async function PreparationDetailPage({
     photo: string;
     position: string;
   }[] = [];
+  let ourSquad: {
+    id: number;
+    name: string;
+    number: number | null;
+    photo: string;
+    position: string;
+    status: PlayerStatus;
+  }[] = [];
   let tacticalSnapshots: TacticalSnapshotRow[] = [];
   if (match) {
-    const [squadResult, { data: tacticsRows }] = await Promise.all([
-      getSquad(match.opponentId).catch(() => []),
-      supabase
-        .from("preparation_tactics")
-        .select("id, positions, notes, video_url")
-        .eq("preparation_key", fixtureIdParam)
-        .order("created_at", { ascending: false }),
-    ]);
+    const [squadResult, ourSquadResult, { data: availabilityRows }, { data: tacticsRows }] =
+      await Promise.all([
+        getSquad(match.opponentId).catch(() => []),
+        teamId ? getSquad(teamId).catch(() => []) : Promise.resolve([]),
+        teamId
+          ? supabase
+              .from("player_availability")
+              .select("player_id, status, excluded")
+              .eq("team_id", teamId)
+          : Promise.resolve({ data: null }),
+        supabase
+          .from("preparation_tactics")
+          .select("id, positions, notes, video_url")
+          .eq("preparation_key", fixtureIdParam)
+          .order("created_at", { ascending: false }),
+      ]);
     opponentSquad = (squadResult[0]?.players ?? []).map((p) => ({
       id: p.id,
       name: shortenPlayerName(p.name),
@@ -257,27 +272,46 @@ export default async function PreparationDetailPage({
       photo: p.photo,
       position: p.position,
     }));
+    const availabilityByPlayerId = new Map(
+      (availabilityRows ?? []).map((row) => [row.player_id, row]),
+    );
+    ourSquad = (ourSquadResult[0]?.players ?? [])
+      .filter((p) => !availabilityByPlayerId.get(p.id)?.excluded)
+      .map((p) => ({
+        id: p.id,
+        name: shortenPlayerName(p.name),
+        number: p.number,
+        photo: p.photo,
+        position: p.position,
+        status: (availabilityByPlayerId.get(p.id)?.status as PlayerStatus) ?? "available",
+      }));
+    type LegacyPosition = Omit<TacticalPosition, "team"> & { team?: "us" | "opponent" };
     const totalSnapshots = tacticsRows?.length ?? 0;
     tacticalSnapshots = (tacticsRows ?? []).map((row, i) => {
       // Snapshots saved before the ball/markers/arrows toolbox stored a
       // plain player array in `positions`; newer ones store the full shape.
       const raw = row.positions as
-        | TacticalPosition[]
+        | LegacyPosition[]
         | {
-            players?: TacticalPosition[];
+            players?: LegacyPosition[];
             ball?: { x: number; y: number } | null;
             markers?: TacticalMarker[];
             arrows?: TacticalArrow[];
+            team?: "us" | "opponent";
           }
         | null;
       const isLegacyArray = Array.isArray(raw);
+      const rawPlayers = isLegacyArray ? raw : (raw?.players ?? []);
       return {
         id: row.id,
         // Rows come back newest-first — number them oldest-first (#1 is the
         // first analysis ever saved for this preparation) so the label
         // stays meaningful as new ones are added.
         title: t("videoSnapshotOption", { index: totalSnapshots - i }),
-        positions: isLegacyArray ? raw : (raw?.players ?? []),
+        // Snapshots saved before both squads could be placed only ever held
+        // opponent players, so a missing team defaults to "opponent".
+        positions: rawPlayers.map((p) => ({ ...p, team: p.team ?? "opponent" })),
+        team: (isLegacyArray ? undefined : raw?.team) ?? "opponent",
         ball: isLegacyArray ? null : (raw?.ball ?? null),
         markers: isLegacyArray ? [] : (raw?.markers ?? []),
         arrows: isLegacyArray ? [] : (raw?.arrows ?? []),
@@ -289,21 +323,20 @@ export default async function PreparationDetailPage({
   }
 
   const opponentSquadById = new Map(opponentSquad.map((p) => [p.id, p]));
-  const tacticalSnapshotById = new Map(tacticalSnapshots.map((s) => [s.id, s]));
+  const ourSquadById = new Map(ourSquad.map((p) => [p.id, p]));
 
   let videoRows: PreparationVideoRow[] = [];
   if (match) {
     const { data } = await supabase
       .from("preparation_videos")
-      .select("id, url, notes, category, player_id, tactical_snapshot_id")
+      .select("id, url, notes, category, player_id, team")
       .eq("preparation_key", fixtureIdParam)
       .order("created_at", { ascending: false });
 
     videoRows = (data ?? []).map((row) => {
-      const player = row.player_id ? (opponentSquadById.get(row.player_id) ?? null) : null;
-      const snapshot = row.tactical_snapshot_id
-        ? tacticalSnapshotById.get(row.tactical_snapshot_id)
-        : undefined;
+      const player = row.player_id
+        ? (opponentSquadById.get(row.player_id) ?? ourSquadById.get(row.player_id) ?? null)
+        : null;
 
       return {
         id: row.id,
@@ -312,8 +345,7 @@ export default async function PreparationDetailPage({
         embedUrl: getVideoEmbedUrl(row.url),
         category: row.category,
         player: player ? { id: player.id, name: player.name, photo: player.photo } : null,
-        tacticalSnapshotId: row.tactical_snapshot_id,
-        snapshotLabel: snapshot ? snapshot.title : null,
+        team: (row.team as "us" | "opponent") ?? "opponent",
       };
     });
   }
@@ -389,9 +421,13 @@ export default async function PreparationDetailPage({
               >
                 <Link
                   href={`/dashboard/club/fixture/${fx.fixture.id}`}
-                  className="block text-xs text-muted hover:text-accent"
+                  className="flex items-center gap-1 text-xs text-muted hover:text-accent"
                 >
-                  {new Date(fx.fixture.date).toLocaleDateString(locale)}
+                  <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
+                  <span>·</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
+                  <span className="truncate">{fx.league.name}</span>
                 </Link>
                 <div className="mt-0.5 font-medium">
                   <Link href={`/dashboard/club/${fx.teams.home.id}`} className="hover:text-accent">
@@ -417,51 +453,73 @@ export default async function PreparationDetailPage({
             {opponentLastFixture && opponentLastOpponent && (
               <Link
                 href={`/dashboard/club/fixture/${opponentLastFixture.fixture.id}`}
-                className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface p-2.5 text-sm transition-colors hover:border-accent"
+                className="block rounded-lg border border-border bg-surface p-2.5 text-sm transition-colors hover:border-accent"
               >
-                <span className="shrink-0 text-xs text-muted">{t("opponentLastMatchLabel")}</span>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  {opponentLastResult && (
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                        opponentLastResult === "W"
-                          ? "bg-green-600"
-                          : opponentLastResult === "L"
-                            ? "bg-red-500"
-                            : "bg-muted"
-                      }`}
-                    >
-                      {opponentLastResult}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-xs text-muted">{t("opponentLastMatchLabel")}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {opponentLastResult && (
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
+                          opponentLastResult === "W"
+                            ? "bg-green-600"
+                            : opponentLastResult === "L"
+                              ? "bg-red-500"
+                              : "bg-muted"
+                        }`}
+                      >
+                        {opponentLastResult}
+                      </span>
+                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={opponentLastOpponent.logo}
+                      alt=""
+                      className="h-4 w-4 shrink-0 object-contain"
+                    />
+                    <span className="truncate">{opponentLastOpponent.name}</span>
+                    <span className="shrink-0 font-medium">
+                      {opponentLastFixture.goals.home ?? "-"} - {opponentLastFixture.goals.away ?? "-"}
                     </span>
-                  )}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={opponentLastOpponent.logo}
+                    src={opponentLastFixture.league.logo}
                     alt=""
-                    className="h-4 w-4 shrink-0 object-contain"
+                    className="h-3 w-3 shrink-0 object-contain"
                   />
-                  <span className="truncate">{opponentLastOpponent.name}</span>
-                  <span className="shrink-0 font-medium">
-                    {opponentLastFixture.goals.home ?? "-"} - {opponentLastFixture.goals.away ?? "-"}
-                  </span>
-                </span>
+                  <span className="truncate">{opponentLastFixture.league.name}</span>
+                </div>
               </Link>
             )}
             {opponentNextFixture && opponentNextOpponent && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface p-2.5 text-sm">
-                <span className="shrink-0 text-xs text-muted">{t("opponentNextMatchLabel")}</span>
-                <span className="flex min-w-0 items-center gap-1.5">
+              <div className="rounded-lg border border-border bg-surface p-2.5 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-xs text-muted">{t("opponentNextMatchLabel")}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={opponentNextOpponent.logo}
+                      alt=""
+                      className="h-4 w-4 shrink-0 object-contain"
+                    />
+                    <span className="truncate">{opponentNextOpponent.name}</span>
+                    <span className="shrink-0 text-xs text-muted">
+                      {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
+                    </span>
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={opponentNextOpponent.logo}
+                    src={opponentNextFixture.league.logo}
                     alt=""
-                    className="h-4 w-4 shrink-0 object-contain"
+                    className="h-3 w-3 shrink-0 object-contain"
                   />
-                  <span className="truncate">{opponentNextOpponent.name}</span>
-                  <span className="shrink-0 text-xs text-muted">
-                    {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
-                  </span>
-                </span>
+                  <span className="truncate">{opponentNextFixture.league.name}</span>
+                </div>
               </div>
             )}
           </div>
@@ -504,45 +562,17 @@ export default async function PreparationDetailPage({
   // to a Client Component like PreparationTabs, only already-resolved JSX.
   function renderPreGameContent(sideBySide: boolean) {
     return (
-      <div className="space-y-4">
-        <details open className="group rounded-2xl border border-border bg-surface">
-          <summary className="flex cursor-pointer select-none list-none items-center justify-between px-4 py-3 text-sm font-semibold">
-            {t("tacticalAnalysisTitle")}
-            <span className="text-muted transition-transform group-open:rotate-180">▾</span>
-          </summary>
-          <div className="border-t border-border p-4">
-            <TacticalAnalysisSection
-              preparationKey={fixtureIdParam}
-              squad={opponentSquad}
-              isCoach={isCoach}
-              sideBySide={sideBySide}
-              rows={tacticalSnapshots}
-            />
-          </div>
-        </details>
-
-        <details open className="group rounded-2xl border border-border bg-surface">
-          <summary className="flex cursor-pointer select-none list-none items-center justify-between px-4 py-3 text-sm font-semibold">
-            {t("videoAnalysisTitle")}
-            <span className="text-muted transition-transform group-open:rotate-180">▾</span>
-          </summary>
-          <div className="border-t border-border p-4">
-            <PreparationVideoList
-              rows={videoRows}
-              isCoach={isCoach}
-              players={opponentSquad.map((p) => ({ id: p.id, name: p.name }))}
-              snapshots={tacticalSnapshots.map((s) => ({ id: s.id, label: s.title }))}
-            />
-            {isCoach && (
-              <AddPreparationVideo
-                preparationKey={fixtureIdParam}
-                players={opponentSquad.map((p) => ({ id: p.id, name: p.name }))}
-                snapshots={tacticalSnapshots.map((s) => ({ id: s.id, label: s.title }))}
-              />
-            )}
-          </div>
-        </details>
-      </div>
+      <PreGameAnalysis
+        preparationKey={fixtureIdParam}
+        opponentSquad={opponentSquad}
+        ourSquad={ourSquad}
+        ourLogo={match?.ourTeamLogo}
+        opponentLogo={match?.opponentLogo}
+        isCoach={isCoach}
+        sideBySide={sideBySide}
+        tacticalRows={tacticalSnapshots}
+        videoRows={videoRows}
+      />
     );
   }
 
@@ -664,6 +694,8 @@ export default async function PreparationDetailPage({
               inGameContentFocus={inGameContent}
               matchDate={match.date}
               opponentName={match.opponentName}
+              liveSession={liveSession}
+              finished={match.finished}
             />
           </div>
         </>

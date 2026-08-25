@@ -6,12 +6,26 @@ import { useTranslations } from "next-intl";
 type Phase = "pre" | "in" | "post";
 type TabKey = "general" | Phase;
 
-// No live match-status feed is wired up yet, so "during the match" is a
-// time-window guess: kickoff minus an hour (warm-up/team-talk window)
-// through a rough two-hour match length (90' + half-time + stoppage).
+// Three signals, in order of trust:
+// 1. A live-stats session's started_at/ended_at are exact, when one exists.
+// 2. Without a session, API-Football's own result (`finished`) still tells
+//    us for certain a real fixture is over — no need to guess from the
+//    clock. Manual preparations (opponent outside the fixture list) never
+//    get a result from the API, so this only helps real fixtures.
+// 3. Only with neither do we fall back to a time-window guess: kickoff
+//    minus an hour (warm-up/team-talk window) through a rough two-hour
+//    match length (90' + half-time + stoppage).
 // "Informação Geral" sits outside this — it's reference data, not tied to
 // a match-day phase, so focus mode never selects it automatically.
-function currentPhase(matchDate: string): Phase {
+function currentPhase(
+  matchDate: string,
+  liveSession: { startedAt: string | null; endedAt: string | null } | null,
+  finished: boolean,
+): Phase {
+  if (liveSession?.endedAt) return "post";
+  if (liveSession?.startedAt) return "in";
+  if (finished) return "post";
+
   const now = Date.now();
   const kickoff = new Date(matchDate).getTime();
   const oneHour = 60 * 60 * 1000;
@@ -29,6 +43,8 @@ export default function PreparationTabs({
   inGameContentFocus,
   matchDate,
   opponentName,
+  liveSession,
+  finished = false,
 }: {
   generalInfoContent?: ReactNode;
   preGameContent?: ReactNode;
@@ -37,6 +53,8 @@ export default function PreparationTabs({
   inGameContentFocus?: ReactNode;
   matchDate: string;
   opponentName: string;
+  liveSession?: { startedAt: string | null; endedAt: string | null } | null;
+  finished?: boolean;
 }) {
   const t = useTranslations("dashboard");
   const [tab, setTab] = useState<TabKey>("general");
@@ -79,7 +97,9 @@ export default function PreparationTabs({
             </button>
           </div>
 
-          <div className="mt-6">{contentFor(currentPhase(matchDate), true)}</div>
+          <div className="mt-6">
+            {contentFor(currentPhase(matchDate, liveSession ?? null, finished), true)}
+          </div>
         </div>
       </div>
     );

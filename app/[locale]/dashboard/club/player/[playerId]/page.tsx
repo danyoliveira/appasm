@@ -231,7 +231,7 @@ export default async function PlayerDetailPage({
 
   const { data: videoData } = await supabase
     .from("preparation_videos")
-    .select("id, url, notes, category, tactical_snapshot_id, preparation_tactics(notes)")
+    .select("id, url, notes, category, team")
     .eq("team_id", teamId)
     .eq("player_id", playerId)
     .order("created_at", { ascending: false });
@@ -243,10 +243,7 @@ export default async function PlayerDetailPage({
     embedUrl: getVideoEmbedUrl(row.url),
     category: row.category,
     player: null,
-    tacticalSnapshotId: row.tactical_snapshot_id,
-    snapshotLabel: row.tactical_snapshot_id
-      ? (row.preparation_tactics?.[0]?.notes ?? t("videoSnapshotGeneric"))
-      : null,
+    team: (row.team as "us" | "opponent") ?? "opponent",
   }));
 
   const relevantSeasonStats = selectedCompetitionId

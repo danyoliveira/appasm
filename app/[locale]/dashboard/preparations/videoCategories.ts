@@ -5,8 +5,3 @@ export interface VideoPlayerOption {
   id: number;
   name: string;
 }
-
-export interface VideoSnapshotOption {
-  id: string;
-  label: string;
-}

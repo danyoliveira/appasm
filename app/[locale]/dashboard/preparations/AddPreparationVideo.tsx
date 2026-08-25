@@ -4,12 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { addPreparationVideo } from "../actions";
-import {
-  VIDEO_CATEGORIES,
-  type VideoCategory,
-  type VideoPlayerOption,
-  type VideoSnapshotOption,
-} from "./videoCategories";
+import { VIDEO_CATEGORIES, type VideoCategory, type VideoPlayerOption } from "./videoCategories";
+import type { Team } from "./TacticalBoard";
 
 const CATEGORY_LABEL_KEYS: Record<VideoCategory, string> = {
   attack: "videoCategoryAttack",
@@ -21,11 +17,11 @@ const CATEGORY_LABEL_KEYS: Record<VideoCategory, string> = {
 export default function AddPreparationVideo({
   preparationKey,
   players = [],
-  snapshots = [],
+  team,
 }: {
   preparationKey: string;
   players?: VideoPlayerOption[];
-  snapshots?: VideoSnapshotOption[];
+  team: Team;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -34,7 +30,6 @@ export default function AddPreparationVideo({
   const [notes, setNotes] = useState("");
   const [category, setCategory] = useState("");
   const [playerId, setPlayerId] = useState("");
-  const [snapshotId, setSnapshotId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
 
@@ -49,13 +44,12 @@ export default function AddPreparationVideo({
           notes,
           (category || null) as VideoCategory | null,
           playerId ? Number(playerId) : null,
-          snapshotId || null,
+          team,
         );
         setUrl("");
         setNotes("");
         setCategory("");
         setPlayerId("");
-        setSnapshotId("");
         setIsOpen(false);
         router.refresh();
       } catch {
@@ -110,7 +104,7 @@ export default function AddPreparationVideo({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-muted">{t("videoCategoryLabel")}</label>
             <select
@@ -139,24 +133,6 @@ export default function AddPreparationVideo({
                 {players.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {snapshots.length > 0 && (
-            <div>
-              <label className="mb-1 block text-xs text-muted">{t("videoSnapshotLabel")}</label>
-              <select
-                value={snapshotId}
-                onChange={(e) => setSnapshotId(e.target.value)}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-              >
-                <option value="">{t("videoSnapshotNone")}</option>
-                {snapshots.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
                   </option>
                 ))}
               </select>

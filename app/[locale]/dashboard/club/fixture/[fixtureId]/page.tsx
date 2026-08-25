@@ -1,6 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
+import { createClient } from "@/lib/supabase/server";
 import {
   getFixtureById,
   getFixtureEvents,
@@ -82,6 +83,25 @@ export default async function FixtureDetailPage({
     );
   }
 
+  const supabase = await createClient();
+  const { data: coachProfile } = await supabase
+    .from("profiles")
+    .select("api_football_team_id")
+    .eq("role", "coach")
+    .maybeSingle();
+  const teamId = coachProfile?.api_football_team_id ?? null;
+
+  let hasPreparation = false;
+  if (teamId) {
+    const { data: preparationRow } = await supabase
+      .from("fixture_preparations")
+      .select("id")
+      .eq("team_id", teamId)
+      .eq("fixture_id", fixtureId)
+      .maybeSingle();
+    hasPreparation = preparationRow != null;
+  }
+
   const homeLineup = lineups.find((l) => l.team.id === detail!.teams.home.id);
   const awayLineup = lineups.find((l) => l.team.id === detail!.teams.away.id);
   const homeStats = statistics.find((s) => s.team.id === detail!.teams.home.id);
@@ -145,6 +165,17 @@ export default async function FixtureDetailPage({
           )}
           {detail.fixture.referee && <span>🧑‍⚖️ {detail.fixture.referee}</span>}
         </div>
+
+        {hasPreparation && (
+          <div className="mt-4 flex justify-center">
+            <Link
+              href={`/dashboard/preparations/${fixtureId}`}
+              className="inline-block rounded-full border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/10"
+            >
+              {t("reviewPreparationButton")}
+            </Link>
+          </div>
+        )}
       </div>
 
       {homeLineup && awayLineup && (
