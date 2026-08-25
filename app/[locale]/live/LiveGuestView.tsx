@@ -145,6 +145,11 @@ export default function LiveGuestView({
   // let that fail silently (stale screen, no explanation, mid-match), any
   // of those triggers this and the whole view switches to a clear message.
   const [linkExpired, setLinkExpired] = useState(false);
+  // One id per open tab, for as long as it stays open — lets the coach's
+  // dashboard count distinct connected devices, not just "the token was
+  // used." Regenerated on every mount (a reload counts as a new
+  // connection), which is fine: presence is a live snapshot, not a log.
+  const [connectionId] = useState(() => crypto.randomUUID());
 
   // The wizard owns every step's draft (instead of each child keeping its
   // own local state) so "Seguinte" can save before advancing — otherwise
@@ -164,7 +169,7 @@ export default function LiveGuestView({
   // stopped resolving to a session, so this is also where "the link died"
   // gets detected and surfaced, instead of the screen just going stale.
   async function refetchOrExpire(): Promise<boolean> {
-    const next = await getLiveFeedByToken(token);
+    const next = await getLiveFeedByToken(token, connectionId);
     if (next) {
       setFeed(next);
       return true;

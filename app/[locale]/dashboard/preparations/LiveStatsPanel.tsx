@@ -1,25 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   createLiveSession,
+  getLiveSessionPresence,
   regenerateLiveSessionToken,
   setLiveSessionStatus,
   type LiveSessionInfo,
 } from "./liveStatsActions";
 import ConfirmDialog from "../ConfirmDialog";
 
+const PRESENCE_POLL_MS = 5000;
+
 function CopyableLink({
   icon,
   label,
   path,
+  onlineCount,
   onRegenerate,
   isRegenerating,
 }: {
   icon: string;
   label: string;
   path: string;
+  onlineCount: number | null;
   onRegenerate: () => void;
   isRegenerating: boolean;
 }) {
@@ -41,6 +46,15 @@ function CopyableLink({
           {icon}
         </span>
         {label}
+        {onlineCount !== null && (
+          <span
+            title={t("liveStatsOnlineCountLabel", { count: onlineCount })}
+            className="ml-auto flex items-center gap-1 text-[11px] font-normal text-muted"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${onlineCount > 0 ? "bg-green-500" : "bg-muted"}`} />
+            {onlineCount}
+          </span>
+        )}
       </div>
       <div className="mt-2 flex items-center gap-2">
         <input
@@ -93,6 +107,35 @@ export default function LiveStatsPanel({
   // Which link a confirmation is pending for — regenerating kills the old
   // link immediately (no grace period), so this always confirms first.
   const [confirmTarget, setConfirmTarget] = useState<"member" | "viewer" | null>(null);
+  const [memberOnline, setMemberOnline] = useState<number | null>(null);
+  const [viewerOnline, setViewerOnline] = useState<number | null>(null);
+
+  // Lets the coach notice a link problem (regenerated, or nobody ever
+  // opened it) within seconds instead of finding out mid-match — see
+  // getLiveSessionPresence for how "online" is defined.
+  useEffect(() => {
+    if (!session) return;
+    const sessionId = session.id;
+    let cancelled = false;
+
+    async function poll() {
+      const result = await getLiveSessionPresence(sessionId).catch(() => null);
+      if (cancelled || !result) return;
+      setMemberOnline(result.memberCount);
+      setViewerOnline(result.viewerCount);
+    }
+
+    poll();
+    const interval = setInterval(poll, PRESENCE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // Only restart the poll loop when which session we're tracking changes
+    // — not on every session field update (e.g. after ending the match),
+    // which would just reset the interval's timer for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id]);
 
   async function handleCreate() {
     setIsCreating(true);
@@ -179,6 +222,7 @@ export default function LiveStatsPanel({
           icon="✎"
           label={t("liveStatsMemberLinkLabel")}
           path={session.memberLink}
+          onlineCount={memberOnline}
           onRegenerate={() => setConfirmTarget("member")}
           isRegenerating={regenerating === "member"}
         />
@@ -186,6 +230,7 @@ export default function LiveStatsPanel({
           icon="👁"
           label={t("liveStatsViewerLinkLabel")}
           path={session.viewerLink}
+          onlineCount={viewerOnline}
           onRegenerate={() => setConfirmTarget("viewer")}
           isRegenerating={regenerating === "viewer"}
         />

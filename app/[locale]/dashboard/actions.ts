@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -380,6 +381,10 @@ export async function createInvite(
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  // "/" (no locale prefix) is deliberate — proxy.ts already redirects a
+  // signed-out visitor there to /{locale}/login, so this doesn't need to
+  // know the current locale.
+  redirect("/");
 }
 
 export type ProfileFormState = { error?: string; success?: boolean };

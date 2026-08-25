@@ -52,6 +52,7 @@
     "liveStatsRegenerateButton": "Nouveau lien",
     "liveStatsRegenerateMemberConfirm": "Le lien de saisie actuel cessera de fonctionner dès que tu en génères un nouveau. Continuer ?",
     "liveStatsRegenerateViewerConfirm": "Le lien de suivi actuel cessera de fonctionner dès que tu en génères un nouveau. Continuer ?",
+    "liveStatsOnlineCountLabel": "{count} {count, plural, one {personne connectée} other {personnes connectées}} maintenant",
     "liveStatsEmptyFeed": "Aucun événement enregistré pour l'instant.",
     "liveStatsAddEventTitle": "Enregistrer un événement",
     "liveStatsTeamSideLabel": "Équipe",

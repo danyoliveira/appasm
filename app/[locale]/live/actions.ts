@@ -48,7 +48,15 @@ async function requireSessionIdByMemberToken(token: string): Promise<string> {
 
 // Guests never touch Supabase Auth — the token IS the credential, validated
 // and executed here with the admin client, entirely outside RLS.
-export async function getLiveFeedByToken(token: string): Promise<GuestLiveFeed | null> {
+//
+// connectionId (a random id the guest's browser mints once per page load)
+// doubles this as a presence heartbeat when provided — every poll from the
+// guest view keeps live_match_presence fresh, so the coach's dashboard can
+// show who's actually connected right now (see getLiveSessionPresence).
+export async function getLiveFeedByToken(
+  token: string,
+  connectionId?: string,
+): Promise<GuestLiveFeed | null> {
   const admin = createAdminClient();
   const { data: session } = await admin
     .from("live_match_sessions")
@@ -59,6 +67,20 @@ export async function getLiveFeedByToken(token: string): Promise<GuestLiveFeed |
   if (!session) return null;
 
   const role = session.member_token === token ? "member" : "viewer";
+
+  if (connectionId) {
+    await admin
+      .from("live_match_presence")
+      .upsert(
+        { session_id: session.id, connection_id: connectionId, role, last_seen_at: new Date().toISOString() },
+        { onConflict: "session_id,connection_id" },
+      )
+      .then(
+        () => {},
+        () => {}, // Presence is a nice-to-have — never let it break the feed fetch.
+      );
+  }
+
   const teams = await resolveLiveMatchTeams(session.preparation_key, session.team_id);
   if (!teams) return null;
 

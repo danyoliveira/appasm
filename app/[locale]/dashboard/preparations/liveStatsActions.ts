@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   mapLiveEntryRow,
   emptyLineup,
@@ -165,6 +166,45 @@ export async function regenerateLiveSessionToken(
   if (error) throw new Error(error.message);
   revalidatePath("/", "layout");
   return toSessionInfo(data);
+}
+
+export interface LiveSessionPresence {
+  memberCount: number;
+  viewerCount: number;
+}
+
+// A connection counts as "online" if its last poll landed within this
+// window — comfortably above the guest view's 4s interval so one slow
+// request doesn't flicker someone offline, but tight enough to notice a
+// real drop (a regenerated link, someone closing the tab) within seconds.
+const ONLINE_WINDOW_SECONDS = 12;
+const PRESENCE_MAX_AGE_MS = 60 * 60 * 1000;
+
+export async function getLiveSessionPresence(sessionId: string): Promise<LiveSessionPresence> {
+  const { profile } = await requireProfile();
+  requireManager(profile);
+
+  // Presence rows have no other owner to prune them (guests never come
+  // back to delete their own) — bounded, cheap cleanup piggybacked on the
+  // read the coach's dashboard already polls every few seconds.
+  const admin = createAdminClient();
+  await admin
+    .from("live_match_presence")
+    .delete()
+    .eq("session_id", sessionId)
+    .lt("last_seen_at", new Date(Date.now() - PRESENCE_MAX_AGE_MS).toISOString());
+
+  const { data } = await admin
+    .from("live_match_presence")
+    .select("role")
+    .eq("session_id", sessionId)
+    .gte("last_seen_at", new Date(Date.now() - ONLINE_WINDOW_SECONDS * 1000).toISOString());
+
+  const rows = data ?? [];
+  return {
+    memberCount: rows.filter((r) => r.role === "member").length,
+    viewerCount: rows.filter((r) => r.role === "viewer").length,
+  };
 }
 
 export async function setLiveSessionStatus(sessionId: string, action: "start" | "end") {

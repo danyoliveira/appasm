@@ -83,7 +83,6 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
   function handleSignOut() {
     startTransition(async () => {
       await signOut();
-      window.location.href = "/";
     });
   }
 

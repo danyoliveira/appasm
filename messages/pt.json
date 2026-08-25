@@ -52,6 +52,7 @@
     "liveStatsRegenerateButton": "Novo link",
     "liveStatsRegenerateMemberConfirm": "O link atual para inserir dados deixa de funcionar assim que gerares um novo. Continuar?",
     "liveStatsRegenerateViewerConfirm": "O link atual para acompanhar deixa de funcionar assim que gerares um novo. Continuar?",
+    "liveStatsOnlineCountLabel": "{count} {count, plural, one {pessoa ligada} other {pessoas ligadas}} agora",
     "liveStatsEmptyFeed": "Ainda não há eventos registados.",
     "liveStatsAddEventTitle": "Registar evento",
     "liveStatsTeamSideLabel": "Equipa",

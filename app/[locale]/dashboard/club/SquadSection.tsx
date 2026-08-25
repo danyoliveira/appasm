@@ -48,7 +48,6 @@ function sortValue(
   player: SquadPlayer,
   key: SortKey,
   stats: PlayerSeasonStat | undefined,
-  t: (key: string) => string,
 ): string | number {
   switch (key) {
     case "name":
@@ -94,15 +93,14 @@ function sortPlayers(
   list: SquadPlayer[],
   sort: SortState,
   statsByPlayerId: Map<number, PlayerSeasonStat>,
-  t: (key: string) => string,
   isGoalkeeperTable: boolean,
 ): SquadPlayer[] {
   if (sort.key === null) {
     return [...list].sort((a, b) => defaultCompare(a, b, statsByPlayerId, isGoalkeeperTable));
   }
   const sorted = [...list].sort((a, b) => {
-    const va = sortValue(a, sort.key as SortKey, statsByPlayerId.get(a.id), t);
-    const vb = sortValue(b, sort.key as SortKey, statsByPlayerId.get(b.id), t);
+    const va = sortValue(a, sort.key as SortKey, statsByPlayerId.get(a.id));
+    const vb = sortValue(b, sort.key as SortKey, statsByPlayerId.get(b.id));
     if (typeof va === "string" && typeof vb === "string") return va.localeCompare(vb);
     return (va as number) - (vb as number);
   });
@@ -214,10 +212,9 @@ export default function SquadSection({
         filteredPlayers.filter((p) => p.position !== "Goalkeeper"),
         outfieldSort,
         statsByPlayerId,
-        t,
         false,
       ),
-    [filteredPlayers, outfieldSort, statsByPlayerId, t],
+    [filteredPlayers, outfieldSort, statsByPlayerId],
   );
 
   const goalkeepers = useMemo(
@@ -226,10 +223,9 @@ export default function SquadSection({
         filteredPlayers.filter((p) => p.position === "Goalkeeper"),
         gkSort,
         statsByPlayerId,
-        t,
         true,
       ),
-    [filteredPlayers, gkSort, statsByPlayerId, t],
+    [filteredPlayers, gkSort, statsByPlayerId],
   );
 
   function handleStatusChange(player: SquadPlayer, status: PlayerStatus) {
