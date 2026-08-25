@@ -11,7 +11,8 @@
     "passwordLabel": "Mot de passe",
     "submitLabel": "Se connecter",
     "errorInvalid": "Email ou mot de passe incorrect.",
-    "errorRevoked": "Ton accès a été révoqué. Parle avec André."
+    "errorRevoked": "Ton accès a été révoqué. Parle avec André.",
+    "errorRateLimited": "Trop de tentatives. Attends quelques minutes et réessaie."
   },
   "register": {
     "title": "Créer un compte",
@@ -22,7 +23,11 @@
     "fullNameLabel": "Nom",
     "emailLabel": "Email",
     "passwordLabel": "Mot de passe",
-    "submitLabel": "Créer un compte"
+    "submitLabel": "Créer un compte",
+    "errorInvalid": "Invitation invalide ou expirée.",
+    "errorAlreadyBootstrapped": "Un compte d'entraîneur existe déjà. Actualise la page.",
+    "errorPasswordTooShort": "Le mot de passe doit comporter au moins 8 caractères.",
+    "errorGeneric": "Impossible de créer le compte. Réessaie."
   },
   "dashboard": {
     "navDashboard": "Dashboard",
@@ -42,6 +47,9 @@
     "liveStatsViewerLinkLabel": "Lien de suivi",
     "liveStatsCopyButton": "Copier",
     "liveStatsCopiedLabel": "Copié !",
+    "liveStatsRegenerateButton": "Nouveau lien",
+    "liveStatsRegenerateMemberConfirm": "Le lien de saisie actuel cessera de fonctionner dès que tu en génères un nouveau. Continuer ?",
+    "liveStatsRegenerateViewerConfirm": "Le lien de suivi actuel cessera de fonctionner dès que tu en génères un nouveau. Continuer ?",
     "liveStatsEmptyFeed": "Aucun événement enregistré pour l'instant.",
     "liveStatsAddEventTitle": "Enregistrer un événement",
     "liveStatsTeamSideLabel": "Équipe",

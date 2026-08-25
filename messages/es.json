@@ -11,7 +11,8 @@
     "passwordLabel": "Contraseña",
     "submitLabel": "Iniciar sesión",
     "errorInvalid": "Email o contraseña incorrectos.",
-    "errorRevoked": "Tu acceso ha sido revocado. Habla con André."
+    "errorRevoked": "Tu acceso ha sido revocado. Habla con André.",
+    "errorRateLimited": "Demasiados intentos. Espera unos minutos y vuelve a intentarlo."
   },
   "register": {
     "title": "Crear cuenta",
@@ -22,7 +23,11 @@
     "fullNameLabel": "Nombre",
     "emailLabel": "Email",
     "passwordLabel": "Contraseña",
-    "submitLabel": "Crear cuenta"
+    "submitLabel": "Crear cuenta",
+    "errorInvalid": "Invitación no válida o caducada.",
+    "errorAlreadyBootstrapped": "Ya existe una cuenta de entrenador. Actualiza la página.",
+    "errorPasswordTooShort": "La contraseña debe tener al menos 8 caracteres.",
+    "errorGeneric": "No se pudo crear la cuenta. Inténtalo de nuevo."
   },
   "dashboard": {
     "navDashboard": "Dashboard",
@@ -42,6 +47,9 @@
     "liveStatsViewerLinkLabel": "Enlace para seguir",
     "liveStatsCopyButton": "Copiar",
     "liveStatsCopiedLabel": "¡Copiado!",
+    "liveStatsRegenerateButton": "Nuevo enlace",
+    "liveStatsRegenerateMemberConfirm": "El enlace actual para introducir datos dejará de funcionar en cuanto generes uno nuevo. ¿Continuar?",
+    "liveStatsRegenerateViewerConfirm": "El enlace actual para seguir dejará de funcionar en cuanto generes uno nuevo. ¿Continuar?",
     "liveStatsEmptyFeed": "Todavía no hay eventos registrados.",
     "liveStatsAddEventTitle": "Registrar evento",
     "liveStatsTeamSideLabel": "Equipo",

@@ -2,9 +2,16 @@
 
 import { useActionState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { createCoachAccount, type RegisterState } from "./actions";
+import { createCoachAccount, type RegisterErrorCode, type RegisterState } from "./actions";
 
 const initialState: RegisterState = {};
+
+const ERROR_KEYS: Record<RegisterErrorCode, string> = {
+  invalid: "errorInvalid",
+  "already-bootstrapped": "errorAlreadyBootstrapped",
+  "password-too-short": "errorPasswordTooShort",
+  generic: "errorGeneric",
+};
 
 export default function CreateCoachForm() {
   const t = useTranslations("register");
@@ -50,7 +57,7 @@ export default function CreateCoachForm() {
       </label>
 
       {state.error && (
-        <p className="text-sm text-red-500">{state.error}</p>
+        <p className="text-sm text-red-500">{t(ERROR_KEYS[state.error])}</p>
       )}
 
       <button

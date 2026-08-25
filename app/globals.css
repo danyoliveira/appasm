@@ -52,6 +52,20 @@ summary::-webkit-details-marker {
   display: none;
 }
 
+/* Mobile Safari (iPhone and iPad alike) zooms the whole page in whenever a
+   focused form control's font-size computes below 16px — several inputs
+   across the dashboard use text-xs/text-sm (12–14px). Gate this on touch
+   devices specifically (not a width breakpoint: an iPad in the same CSS
+   breakpoint as a laptop still has the bug) so mouse/keyboard use is
+   untouched. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @keyframes overlay-in {
   from {
     opacity: 0;

@@ -32,6 +32,7 @@ export default function LiveFormationPitch({
 
   useEffect(() => {
     if (!drag) return;
+    const active = drag;
 
     function handleMove(e: PointerEvent) {
       setDrag((d) => (d ? { ...d, clientX: e.clientX, clientY: e.clientY } : d));
@@ -46,7 +47,7 @@ export default function LiveFormationPitch({
       if (rect) {
         const x = Math.min(96, Math.max(4, ((e.clientX - rect.left) / rect.width) * 100));
         const y = Math.min(96, Math.max(4, ((e.clientY - rect.top) / rect.height) * 100));
-        onChange(players.map((p, i) => (i === drag.index ? { ...p, x, y } : p)));
+        onChange(players.map((p, i) => (i === active.index ? { ...p, x, y } : p)));
       }
       setDrag(null);
     }

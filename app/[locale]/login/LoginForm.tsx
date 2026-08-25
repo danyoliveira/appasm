@@ -46,6 +46,9 @@ export default function LoginForm() {
       {(state.revoked || revokedFromRedirect) && (
         <p className="text-sm text-red-500">{t("errorRevoked")}</p>
       )}
+      {state.rateLimited && (
+        <p className="text-sm text-red-500">{t("errorRateLimited")}</p>
+      )}
 
       <button
         type="submit"

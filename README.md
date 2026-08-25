@@ -19,6 +19,7 @@ Mesmas armadilhas do `asm-treinador`: `params`/`searchParams` são sempre `Promi
 ## Antes de correr — passos manuais no Supabase (só tu consegues fazer isto)
 
 1. **Correr as migrações**: copiar o conteúdo de `supabase/migrations/0001_init.sql`, depois `0002_nullable_cache_team_id.sql`, depois `0003_profiles_roles_status.sql`, depois `0004_fix_profiles_rls_recursion.sql`, depois `0005_player_availability.sql`, depois `0006_player_status_unavailable.sql`, depois `0007_player_excluded.sql`, depois `0008_player_notes.sql`, depois `0009_player_notes_table.sql`, executar cada um no Supabase Studio → SQL Editor, por esta ordem. O `0007` acrescenta a coluna `excluded`, para tirar um jogador da vista principal do plantel sem o apagar (fica no filtro "Excluídos", com opção de repor). O `0008` ficou por usar (foi substituído pelo `0009`, que cria a tabela `player_notes` — lista de notas por jogador, com data, editar e apagar, só visível ao coach). O `0005` cria a tabela `player_availability` (disponível/dúvida/lesionado/suspenso por jogador, gerido pelo coach, visível a todos os logados). O `0006` acrescenta o estado `unavailable` (indisponível). O `0001` cria as tabelas `profiles`, `invites`, `api_football_cache`, RLS, e o trigger que liga tudo. O `0002` é um ajuste pequeno (permite cache sem `team_id`, usado para a lista de países/clubes). O `0003` acrescenta telefone/foto/estado ao perfil, o papel `viewer` (além de `coach`/`member`), convites com papel associado, o coach a poder gerir todos os perfis (mudar papel, revogar acesso), e cria o bucket de Storage `avatars` (público para leitura, cada utilizador só escreve na sua própria pasta). O `0004` corrige um bug do `0003`: as policies "o coach vê/edita tudo" causavam recursão infinita no Postgres por consultarem `profiles` dentro de uma policy da própria `profiles` — resolvido com uma função auxiliar.
+   ⚠️ **Migrações de segurança pendentes — corre assim que possível**: `0024_prevent_profile_role_escalation.sql`, `0025_remove_asm_role.sql` e `0026_login_attempts.sql`. A policy "profiles: update own row" do `0001` nunca restringiu colunas — só a linha — o que permite a qualquer `member`/`viewer` autenticado mudar o próprio `role` (para `coach`, ou até `asm`) ou `status` (reativar-se depois de revogado) diretamente pelo cliente Supabase, sem passar pela app. O `0024` acrescenta um trigger que repõe `role`/`status` ao valor anterior sempre que quem edita não é coach. O `0025` remove o papel `asm` por completo (nunca ficou bem cablado fora do Live Stats — em todo o resto tinha o mesmo acesso que `member`/`viewer`, apesar do que dizia o comentário do `0018`); qualquer perfil que ainda tenha `role='asm'` passa a `coach`. O `0026` cria a tabela `login_attempts`, usada pelo rate limiting do login (`login/actions.ts`): 5 tentativas falhadas com o mesmo email em 15 minutos bloqueiam novas tentativas até a janela passar — só é tocada pelo cliente service-role, sem policy de RLS nenhuma. Corre as três assim que fizeres as migrações de base acima (incluindo o `0023_preparation_video_team.sql`), mesmo em produção já com utilizadores.
 2. **Desativar registo público**: Supabase Studio → Authentication → Providers → Email → desligar "Allow new users to sign up". Sem isto, o registo por convite não é seguro a sério (ver plano, secção "Autenticação — registo feito a sério").
 3. **Criar a conta do André**: Authentication → Users → "Add user", com "Auto Confirm User" marcado. **Tem de ser a primeira conta criada no projeto** — o trigger promove automaticamente o primeiro utilizador a `role='coach'`.
 4. **Preencher `.env.local`** (copiar de `.env.local.example`):
@@ -32,6 +33,7 @@ Mesmas armadilhas do `asm-treinador`: `params`/`searchParams` são sempre `Promi
 npm install
 npm run dev
 npm run build    # validar antes de dar como concluído
+npm test         # testes unitários (Vitest) — lógica pura em lib/, sem tocar no Supabase real
 ```
 
 ## Como funciona o registo por convite
@@ -51,7 +53,7 @@ Se `api_football_team_id` ainda não estiver definido, o dashboard mostra logo o
 
 ## Fora de âmbito da v1
 
-Envio real de email de convite, reset de password, revogar/reenviar convite pela UI, roles/permissões além de coach/member, testes/CI.
+Envio real de email de convite, reset de password, revogar/reenviar convite pela UI, roles/permissões além de coach/member, CI, testes end-to-end/de integração (os testes unitários em `lib/**/*.test.ts` cobrem só lógica pura e mocks — ver "Como correr"), error tracking (Sentry ou equivalente).
 
 ## Localização e deploy
 

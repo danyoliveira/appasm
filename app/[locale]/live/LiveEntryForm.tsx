@@ -6,6 +6,7 @@ import { LIVE_EVENT_ICON, LIVE_EVENT_TYPES, type LiveEntryInput, type LiveEventT
 
 const EVENT_LABEL_KEYS: Record<LiveEventType, string> = {
   goal: "liveEventGoal",
+  assist: "liveEventAssist",
   yellow_card: "liveEventYellowCard",
   red_card: "liveEventRedCard",
   substitution: "liveEventSubstitution",

@@ -11,7 +11,7 @@ import {
   type ApiFootballReason,
 } from "@/lib/api-football/client";
 import { getTeamsByCountry } from "@/lib/api-football/cache";
-import type { VideoCategory } from "./preparacoes/videoCategories";
+import type { VideoCategory } from "./preparations/videoCategories";
 
 export type ClubsResult = {
   results: TeamSearchResult[];
@@ -102,7 +102,7 @@ function parseOptionalUrl(url: string): string | null {
   return parsed.toString();
 }
 
-// preparationKey mirrors the /dashboard/preparacoes/[fixtureId] route param
+// preparationKey mirrors the /dashboard/preparations/[fixtureId] route param
 // as-is — either a numeric API-Football fixture id or "manual-<uuid>".
 export async function addPreparationVideo(
   preparationKey: string,

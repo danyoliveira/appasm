@@ -11,7 +11,8 @@
     "passwordLabel": "Password",
     "submitLabel": "Sign in",
     "errorInvalid": "Incorrect email or password.",
-    "errorRevoked": "Your access has been revoked. Talk to André."
+    "errorRevoked": "Your access has been revoked. Talk to André.",
+    "errorRateLimited": "Too many attempts. Wait a few minutes and try again."
   },
   "register": {
     "title": "Create account",
@@ -22,7 +23,11 @@
     "fullNameLabel": "Name",
     "emailLabel": "Email",
     "passwordLabel": "Password",
-    "submitLabel": "Create account"
+    "submitLabel": "Create account",
+    "errorInvalid": "Invalid or expired invite.",
+    "errorAlreadyBootstrapped": "A coach account already exists. Refresh the page.",
+    "errorPasswordTooShort": "Password must be at least 8 characters.",
+    "errorGeneric": "Couldn't create the account. Please try again."
   },
   "dashboard": {
     "navDashboard": "Dashboard",
@@ -42,6 +47,9 @@
     "liveStatsViewerLinkLabel": "Follow-along link",
     "liveStatsCopyButton": "Copy",
     "liveStatsCopiedLabel": "Copied!",
+    "liveStatsRegenerateButton": "New link",
+    "liveStatsRegenerateMemberConfirm": "The current data-entry link will stop working as soon as you generate a new one. Continue?",
+    "liveStatsRegenerateViewerConfirm": "The current follow-along link will stop working as soon as you generate a new one. Continue?",
     "liveStatsEmptyFeed": "No events logged yet.",
     "liveStatsAddEventTitle": "Log event",
     "liveStatsTeamSideLabel": "Team",

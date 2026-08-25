@@ -66,14 +66,14 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
 
   const navItems = [
     { href: "/dashboard", label: t("navDashboard"), icon: <DashboardIcon />, exact: true },
-    { href: "/dashboard/clube", label: t("navClub"), icon: <ClubIcon />, exact: false },
+    { href: "/dashboard/club", label: t("navClub"), icon: <ClubIcon />, exact: false },
     {
-      href: "/dashboard/preparacoes",
+      href: "/dashboard/preparations",
       label: t("navPreparation"),
       icon: <PreparationIcon />,
       exact: false,
     },
-    { href: "/dashboard/perfil", label: t("navProfile"), icon: <ProfileIcon />, exact: false },
+    { href: "/dashboard/profile", label: t("navProfile"), icon: <ProfileIcon />, exact: false },
   ];
 
   function isActive(href: string, exact: boolean) {
@@ -136,8 +136,11 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
         </button>
       </aside>
 
-      {/* Mobile top tabs */}
-      <nav className="sticky top-0 z-10 -mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-border bg-background px-4 py-2 sm:-mx-6 sm:px-6 md:hidden">
+      {/* Mobile top tabs — Container's edge padding is a flat px-6 at every
+          size (no sm: variant), so the bleed/reveal margin has to match
+          that exactly or this bar sits a few pixels short of the screen
+          edge instead of flush with it. */}
+      <nav className="sticky top-0 z-10 -mx-6 mb-6 flex gap-1 overflow-x-auto border-b border-border bg-background px-6 py-2 md:hidden">
         {navItems.map((item) => (
           <Link
             key={item.href}

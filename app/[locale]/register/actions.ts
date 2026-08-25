@@ -5,7 +5,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { validateInviteToken, coachExists } from "@/lib/invites";
 
-export type RegisterState = { error?: string };
+// Codes, not raw messages — RegisterForm/CreateCoachForm translate these
+// client-side (t(`error${code}`)). Keeps every string localized, and never
+// leaks a raw Supabase error message (English-only, sometimes internal
+// wording) straight into the UI.
+export type RegisterErrorCode = "invalid" | "already-bootstrapped" | "password-too-short" | "generic";
+export type RegisterState = { error?: RegisterErrorCode };
+
+const MIN_PASSWORD_LENGTH = 8;
 
 export async function acceptInvite(
   _prevState: RegisterState,
@@ -22,6 +29,12 @@ export async function acceptInvite(
     return { error: "invalid" };
   }
 
+  // The form's minLength is a UX hint, not enforcement — anyone posting to
+  // this action directly bypasses it entirely, so it has to be checked here.
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return { error: "password-too-short" };
+  }
+
   const admin = createAdminClient();
   const { error: createError } = await admin.auth.admin.createUser({
     email,
@@ -31,7 +44,7 @@ export async function acceptInvite(
   });
 
   if (createError) {
-    return { error: createError.message };
+    return { error: "generic" };
   }
 
   const supabase = await createClient();
@@ -41,7 +54,7 @@ export async function acceptInvite(
   });
 
   if (signInError) {
-    return { error: signInError.message };
+    return { error: "generic" };
   }
 
   redirect(`/${locale}/dashboard`);
@@ -62,6 +75,10 @@ export async function createCoachAccount(
     return { error: "already-bootstrapped" };
   }
 
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return { error: "password-too-short" };
+  }
+
   const admin = createAdminClient();
   const { error: createError } = await admin.auth.admin.createUser({
     email,
@@ -71,7 +88,7 @@ export async function createCoachAccount(
   });
 
   if (createError) {
-    return { error: createError.message };
+    return { error: "generic" };
   }
 
   const supabase = await createClient();
@@ -81,7 +98,7 @@ export async function createCoachAccount(
   });
 
   if (signInError) {
-    return { error: signInError.message };
+    return { error: "generic" };
   }
 
   redirect(`/${locale}/dashboard`);

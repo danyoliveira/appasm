@@ -20,8 +20,8 @@ import {
 import type { StandingRow, Fixture, Injury, TeamStatistics } from "@/lib/api-football/client";
 import SeasonStatsGrid from "./SeasonStatsGrid";
 import Countdown from "./Countdown";
-import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "./clube/playerShared";
-import { matchResult } from "./clube/fixtureHelpers";
+import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "./club/playerShared";
+import { matchResult } from "./club/fixtureHelpers";
 
 export default async function DashboardOverviewPage({
   params,
@@ -211,7 +211,7 @@ export default async function DashboardOverviewPage({
         <div className="mt-8 rounded-2xl border border-border bg-surface p-6">
           <p className="text-sm text-muted">{t("noClubChosenYet")}</p>
           <Link
-            href="/dashboard/clube"
+            href="/dashboard/club"
             className="mt-4 inline-block text-sm font-medium text-accent"
           >
             {t("goToClubButton")} →
@@ -258,7 +258,7 @@ export default async function DashboardOverviewPage({
                         <td className="px-3 py-2 text-muted">{row.rank}</td>
                         <td className="px-3 py-2">
                           <Link
-                            href={`/dashboard/clube/${row.team.id}`}
+                            href={`/dashboard/club/${row.team.id}`}
                             className="flex items-center gap-2 hover:text-accent"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -284,7 +284,7 @@ export default async function DashboardOverviewPage({
             ) : (
               <>
                 <Link
-                  href={`/dashboard/clube/${opponent.id}`}
+                  href={`/dashboard/club/${opponent.id}`}
                   className="mt-3 flex items-center gap-3 transition-opacity hover:opacity-80"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -322,7 +322,7 @@ export default async function DashboardOverviewPage({
                       {opponentInjuries.map((injury) => (
                         <Link
                           key={injury.player.id}
-                          href={`/dashboard/clube/jogador/${injury.player.id}`}
+                          href={`/dashboard/club/player/${injury.player.id}`}
                           className="flex items-start gap-3 rounded-lg border border-border bg-background p-2.5 transition-colors hover:border-accent"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -352,7 +352,7 @@ export default async function DashboardOverviewPage({
                       {opponentUnavailable.map((injury) => (
                         <Link
                           key={injury.player.id}
-                          href={`/dashboard/clube/jogador/${injury.player.id}`}
+                          href={`/dashboard/club/player/${injury.player.id}`}
                           className="flex items-start gap-3 rounded-lg border border-border bg-background p-2.5 transition-colors hover:border-accent"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -385,26 +385,26 @@ export default async function DashboardOverviewPage({
                           className="rounded-lg border border-border bg-background p-2.5 text-sm"
                         >
                           <Link
-                            href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                            href={`/dashboard/club/fixture/${fx.fixture.id}`}
                             className="block text-xs text-muted hover:text-accent"
                           >
                             {new Date(fx.fixture.date).toLocaleDateString(locale)}
                           </Link>
                           <div className="mt-0.5 font-medium">
                             <Link
-                              href={`/dashboard/clube/${fx.teams.home.id}`}
+                              href={`/dashboard/club/${fx.teams.home.id}`}
                               className="hover:text-accent"
                             >
                               {fx.teams.home.name}
                             </Link>{" "}
                             <Link
-                              href={`/dashboard/clube/jogo/${fx.fixture.id}`}
+                              href={`/dashboard/club/fixture/${fx.fixture.id}`}
                               className="hover:text-accent"
                             >
                               {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
                             </Link>{" "}
                             <Link
-                              href={`/dashboard/clube/${fx.teams.away.id}`}
+                              href={`/dashboard/club/${fx.teams.away.id}`}
                               className="hover:text-accent"
                             >
                               {fx.teams.away.name}
@@ -422,7 +422,7 @@ export default async function DashboardOverviewPage({
                     <div className="mt-2 space-y-2">
                       {opponentLastFixture && opponentLastOpponent && (
                         <Link
-                          href={`/dashboard/clube/jogo/${opponentLastFixture.fixture.id}`}
+                          href={`/dashboard/club/fixture/${opponentLastFixture.fixture.id}`}
                           className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background p-2.5 text-sm transition-colors hover:border-accent"
                         >
                           <span className="shrink-0 text-xs text-muted">
@@ -515,7 +515,7 @@ export default async function DashboardOverviewPage({
 
       {isCoach && (
         <Link
-          href="/dashboard/perfil"
+          href="/dashboard/profile"
           className="mt-6 flex items-center justify-between rounded-2xl border border-border bg-surface p-6 shadow-sm transition-colors hover:border-accent"
         >
           <div>

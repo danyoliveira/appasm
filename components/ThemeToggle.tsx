@@ -1,6 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const THEME_CHANGE_EVENT = "asm-theme-change";
+
+// `document.documentElement`'s "dark" class is set by the beforeInteractive
+// script in the root layout, before React hydrates — reading it through
+// useSyncExternalStore (server snapshot false, matching that script's usual
+// default) lets React reconcile the real value right after hydration
+// without a separate effect re-render.
+function subscribeToTheme(onChange: () => void) {
+  window.addEventListener(THEME_CHANGE_EVENT, onChange);
+  return () => window.removeEventListener(THEME_CHANGE_EVENT, onChange);
+}
+
+function getIsDark() {
+  return document.documentElement.classList.contains("dark");
+}
+
+function getServerIsDark() {
+  return false;
+}
 
 export default function ThemeToggle({
   toLightLabel,
@@ -9,17 +29,13 @@ export default function ThemeToggle({
   toLightLabel: string;
   toDarkLabel: string;
 }) {
-  const [isDark, setIsDark] = useState(false);
-
-  useEffect(() => {
-    setIsDark(document.documentElement.classList.contains("dark"));
-  }, []);
+  const isDark = useSyncExternalStore(subscribeToTheme, getIsDark, getServerIsDark);
 
   function toggle() {
     const next = !isDark;
-    setIsDark(next);
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("theme", next ? "dark" : "light");
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   }
 
   return (
