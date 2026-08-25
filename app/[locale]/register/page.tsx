@@ -22,20 +22,24 @@ export default async function RegisterPage({
     if (!invite) {
       return (
         <Container className="max-w-md py-16 sm:py-24">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            {t("invalidInviteTitle")}
-          </h1>
-          <p className="mt-4 text-muted">{t("invalidInviteMessage")}</p>
+          <div className="rounded-2xl border border-border bg-surface p-8 shadow-sm">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              {t("invalidInviteTitle")}
+            </h1>
+            <p className="mt-4 text-muted">{t("invalidInviteMessage")}</p>
+          </div>
         </Container>
       );
     }
 
     return (
       <Container className="max-w-md py-16 sm:py-24">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          {t("title")}
-        </h1>
-        <RegisterForm email={invite.email} token={token} />
+        <div className="rounded-2xl border border-border bg-surface p-8 shadow-sm">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            {t("title")}
+          </h1>
+          <RegisterForm email={invite.email} token={token} />
+        </div>
       </Container>
     );
   }
@@ -46,21 +50,25 @@ export default async function RegisterPage({
   if (!(await coachExists())) {
     return (
       <Container className="max-w-md py-16 sm:py-24">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          {t("bootstrapTitle")}
-        </h1>
-        <p className="mt-2 text-muted">{t("bootstrapSubtitle")}</p>
-        <CreateCoachForm />
+        <div className="rounded-2xl border border-border bg-surface p-8 shadow-sm">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            {t("bootstrapTitle")}
+          </h1>
+          <p className="mt-2 text-muted">{t("bootstrapSubtitle")}</p>
+          <CreateCoachForm />
+        </div>
       </Container>
     );
   }
 
   return (
     <Container className="max-w-md py-16 sm:py-24">
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-        {t("invalidInviteTitle")}
-      </h1>
-      <p className="mt-4 text-muted">{t("invalidInviteMessage")}</p>
+      <div className="rounded-2xl border border-border bg-surface p-8 shadow-sm">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          {t("invalidInviteTitle")}
+        </h1>
+        <p className="mt-4 text-muted">{t("invalidInviteMessage")}</p>
+      </div>
     </Container>
   );
 }

@@ -11,6 +11,7 @@ import {
   fetchLeaguesByTeam,
   fetchStandings,
   fetchTopScorers,
+  fetchTopAssists,
   fetchTransfers,
   fetchInjuries,
   fetchTeamStatistics,
@@ -163,6 +164,14 @@ export const getTopScorers = (league: number, season: number) =>
     null,
     TTL_MS.topScorers,
     () => fetchTopScorers(league, season),
+  );
+
+export const getTopAssists = (league: number, season: number) =>
+  cached<TopScorer[]>(
+    `league:${league}:${season}:topassists`,
+    null,
+    TTL_MS.topScorers,
+    () => fetchTopAssists(league, season),
   );
 
 export const getTransfers = (teamId: number) =>

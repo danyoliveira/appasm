@@ -164,13 +164,23 @@ export function fetchStandings(league: number, season: number) {
   );
 }
 
+// Same shape for /topscorers and /topassists — API-Football returns the
+// player's full statistics object either way, just pre-sorted by a
+// different field, so one type and one fetch shape covers both.
 export interface TopScorer {
   player: { id: number; name: string; photo: string };
-  statistics: { team: { name: string; logo: string }; goals: { total: number | null } }[];
+  statistics: {
+    team: { name: string; logo: string };
+    goals: { total: number | null; assists: number | null };
+  }[];
 }
 
 export function fetchTopScorers(league: number, season: number) {
   return callApiFootball<TopScorer[]>("/players/topscorers", { league, season });
+}
+
+export function fetchTopAssists(league: number, season: number) {
+  return callApiFootball<TopScorer[]>("/players/topassists", { league, season });
 }
 
 export interface TeamTransfer {

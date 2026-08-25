@@ -64,17 +64,22 @@ export default async function ProfilePage({
   }
 
   return (
-    <div className="flex flex-col gap-10">
-      <ProfileForm
-        userId={profile.id}
-        fullName={profile.full_name}
-        phone={profile.phone}
-        avatarUrl={profile.avatar_url}
-      />
+    <div className="flex flex-col gap-6">
+      <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+        <ProfileForm
+          userId={profile.id}
+          fullName={profile.full_name}
+          phone={profile.phone}
+          avatarUrl={profile.avatar_url}
+        />
+      </section>
 
       {isCoach && (
         <>
-          <div className="border-t border-border pt-10">
+          {/* The most consequential setting on the whole platform — every
+              other page depends on which club is picked here — gets its
+              own card instead of sharing space with unrelated settings. */}
+          <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
             <h2 className="text-lg font-semibold">{t("clubSectionTitle")}</h2>
 
             {currentClubName && (
@@ -92,21 +97,25 @@ export default async function ProfilePage({
             )}
 
             <details className="mt-4" open={!currentClubName}>
-              <summary className="cursor-pointer text-sm text-muted hover:text-foreground">
+              <summary className="cursor-pointer text-sm font-medium text-accent hover:underline">
                 {currentClubName ? t("changeClubButton") : t("chooseClubTitle")}
               </summary>
               <div className="mt-3">
                 <ClubPicker countries={countries} />
               </div>
             </details>
-          </div>
+          </section>
 
-          <div className="border-t border-border pt-10">
+          {/* Invite + manage access — a distinct "administration" concern
+              from the two sections above, so it gets its own boundary too;
+              the two pieces inside stay divided since they're each their
+              own self-contained action (invite vs. manage existing). */}
+          <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
             <InviteForm />
-          </div>
-          <div className="border-t border-border pt-10">
-            <MembersSection members={members} />
-          </div>
+            <div className="mt-6 border-t border-border pt-6">
+              <MembersSection members={members} />
+            </div>
+          </section>
         </>
       )}
     </div>

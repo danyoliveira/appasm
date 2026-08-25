@@ -3,7 +3,10 @@
     "languageLabel": "Idioma",
     "themeToggleToLight": "Cambiar a modo claro",
     "themeToggleToDark": "Cambiar a modo oscuro",
-    "signOut": "Cerrar sesión"
+    "signOut": "Cerrar sesión",
+    "errorTitle": "Ha ocurrido un error inesperado.",
+    "errorMessage": "Intenta recargar la página.",
+    "errorRetryButton": "Intentar de nuevo"
   },
   "auth": {
     "title": "Iniciar sesión",
@@ -309,6 +312,10 @@
     "transfersOutTitle": "Salidas",
     "headToHeadTitle": "Enfrentamiento directo",
     "opponentScheduleTitle": "Partidos del rival",
+    "opponentAbsencesTitle": "Ausencias del rival",
+    "opponentFormTitle": "Forma del rival",
+    "competitionDataTitle": "Datos de la competición",
+    "topAssistsTitle": "Máximos asistentes",
     "opponentLastMatchLabel": "Último partido",
     "opponentNextMatchLabel": "Su próximo partido",
     "headToHeadSubtitle": "Últimos partidos contra {opponent}, el próximo rival.",

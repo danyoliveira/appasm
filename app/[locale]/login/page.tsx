@@ -15,12 +15,14 @@ export default async function LoginPage({
 
   return (
     <Container className="max-w-md py-16 sm:py-24">
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-        {t("title")}
-      </h1>
-      <Suspense>
-        <LoginForm />
-      </Suspense>
+      <div className="rounded-2xl border border-border bg-surface p-8 shadow-sm">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          {t("title")}
+        </h1>
+        <Suspense>
+          <LoginForm />
+        </Suspense>
+      </div>
     </Container>
   );
 }

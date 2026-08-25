@@ -3,7 +3,10 @@
     "languageLabel": "Language",
     "themeToggleToLight": "Switch to light mode",
     "themeToggleToDark": "Switch to dark mode",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "errorTitle": "Something went wrong.",
+    "errorMessage": "Try reloading the page.",
+    "errorRetryButton": "Try again"
   },
   "auth": {
     "title": "Sign in",
@@ -309,6 +312,10 @@
     "transfersOutTitle": "Out",
     "headToHeadTitle": "Head to head",
     "opponentScheduleTitle": "Opponent's matches",
+    "opponentAbsencesTitle": "Opponent absences",
+    "opponentFormTitle": "Opponent form",
+    "competitionDataTitle": "Competition data",
+    "topAssistsTitle": "Top assists",
     "opponentLastMatchLabel": "Last match",
     "opponentNextMatchLabel": "Their next match",
     "headToHeadSubtitle": "Last meetings against {opponent}, the next opponent.",

@@ -3,7 +3,10 @@
     "languageLabel": "Idioma",
     "themeToggleToLight": "Mudar para modo claro",
     "themeToggleToDark": "Mudar para modo escuro",
-    "signOut": "Sair"
+    "signOut": "Sair",
+    "errorTitle": "Ocorreu um erro inesperado.",
+    "errorMessage": "Tenta recarregar a página.",
+    "errorRetryButton": "Tentar novamente"
   },
   "auth": {
     "title": "Entrar",
@@ -309,6 +312,10 @@
     "transfersOutTitle": "Saídas",
     "headToHeadTitle": "Confronto direto",
     "opponentScheduleTitle": "Jogos do adversário",
+    "opponentAbsencesTitle": "Ausências do adversário",
+    "opponentFormTitle": "Forma do adversário",
+    "competitionDataTitle": "Dados da competição",
+    "topAssistsTitle": "Melhores assistências",
     "opponentLastMatchLabel": "Último jogo",
     "opponentNextMatchLabel": "Próximo jogo deles",
     "headToHeadSubtitle": "Últimos jogos contra o {opponent}, o próximo adversário.",
