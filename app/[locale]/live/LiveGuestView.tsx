@@ -17,7 +17,7 @@ import {
   fetchAutoLineupByToken,
 } from "./actions";
 import type { GuestLiveFeed, AutoLineupResult } from "./actions";
-import ConfirmDialog from "../dashboard/ConfirmDialog";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import LineupEditor from "./LineupEditor";
 import LiveFormationTeam from "./LiveFormationTeam";
 import MatchClock from "./MatchClock";

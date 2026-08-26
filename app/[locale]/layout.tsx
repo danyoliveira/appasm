@@ -106,14 +106,12 @@ export default async function LocaleLayout({
       className={`${geistSans.variable} ${geistMono.variable}`}
       suppressHydrationWarning
     >
-      <head>
+      <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
         <Script
           id="theme-init"
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeInitScript }}
         />
-      </head>
-      <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
         <NextIntlClientProvider>
           <header className="border-b border-border">
             <Container className="flex items-center justify-between py-4">

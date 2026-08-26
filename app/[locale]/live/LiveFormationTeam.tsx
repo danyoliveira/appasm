@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import StaticTacticalPitch from "../dashboard/preparations/StaticTacticalPitch";
+import StaticTacticalPitch from "../(app)/preparations/StaticTacticalPitch";
 import LiveFormationPitch from "./LiveFormationPitch";
 import { defaultFormationPosition, lastName, type LineupPlayer } from "./liveStatsShared";
 
