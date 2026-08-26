@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentStintId } from "@/lib/coachingStints";
 import {
   getTeamInfo,
   getSquad,
@@ -241,10 +242,12 @@ export default async function ClubPage({
 
   const availabilityByPlayerId = new Map<number, AvailabilityInfo>();
   if (teamId) {
+    const currentStintId = await getCurrentStintId(supabase, teamId);
     const { data: availabilityRows } = await supabase
       .from("player_availability")
       .select("player_id, status, last_seen_injury_key, excluded")
-      .eq("team_id", teamId);
+      .eq("team_id", teamId)
+      .eq("stint_id", currentStintId);
 
     availabilityRows?.forEach((row) => {
       availabilityByPlayerId.set(row.player_id, {

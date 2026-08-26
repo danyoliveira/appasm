@@ -2,6 +2,7 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentStintId } from "@/lib/coachingStints";
 import {
   getSquad,
   getTeamInfo,
@@ -226,11 +227,13 @@ export default async function PlayerDetailPage({
     error = true;
   }
 
+  const currentStintId = await getCurrentStintId(supabase, teamId);
   const { data: availabilityRow } = await supabase
     .from("player_availability")
     .select("status, last_seen_injury_key")
     .eq("team_id", teamId)
     .eq("player_id", playerId)
+    .eq("stint_id", currentStintId)
     .maybeSingle();
 
   const status: PlayerStatus = (availabilityRow?.status as PlayerStatus) ?? "available";
@@ -239,12 +242,14 @@ export default async function PlayerDetailPage({
       ? { key: pendingInjuryReason, reason: pendingInjuryReason }
       : null;
 
+  // Notes are about the player, not about the club — they follow the
+  // player across every club the coach moves to, instead of being left
+  // behind at whichever club they were written at.
   let notes: import("./PlayerNotesList").PlayerNote[] = [];
   if (isCoach) {
     const { data: notesData } = await supabase
       .from("player_notes")
       .select("id, content, created_at, updated_at")
-      .eq("team_id", teamId)
       .eq("player_id", playerId)
       .order("created_at", { ascending: true });
     notes = notesData ?? [];

@@ -44,6 +44,16 @@ function ProfileIcon() {
   );
 }
 
+function ArchiveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" strokeWidth={1.75}>
+      <rect x="3.5" y="4" width="17" height="4" rx="1" stroke="currentColor" strokeLinejoin="round" />
+      <path d="M4.5 8v9.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8" stroke="currentColor" strokeLinejoin="round" />
+      <path d="M10 12.5h4" stroke="currentColor" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SignOutIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" strokeWidth={1.75}>
@@ -74,6 +84,7 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
       exact: false,
     },
     { href: "/profile", label: t("navProfile"), icon: <ProfileIcon />, exact: false },
+    { href: "/archive", label: t("navArchive"), icon: <ArchiveIcon />, exact: false },
   ];
 
   function isActive(href: string, exact: boolean) {

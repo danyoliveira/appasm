@@ -11,7 +11,8 @@ import {
   type TeamSearchResult,
   type ApiFootballReason,
 } from "@/lib/api-football/client";
-import { getTeamsByCountry } from "@/lib/api-football/cache";
+import { getTeamsByCountry, getSquad } from "@/lib/api-football/cache";
+import { getCurrentStintId } from "@/lib/coachingStints";
 import type { VideoCategory } from "./preparations/videoCategories";
 
 export type ClubsResult = {
@@ -340,12 +341,56 @@ export async function updateClub(teamId: number) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("api_football_team_id")
+    .eq("id", user.id)
+    .maybeSingle();
+  const previousTeamId = profile?.api_football_team_id ?? null;
+
   const { error } = await supabase
     .from("profiles")
     .update({ api_football_team_id: teamId, updated_at: new Date().toISOString() })
     .eq("id", user.id);
 
   if (error) throw new Error(error.message);
+
+  // Close the stint at the club just left and open a new one at the
+  // destination — the "Arquivo" (past clubs) feature is built entirely on
+  // this history, so it has to stay accurate every time the club changes.
+  if (previousTeamId !== teamId) {
+    const now = new Date().toISOString();
+    if (previousTeamId) {
+      const { data: closedStint } = await supabase
+        .from("coaching_stints")
+        .update({ ended_at: now })
+        .eq("team_id", previousTeamId)
+        .is("ended_at", null)
+        .select("id")
+        .maybeSingle();
+
+      // Freeze the squad as it stood right before leaving — the live
+      // API-Football squad moves on with real transfers, so this is the
+      // only place that will ever show "the squad I actually had there".
+      if (closedStint) {
+        const squad = await getSquad(previousTeamId).catch(() => []);
+        const players = squad[0]?.players ?? [];
+        if (players.length > 0) {
+          await supabase.from("archived_squad_players").insert(
+            players.map((p) => ({
+              stint_id: closedStint.id,
+              player_id: p.id,
+              name: p.name,
+              photo: p.photo,
+              number: p.number,
+              position: p.position,
+            })),
+          );
+        }
+      }
+    }
+    await supabase.from("coaching_stints").insert({ team_id: teamId, started_at: now });
+  }
 }
 
 export type InviteState = { error?: string; invitePath?: string };
@@ -480,6 +525,7 @@ export async function setPlayerAvailability(
   status: PlayerStatus,
 ) {
   const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
 
   const { error } = await supabase.from("player_availability").upsert(
     {
@@ -487,10 +533,11 @@ export async function setPlayerAvailability(
       player_id: playerId,
       player_name: playerName,
       status,
+      stint_id: stintId,
       updated_at: new Date().toISOString(),
       updated_by: coachId,
     },
-    { onConflict: "team_id,player_id" },
+    { onConflict: "team_id,player_id,stint_id" },
   );
 
   if (error) throw new Error(error.message);
@@ -532,6 +579,7 @@ export async function setPlayerExcluded(
   excluded: boolean,
 ) {
   const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
 
   const { error } = await supabase.from("player_availability").upsert(
     {
@@ -539,10 +587,11 @@ export async function setPlayerExcluded(
       player_id: playerId,
       player_name: playerName,
       excluded,
+      stint_id: stintId,
       updated_at: new Date().toISOString(),
       updated_by: coachId,
     },
-    { onConflict: "team_id,player_id" },
+    { onConflict: "team_id,player_id,stint_id" },
   );
 
   if (error) throw new Error(error.message);
@@ -556,6 +605,7 @@ export async function resolveApiInjury(
   isReal: boolean,
 ) {
   const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
 
   const { error } = await supabase.from("player_availability").upsert(
     {
@@ -564,10 +614,11 @@ export async function resolveApiInjury(
       player_name: playerName,
       status: isReal ? "injured" : "available",
       last_seen_injury_key: injuryKey,
+      stint_id: stintId,
       updated_at: new Date().toISOString(),
       updated_by: coachId,
     },
-    { onConflict: "team_id,player_id" },
+    { onConflict: "team_id,player_id,stint_id" },
   );
 
   if (error) throw new Error(error.message);

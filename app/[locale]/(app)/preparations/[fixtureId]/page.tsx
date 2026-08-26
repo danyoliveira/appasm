@@ -2,6 +2,7 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentStintId } from "@/lib/coachingStints";
 import {
   getFixtureById,
   getTeamInfo,
@@ -249,6 +250,7 @@ export default async function PreparationDetailPage({
   }[] = [];
   let tacticalSnapshots: TacticalSnapshotRow[] = [];
   if (match) {
+    const currentStintId = teamId ? await getCurrentStintId(supabase, teamId) : null;
     const [squadResult, ourSquadResult, { data: availabilityRows }, { data: tacticsRows }] =
       await Promise.all([
         getSquad(match.opponentId).catch(() => []),
@@ -258,6 +260,7 @@ export default async function PreparationDetailPage({
               .from("player_availability")
               .select("player_id, status, excluded")
               .eq("team_id", teamId)
+              .eq("stint_id", currentStintId)
           : Promise.resolve({ data: null }),
         supabase
           .from("preparation_tactics")

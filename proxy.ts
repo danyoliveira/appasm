@@ -6,7 +6,7 @@ import { coachExists } from "./lib/invites";
 
 const intlMiddleware = createMiddleware(routing);
 
-const PROTECTED_SEGMENTS = ["dashboard", "club", "preparations", "profile"];
+const PROTECTED_SEGMENTS = ["dashboard", "club", "preparations", "profile", "archive"];
 const AUTH_ONLY_SEGMENTS = ["login", "register"];
 
 export async function proxy(request: NextRequest) {
