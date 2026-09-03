@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combineTeamStats, resolveSelectedCompetition } from "./teamStats";
+import { combineTeamStats, computeBiggestAndStreaks, resolveSelectedCompetition } from "./teamStats";
 import type { TeamLeague, TeamStatistics } from "./client";
 
 function league(id: number): TeamLeague {
@@ -72,10 +72,10 @@ describe("combineTeamStats", () => {
     ]);
 
     expect(combined?.fixtures).toEqual({
-      played: { total: 15 },
-      wins: { total: 7 },
-      draws: { total: 3 },
-      loses: { total: 5 },
+      played: { home: 0, away: 0, total: 15 },
+      wins: { home: 0, away: 0, total: 7 },
+      draws: { home: 0, away: 0, total: 3 },
+      loses: { home: 0, away: 0, total: 5 },
     });
     expect(combined?.goals.for.total.total).toBe(25);
     expect(combined?.goals.against.total.total).toBe(19);
@@ -97,5 +97,62 @@ describe("combineTeamStats", () => {
   it("leaves biggest win/loss blank since they can't be meaningfully combined", () => {
     const combined = combineTeamStats([stats({ played: 1 })]);
     expect(combined?.biggest).toEqual({ wins: { home: null, away: null }, loses: { home: null, away: null } });
+  });
+});
+
+function match(overrides: {
+  goalsFor: number | null;
+  goalsAgainst: number | null;
+  isHome?: boolean;
+  result: "W" | "D" | "L" | null;
+}) {
+  return { isHome: false, ...overrides };
+}
+
+describe("computeBiggestAndStreaks", () => {
+  it("finds the biggest win by goal margin, not just goals scored", () => {
+    const result = computeBiggestAndStreaks([
+      match({ goalsFor: 4, goalsAgainst: 3, result: "W", isHome: true }),
+      match({ goalsFor: 2, goalsAgainst: 0, result: "W", isHome: false }),
+    ]);
+    expect(result.biggestWin).toEqual({ goalsFor: 2, goalsAgainst: 0, isHome: false });
+  });
+
+  it("finds the biggest loss by goal margin", () => {
+    const result = computeBiggestAndStreaks([
+      match({ goalsFor: 0, goalsAgainst: 1, result: "L", isHome: true }),
+      match({ goalsFor: 1, goalsAgainst: 5, result: "L", isHome: false }),
+    ]);
+    expect(result.biggestLoss).toEqual({ goalsFor: 1, goalsAgainst: 5, isHome: false });
+  });
+
+  it("returns null biggest win/loss when there are none of that result", () => {
+    const result = computeBiggestAndStreaks([match({ goalsFor: 1, goalsAgainst: 1, result: "D" })]);
+    expect(result.biggestWin).toBeNull();
+    expect(result.biggestLoss).toBeNull();
+  });
+
+  it("tracks the longest streak per result across the whole sequence", () => {
+    const result = computeBiggestAndStreaks([
+      match({ goalsFor: 1, goalsAgainst: 0, result: "W" }),
+      match({ goalsFor: 1, goalsAgainst: 0, result: "W" }),
+      match({ goalsFor: 1, goalsAgainst: 0, result: "W" }),
+      match({ goalsFor: 0, goalsAgainst: 0, result: "D" }),
+      match({ goalsFor: 0, goalsAgainst: 1, result: "L" }),
+      match({ goalsFor: 1, goalsAgainst: 0, result: "W" }),
+      match({ goalsFor: 1, goalsAgainst: 0, result: "W" }),
+    ]);
+    expect(result.longestWinStreak).toBe(3);
+    expect(result.longestDrawStreak).toBe(1);
+    expect(result.longestLossStreak).toBe(1);
+  });
+
+  it("ignores unfinished fixtures (null result or scores)", () => {
+    const result = computeBiggestAndStreaks([
+      match({ goalsFor: null, goalsAgainst: null, result: null }),
+      match({ goalsFor: 3, goalsAgainst: 0, result: "W" }),
+    ]);
+    expect(result.biggestWin).toEqual({ goalsFor: 3, goalsAgainst: 0, isHome: false });
+    expect(result.longestWinStreak).toBe(1);
   });
 });

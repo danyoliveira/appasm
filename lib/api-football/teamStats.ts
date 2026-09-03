@@ -66,41 +66,146 @@ export async function getCurrentCompetitions(teamId: number): Promise<{
 
 // The API only gives team statistics scoped to a single competition — "all
 // competitions" is a manual sum across each one the team is registered in
-// this season. Only the fields SeasonStatsGrid renders need to be accurate;
-// biggest win/loss can't be meaningfully combined, so it's left blank.
+// this season. Everything here is plain arithmetic (totals, home/away
+// splits, penalties) so it combines cleanly; biggest win/loss and streaks
+// don't (the API's own figures are per-competition and can't be summed
+// meaningfully), so those are computed separately, straight from the
+// season's match results — see computeBiggestAndStreaks below.
+function sumField(all: TeamStatistics[], pick: (s: TeamStatistics) => number | undefined): number {
+  return all.reduce((sum, s) => sum + (pick(s) ?? 0), 0);
+}
+
 export function combineTeamStats(all: TeamStatistics[]): TeamStatistics | null {
   if (all.length === 0) return null;
 
-  const played = all.reduce((sum, s) => sum + s.fixtures.played.total, 0);
-  const wins = all.reduce((sum, s) => sum + s.fixtures.wins.total, 0);
-  const draws = all.reduce((sum, s) => sum + s.fixtures.draws.total, 0);
-  const loses = all.reduce((sum, s) => sum + s.fixtures.loses.total, 0);
-  const goalsFor = all.reduce((sum, s) => sum + s.goals.for.total.total, 0);
-  const goalsAgainst = all.reduce((sum, s) => sum + s.goals.against.total.total, 0);
-  const cleanSheets = all.reduce((sum, s) => sum + s.clean_sheet.total, 0);
+  const played = {
+    home: sumField(all, (s) => s.fixtures.played.home),
+    away: sumField(all, (s) => s.fixtures.played.away),
+    total: sumField(all, (s) => s.fixtures.played.total),
+  };
+  const wins = {
+    home: sumField(all, (s) => s.fixtures.wins.home),
+    away: sumField(all, (s) => s.fixtures.wins.away),
+    total: sumField(all, (s) => s.fixtures.wins.total),
+  };
+  const draws = {
+    home: sumField(all, (s) => s.fixtures.draws.home),
+    away: sumField(all, (s) => s.fixtures.draws.away),
+    total: sumField(all, (s) => s.fixtures.draws.total),
+  };
+  const loses = {
+    home: sumField(all, (s) => s.fixtures.loses.home),
+    away: sumField(all, (s) => s.fixtures.loses.away),
+    total: sumField(all, (s) => s.fixtures.loses.total),
+  };
+  const goalsFor = {
+    home: sumField(all, (s) => s.goals.for.total.home),
+    away: sumField(all, (s) => s.goals.for.total.away),
+    total: sumField(all, (s) => s.goals.for.total.total),
+  };
+  const goalsAgainst = {
+    home: sumField(all, (s) => s.goals.against.total.home),
+    away: sumField(all, (s) => s.goals.against.total.away),
+    total: sumField(all, (s) => s.goals.against.total.total),
+  };
+  const cleanSheet = {
+    home: sumField(all, (s) => s.clean_sheet.home),
+    away: sumField(all, (s) => s.clean_sheet.away),
+    total: sumField(all, (s) => s.clean_sheet.total),
+  };
+  const penaltyScored = sumField(all, (s) => s.penalty?.scored.total);
+  const penaltyMissed = sumField(all, (s) => s.penalty?.missed.total);
+  const penaltyTotal = penaltyScored + penaltyMissed;
 
   return {
-    fixtures: {
-      played: { total: played },
-      wins: { total: wins },
-      draws: { total: draws },
-      loses: { total: loses },
-    },
+    fixtures: { played, wins, draws, loses },
     goals: {
       for: {
-        total: { total: goalsFor },
-        average: { total: played > 0 ? (goalsFor / played).toFixed(1) : "0" },
+        total: goalsFor,
+        average: { total: played.total > 0 ? (goalsFor.total / played.total).toFixed(1) : "0" },
       },
       against: {
-        total: { total: goalsAgainst },
-        average: { total: played > 0 ? (goalsAgainst / played).toFixed(1) : "0" },
+        total: goalsAgainst,
+        average: { total: played.total > 0 ? (goalsAgainst.total / played.total).toFixed(1) : "0" },
       },
     },
-    clean_sheet: { total: cleanSheets },
+    clean_sheet: cleanSheet,
     biggest: {
       wins: { home: null, away: null },
       loses: { home: null, away: null },
     },
+    penalty:
+      penaltyTotal > 0
+        ? {
+            scored: { total: penaltyScored, percentage: `${((penaltyScored / penaltyTotal) * 100).toFixed(0)}%` },
+            missed: { total: penaltyMissed, percentage: `${((penaltyMissed / penaltyTotal) * 100).toFixed(0)}%` },
+            total: penaltyTotal,
+          }
+        : undefined,
+  };
+}
+
+export interface BiggestAndStreaks {
+  biggestWin: { goalsFor: number; goalsAgainst: number; isHome: boolean } | null;
+  biggestLoss: { goalsFor: number; goalsAgainst: number; isHome: boolean } | null;
+  longestWinStreak: number;
+  longestDrawStreak: number;
+  longestLossStreak: number;
+}
+
+// Computed straight from the season's match results (not the API's
+// per-competition `biggest`/streak figures) so it's accurate whether "all
+// competitions" or a single one is selected.
+export function computeBiggestAndStreaks(
+  matches: { goalsFor: number | null; goalsAgainst: number | null; isHome: boolean; result: "W" | "D" | "L" | null }[],
+): BiggestAndStreaks {
+  const played = matches.filter(
+    (m): m is typeof m & { goalsFor: number; goalsAgainst: number; result: "W" | "D" | "L" } =>
+      m.result != null && m.goalsFor != null && m.goalsAgainst != null,
+  );
+
+  const wins = played.filter((m) => m.result === "W");
+  const biggestWinMatch =
+    wins.length > 0
+      ? wins.reduce((best, m) => (m.goalsFor - m.goalsAgainst > best.goalsFor - best.goalsAgainst ? m : best))
+      : null;
+  const losses = played.filter((m) => m.result === "L");
+  const biggestLossMatch =
+    losses.length > 0
+      ? losses.reduce((worst, m) =>
+          m.goalsAgainst - m.goalsFor > worst.goalsAgainst - worst.goalsFor ? m : worst,
+        )
+      : null;
+
+  const streaks = played.reduce<{ current: { result: "W" | "D" | "L"; count: number } | null; longest: Record<"W" | "D" | "L", number> }>(
+    (acc, m) => {
+      const count = acc.current && acc.current.result === m.result ? acc.current.count + 1 : 1;
+      return {
+        current: { result: m.result, count },
+        longest: { ...acc.longest, [m.result]: Math.max(acc.longest[m.result], count) },
+      };
+    },
+    { current: null, longest: { W: 0, D: 0, L: 0 } },
+  );
+
+  return {
+    biggestWin: biggestWinMatch
+      ? {
+          goalsFor: biggestWinMatch.goalsFor,
+          goalsAgainst: biggestWinMatch.goalsAgainst,
+          isHome: biggestWinMatch.isHome,
+        }
+      : null,
+    biggestLoss: biggestLossMatch
+      ? {
+          goalsFor: biggestLossMatch.goalsFor,
+          goalsAgainst: biggestLossMatch.goalsAgainst,
+          isHome: biggestLossMatch.isHome,
+        }
+      : null,
+    longestWinStreak: streaks.longest.W,
+    longestDrawStreak: streaks.longest.D,
+    longestLossStreak: streaks.longest.L,
   };
 }
 

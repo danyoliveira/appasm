@@ -209,22 +209,45 @@ export function fetchInjuries(teamId: number, season: number) {
   return callApiFootball<Injury[]>("/injuries", { team: teamId, season });
 }
 
+interface MinuteBreakdown {
+  [range: string]: { total: number | null; percentage: string | null };
+}
+
 export interface TeamStatistics {
+  // Only present on a single-competition fetch — combineTeamStats's
+  // synthetic "all competitions" object can't produce a meaningful one.
+  form?: string;
   fixtures: {
-    played: { total: number };
-    wins: { total: number };
-    draws: { total: number };
-    loses: { total: number };
+    played: { home?: number; away?: number; total: number };
+    wins: { home?: number; away?: number; total: number };
+    draws: { home?: number; away?: number; total: number };
+    loses: { home?: number; away?: number; total: number };
   };
   goals: {
-    for: { total: { total: number }; average: { total: string } };
-    against: { total: { total: number }; average: { total: string } };
+    for: {
+      total: { home?: number; away?: number; total: number };
+      average: { total: string };
+      minute?: MinuteBreakdown;
+    };
+    against: {
+      total: { home?: number; away?: number; total: number };
+      average: { total: string };
+      minute?: MinuteBreakdown;
+    };
   };
-  clean_sheet: { total: number };
+  clean_sheet: { home?: number; away?: number; total: number };
+  failed_to_score?: { home: number; away: number; total: number };
   biggest: {
     wins: { home: string | null; away: string | null };
     loses: { home: string | null; away: string | null };
+    streak?: { wins: number; draws: number; loses: number };
   };
+  penalty?: {
+    scored: { total: number; percentage: string };
+    missed: { total: number; percentage: string };
+    total: number;
+  };
+  lineups?: { formation: string; played: number }[];
 }
 
 export function fetchTeamStatistics(teamId: number, league: number, season: number) {
@@ -404,7 +427,9 @@ export function fetchPredictions(fixtureId: number) {
 export interface Sidelined {
   type: string;
   start: string;
-  end: string;
+  // null while the player is still out — confirmed live against the API:
+  // an ongoing sidelined period comes back with no end date at all.
+  end: string | null;
 }
 
 export function fetchSidelined(playerId: number) {

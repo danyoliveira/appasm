@@ -6,7 +6,11 @@ import { useTranslations } from "next-intl";
 import {
   setPlayerAvailability,
   setPlayerExcluded,
-  resolveApiInjury,
+  startPlayerInjury,
+  confirmInjuryFromApi,
+  dismissApiInjury,
+  confirmPlayerReturn,
+  updateInjuryExpectedReturn,
   type PlayerStatus,
 } from "../actions";
 import { contrastTextColor, getLogoColor } from "@/lib/logoColor";
@@ -20,6 +24,12 @@ import {
   type PendingInjury,
   type PlayerSeasonStat,
 } from "./playerShared";
+import InjuryDetailsModal, { InjuryReturnBanner } from "./InjuryTracking";
+
+export interface DueReturnInjury {
+  injuryId: string;
+  expectedReturnAt: string;
+}
 
 export type { AvailabilityInfo, PendingInjury, PlayerSeasonStat };
 
@@ -159,6 +169,7 @@ export default function SquadSection({
   players,
   availabilityByPlayerId,
   injuriesByPlayerId,
+  dueReturnByPlayerId,
   statsByPlayerId,
   flagUrlByPlayerId,
   isCoach,
@@ -168,6 +179,7 @@ export default function SquadSection({
   players: SquadPlayer[];
   availabilityByPlayerId: Map<number, AvailabilityInfo>;
   injuriesByPlayerId: Map<number, PendingInjury>;
+  dueReturnByPlayerId: Map<number, DueReturnInjury>;
   statsByPlayerId: Map<number, PlayerSeasonStat>;
   flagUrlByPlayerId: Map<number, string | null>;
   isCoach: boolean;
@@ -175,6 +187,14 @@ export default function SquadSection({
   const t = useTranslations("dashboard");
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // A single shared modal for both "mark injured by hand" and "confirm an
+  // API-flagged injury" — mode carries which action to call on submit, and
+  // (for the API path) the injuryKey to pass along.
+  const [injuryModal, setInjuryModal] = useState<
+    | { player: SquadPlayer; mode: "manual" }
+    | { player: SquadPlayer; mode: "api"; injuryKey: string; prefill: string }
+    | null
+  >(null);
   const [nameFilter, setNameFilter] = useState("");
   const [positionFilter, setPositionFilter] = useState<string | null>(null);
   const [showExcludedRaw, setShowExcluded] = useState(false);
@@ -251,6 +271,12 @@ export default function SquadSection({
   );
 
   function handleStatusChange(player: SquadPlayer, status: PlayerStatus) {
+    // "Injured" needs a description + expected return before it's real —
+    // handled by the shared modal instead of writing the status straight away.
+    if (status === "injured") {
+      setInjuryModal({ player, mode: "manual" });
+      return;
+    }
     startTransition(async () => {
       await setPlayerAvailability(teamId, player.id, player.name, status);
       router.refresh();
@@ -264,9 +290,44 @@ export default function SquadSection({
     });
   }
 
-  function handleResolveInjury(player: SquadPlayer, injuryKey: string, isReal: boolean) {
+  function handleResolveInjury(player: SquadPlayer, injuryKey: string, isReal: boolean, reason: string) {
+    if (isReal) {
+      setInjuryModal({ player, mode: "api", injuryKey, prefill: reason });
+      return;
+    }
     startTransition(async () => {
-      await resolveApiInjury(teamId, player.id, player.name, injuryKey, isReal);
+      await dismissApiInjury(teamId, player.id, player.name, injuryKey);
+      router.refresh();
+    });
+  }
+
+  function handleInjuryModalSubmit(description: string, expectedReturnAt: string | null) {
+    if (!injuryModal) return;
+    const { player } = injuryModal;
+    startTransition(async () => {
+      if (injuryModal.mode === "manual") {
+        await startPlayerInjury(teamId, player.id, player.name, { description, expectedReturnAt });
+      } else {
+        await confirmInjuryFromApi(teamId, player.id, player.name, injuryModal.injuryKey, {
+          description,
+          expectedReturnAt,
+        });
+      }
+      setInjuryModal(null);
+      router.refresh();
+    });
+  }
+
+  function handleConfirmReturn(player: SquadPlayer, injuryId: string, actualReturnAt: string) {
+    startTransition(async () => {
+      await confirmPlayerReturn(teamId, player.id, player.name, injuryId, actualReturnAt);
+      router.refresh();
+    });
+  }
+
+  function handleUpdateExpectedReturn(injuryId: string, expectedReturnAt: string) {
+    startTransition(async () => {
+      await updateInjuryExpectedReturn(injuryId, expectedReturnAt);
       router.refresh();
     });
   }
@@ -277,6 +338,7 @@ export default function SquadSection({
     const pendingInjury = injuriesByPlayerId.get(player.id);
     const needsConfirmation =
       pendingInjury && pendingInjury.key !== availability?.lastSeenInjuryKey;
+    const dueReturn = dueReturnByPlayerId.get(player.id);
 
     return (
       <div className="flex flex-col gap-2">
@@ -291,8 +353,16 @@ export default function SquadSection({
           <InjuryConfirmBanner
             pendingInjury={pendingInjury}
             isPending={isPending}
-            onResolve={(isReal) => handleResolveInjury(player, pendingInjury.key, isReal)}
+            onResolve={(isReal) => handleResolveInjury(player, pendingInjury.key, isReal, pendingInjury.reason)}
             t={t}
+          />
+        )}
+        {isCoach && dueReturn && (
+          <InjuryReturnBanner
+            expectedReturnAt={dueReturn.expectedReturnAt}
+            isPending={isPending}
+            onConfirmReturn={(actualReturnAt) => handleConfirmReturn(player, dueReturn.injuryId, actualReturnAt)}
+            onUpdateExpectedReturn={(next) => handleUpdateExpectedReturn(dueReturn.injuryId, next)}
           />
         )}
       </div>
@@ -656,6 +726,16 @@ export default function SquadSection({
             </div>
           )}
         </div>
+      )}
+
+      {injuryModal && (
+        <InjuryDetailsModal
+          playerName={injuryModal.player.name}
+          initialDescription={injuryModal.mode === "api" ? injuryModal.prefill : undefined}
+          isPending={isPending}
+          onSubmit={handleInjuryModalSubmit}
+          onCancel={() => setInjuryModal(null)}
+        />
       )}
     </div>
   );

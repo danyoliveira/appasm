@@ -572,6 +572,33 @@ export async function deletePlayerNote(noteId: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function addClubNote(teamId: number, content: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase.from("club_notes").insert({ team_id: teamId, content });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function updateClubNote(noteId: string, content: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase
+    .from("club_notes")
+    .update({ content, updated_at: new Date().toISOString() })
+    .eq("id", noteId);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteClubNote(noteId: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase.from("club_notes").delete().eq("id", noteId);
+
+  if (error) throw new Error(error.message);
+}
+
 export async function setPlayerExcluded(
   teamId: number,
   playerId: number,
@@ -597,12 +624,16 @@ export async function setPlayerExcluded(
   if (error) throw new Error(error.message);
 }
 
-export async function resolveApiInjury(
+// A coach dismissing an API-reported sidelined reason as not real — status
+// goes back to available and the reason is remembered so it doesn't prompt
+// again. Confirming one as real goes through confirmInjuryFromApi instead,
+// since a real injury needs a description + expected return, same as a
+// manually-started one.
+export async function dismissApiInjury(
   teamId: number,
   playerId: number,
   playerName: string,
   injuryKey: string,
-  isReal: boolean,
 ) {
   const { supabase, coachId } = await requireCoach();
   const stintId = await getCurrentStintId(supabase, teamId);
@@ -612,13 +643,343 @@ export async function resolveApiInjury(
       team_id: teamId,
       player_id: playerId,
       player_name: playerName,
-      status: isReal ? "injured" : "available",
+      status: "available",
       last_seen_injury_key: injuryKey,
       stint_id: stintId,
       updated_at: new Date().toISOString(),
       updated_by: coachId,
     },
     { onConflict: "team_id,player_id,stint_id" },
+  );
+
+  if (error) throw new Error(error.message);
+}
+
+export interface InjuryDetailsInput {
+  description: string;
+  expectedReturnAt: string | null;
+}
+
+// Marking a player injured — whether by hand from the status dropdown, or
+// by confirming one the API flagged — always opens an internal injury
+// record (player_injuries), so the injury history a coach sees is built
+// from what was actually confirmed, not just from a status flag.
+export async function startPlayerInjury(
+  teamId: number,
+  playerId: number,
+  playerName: string,
+  input: InjuryDetailsInput,
+) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error: injuryError } = await supabase.from("player_injuries").insert({
+    team_id: teamId,
+    player_id: playerId,
+    stint_id: stintId,
+    description: input.description,
+    source: "manual",
+    expected_return_at: input.expectedReturnAt,
+    created_by: coachId,
+    updated_by: coachId,
+  });
+  if (injuryError) throw new Error(injuryError.message);
+
+  const { error: availabilityError } = await supabase.from("player_availability").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      player_name: playerName,
+      status: "injured",
+      stint_id: stintId,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+  if (availabilityError) throw new Error(availabilityError.message);
+}
+
+export async function confirmInjuryFromApi(
+  teamId: number,
+  playerId: number,
+  playerName: string,
+  injuryKey: string,
+  input: InjuryDetailsInput,
+) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error: injuryError } = await supabase.from("player_injuries").insert({
+    team_id: teamId,
+    player_id: playerId,
+    stint_id: stintId,
+    description: input.description,
+    source: "api",
+    api_injury_key: injuryKey,
+    expected_return_at: input.expectedReturnAt,
+    created_by: coachId,
+    updated_by: coachId,
+  });
+  if (injuryError) throw new Error(injuryError.message);
+
+  const { error: availabilityError } = await supabase.from("player_availability").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      player_name: playerName,
+      status: "injured",
+      last_seen_injury_key: injuryKey,
+      stint_id: stintId,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+  if (availabilityError) throw new Error(availabilityError.message);
+}
+
+// The coach confirming a player has actually come back — closes the injury
+// episode and puts availability back to "available".
+export async function confirmPlayerReturn(
+  teamId: number,
+  playerId: number,
+  playerName: string,
+  injuryId: string,
+  actualReturnAt: string,
+) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error: injuryError } = await supabase
+    .from("player_injuries")
+    .update({
+      actual_return_at: actualReturnAt,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    })
+    .eq("id", injuryId);
+  if (injuryError) throw new Error(injuryError.message);
+
+  const { error: availabilityError } = await supabase.from("player_availability").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      player_name: playerName,
+      status: "available",
+      stint_id: stintId,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+  if (availabilityError) throw new Error(availabilityError.message);
+}
+
+// The expected return date was a guess — let the coach push it back instead
+// of confirming a return that hasn't actually happened yet.
+export async function updateInjuryExpectedReturn(injuryId: string, expectedReturnAt: string | null) {
+  const { supabase, coachId } = await requireCoach();
+
+  const { error } = await supabase
+    .from("player_injuries")
+    .update({
+      expected_return_at: expectedReturnAt,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    })
+    .eq("id", injuryId);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function setPlayerHeight(teamId: number, playerId: number, heightCm: number | null) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error } = await supabase.from("player_body_metrics").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      height_cm: heightCm,
+      stint_id: stintId,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+
+  if (error) throw new Error(error.message);
+}
+
+export async function addPlayerWeightEntry(
+  teamId: number,
+  playerId: number,
+  weightKg: number,
+  recordedAt: string,
+) {
+  const { supabase, coachId } = await requireCoach();
+
+  const { error } = await supabase.from("player_weight_log").insert({
+    team_id: teamId,
+    player_id: playerId,
+    weight_kg: weightKg,
+    recorded_at: recordedAt,
+    created_by: coachId,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function deletePlayerWeightEntry(id: string) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase.from("player_weight_log").delete().eq("id", id);
+
+  if (error) throw new Error(error.message);
+}
+
+// Mirrors "Estatísticas da época"'s field set exactly (see StatGroup* in
+// the player page) — hand-entered totals kept alongside the API-Football
+// ones, not overwriting them, so the coach can compare the two over time.
+export interface PlayerManualStatsInput {
+  appearances: number | null;
+  minutes: number | null;
+  goals: number | null;
+  assists: number | null;
+  saves: number | null;
+  conceded: number | null;
+  lineups: number | null;
+  rating: number | null;
+  shotsTotal: number | null;
+  shotsOn: number | null;
+  dribbleAttempts: number | null;
+  dribbleSuccess: number | null;
+  tackles: number | null;
+  interceptions: number | null;
+  duelsTotal: number | null;
+  duelsWon: number | null;
+  passesTotal: number | null;
+  passesKey: number | null;
+  foulsDrawn: number | null;
+  foulsCommitted: number | null;
+  yellowCards: number | null;
+  redCards: number | null;
+}
+
+export async function setPlayerManualStats(
+  teamId: number,
+  playerId: number,
+  stats: PlayerManualStatsInput,
+) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error } = await supabase.from("player_manual_stats").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      stint_id: stintId,
+      appearances: stats.appearances,
+      minutes: stats.minutes,
+      goals: stats.goals,
+      assists: stats.assists,
+      saves: stats.saves,
+      conceded: stats.conceded,
+      lineups: stats.lineups,
+      rating: stats.rating,
+      shots_total: stats.shotsTotal,
+      shots_on: stats.shotsOn,
+      dribble_attempts: stats.dribbleAttempts,
+      dribble_success: stats.dribbleSuccess,
+      tackles: stats.tackles,
+      interceptions: stats.interceptions,
+      duels_total: stats.duelsTotal,
+      duels_won: stats.duelsWon,
+      passes_total: stats.passesTotal,
+      passes_key: stats.passesKey,
+      fouls_drawn: stats.foulsDrawn,
+      fouls_committed: stats.foulsCommitted,
+      yellow_cards: stats.yellowCards,
+      red_cards: stats.redCards,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+
+  if (error) throw new Error(error.message);
+}
+
+export interface TeamManualStatsInput {
+  played: number | null;
+  wins: number | null;
+  draws: number | null;
+  loses: number | null;
+  goalsFor: number | null;
+  goalsAgainst: number | null;
+  cleanSheets: number | null;
+  playedHome: number | null;
+  playedAway: number | null;
+  winsHome: number | null;
+  winsAway: number | null;
+  drawsHome: number | null;
+  drawsAway: number | null;
+  losesHome: number | null;
+  losesAway: number | null;
+  goalsForHome: number | null;
+  goalsForAway: number | null;
+  goalsAgainstHome: number | null;
+  goalsAgainstAway: number | null;
+  cleanSheetsHome: number | null;
+  cleanSheetsAway: number | null;
+  biggestWinGoalsFor: number | null;
+  biggestWinGoalsAgainst: number | null;
+  biggestLossGoalsFor: number | null;
+  biggestLossGoalsAgainst: number | null;
+  penaltyScored: number | null;
+  penaltyMissed: number | null;
+}
+
+export async function setTeamManualStats(teamId: number, stats: TeamManualStatsInput) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error } = await supabase.from("team_manual_stats").upsert(
+    {
+      team_id: teamId,
+      stint_id: stintId,
+      played: stats.played,
+      wins: stats.wins,
+      draws: stats.draws,
+      loses: stats.loses,
+      goals_for: stats.goalsFor,
+      goals_against: stats.goalsAgainst,
+      clean_sheets: stats.cleanSheets,
+      played_home: stats.playedHome,
+      played_away: stats.playedAway,
+      wins_home: stats.winsHome,
+      wins_away: stats.winsAway,
+      draws_home: stats.drawsHome,
+      draws_away: stats.drawsAway,
+      loses_home: stats.losesHome,
+      loses_away: stats.losesAway,
+      goals_for_home: stats.goalsForHome,
+      goals_for_away: stats.goalsForAway,
+      goals_against_home: stats.goalsAgainstHome,
+      goals_against_away: stats.goalsAgainstAway,
+      clean_sheets_home: stats.cleanSheetsHome,
+      clean_sheets_away: stats.cleanSheetsAway,
+      biggest_win_goals_for: stats.biggestWinGoalsFor,
+      biggest_win_goals_against: stats.biggestWinGoalsAgainst,
+      biggest_loss_goals_for: stats.biggestLossGoalsFor,
+      biggest_loss_goals_against: stats.biggestLossGoalsAgainst,
+      penalty_scored: stats.penaltyScored,
+      penalty_missed: stats.penaltyMissed,
+      updated_at: new Date().toISOString(),
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,stint_id" },
   );
 
   if (error) throw new Error(error.message);

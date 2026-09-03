@@ -41,13 +41,20 @@ interface PlayerMatch {
   red: number;
   started: boolean;
 }
-import type { PlayerStatus } from "../../../actions";
+import type { PlayerStatus, PlayerManualStatsInput } from "../../../actions";
 import { translatePosition, translateInjuryType } from "../../playerShared";
 import { matchResult, FixtureTeamsRow } from "../../fixtureHelpers";
-import { HeaderStatusChip, PendingInjuryBanner } from "./PlayerHeaderStatus";
+import { HeaderStatusChip, PendingInjuryBanner, InjuryReturnPrompt } from "./PlayerHeaderStatus";
 import PlayerHero from "./PlayerHero";
 import PlayerNotesList from "./PlayerNotesList";
+import PlayerBodyMetrics, { type WeightEntry } from "./PlayerBodyMetrics";
+import PlayerStatsComparison from "./PlayerStatsComparison";
+import PlayerProgressionReport, {
+  type ProgressionReportData,
+} from "./PlayerProgressionReport";
+import PlayerDetailTabs from "./PlayerDetailTabs";
 import MatchesScrollList from "./MatchesScrollList";
+import { VIDEO_CATEGORIES } from "../../../preparations/videoCategories";
 
 function StatRow({
   label,
@@ -237,10 +244,131 @@ export default async function PlayerDetailPage({
     .maybeSingle();
 
   const status: PlayerStatus = (availabilityRow?.status as PlayerStatus) ?? "available";
-  const pendingInjury =
-    pendingInjuryReason && pendingInjuryReason !== availabilityRow?.last_seen_injury_key
-      ? { key: pendingInjuryReason, reason: pendingInjuryReason }
-      : null;
+
+  interface PlayerInjuryRow {
+    id: string;
+    description: string;
+    started_at: string;
+    expected_return_at: string | null;
+    actual_return_at: string | null;
+  }
+
+  // Height/weight/manual stats/injuries only make sense for our own
+  // players — an opponent's page has no coach-entered data of ours to show.
+  let heightCm: number | null = null;
+  let weightEntries: WeightEntry[] = [];
+  let injuryRows: PlayerInjuryRow[] = [];
+  let manualStats: PlayerManualStatsInput = {
+    appearances: null,
+    minutes: null,
+    goals: null,
+    assists: null,
+    saves: null,
+    conceded: null,
+    lineups: null,
+    rating: null,
+    shotsTotal: null,
+    shotsOn: null,
+    dribbleAttempts: null,
+    dribbleSuccess: null,
+    tackles: null,
+    interceptions: null,
+    duelsTotal: null,
+    duelsWon: null,
+    passesTotal: null,
+    passesKey: null,
+    foulsDrawn: null,
+    foulsCommitted: null,
+    yellowCards: null,
+    redCards: null,
+  };
+
+  if (squadPlayer) {
+    const [{ data: bodyMetricsRow }, { data: weightRows }, { data: manualStatsRow }, { data: injuryData }] =
+      await Promise.all([
+        supabase
+          .from("player_body_metrics")
+          .select("height_cm")
+          .eq("team_id", teamId)
+          .eq("player_id", playerId)
+          .eq("stint_id", currentStintId)
+          .maybeSingle(),
+        supabase
+          .from("player_weight_log")
+          .select("id, weight_kg, recorded_at")
+          .eq("team_id", teamId)
+          .eq("player_id", playerId)
+          .order("recorded_at", { ascending: false }),
+        supabase
+          .from("player_manual_stats")
+          .select(
+            "appearances, minutes, goals, assists, saves, conceded, lineups, rating, shots_total, shots_on, dribble_attempts, dribble_success, tackles, interceptions, duels_total, duels_won, passes_total, passes_key, fouls_drawn, fouls_committed, yellow_cards, red_cards",
+          )
+          .eq("team_id", teamId)
+          .eq("player_id", playerId)
+          .eq("stint_id", currentStintId)
+          .maybeSingle(),
+        supabase
+          .from("player_injuries")
+          .select("id, description, started_at, expected_return_at, actual_return_at")
+          .eq("team_id", teamId)
+          .eq("player_id", playerId)
+          .eq("stint_id", currentStintId)
+          .order("started_at", { ascending: false }),
+      ]);
+    injuryRows = injuryData ?? [];
+
+    heightCm = bodyMetricsRow?.height_cm ?? null;
+    weightEntries = (weightRows ?? []).map((row) => ({
+      id: row.id,
+      weightKg: Number(row.weight_kg),
+      recordedAt: row.recorded_at,
+    }));
+    if (manualStatsRow) {
+      manualStats = {
+        appearances: manualStatsRow.appearances,
+        minutes: manualStatsRow.minutes,
+        goals: manualStatsRow.goals,
+        assists: manualStatsRow.assists,
+        saves: manualStatsRow.saves,
+        conceded: manualStatsRow.conceded,
+        lineups: manualStatsRow.lineups,
+        rating: manualStatsRow.rating,
+        shotsTotal: manualStatsRow.shots_total,
+        shotsOn: manualStatsRow.shots_on,
+        dribbleAttempts: manualStatsRow.dribble_attempts,
+        dribbleSuccess: manualStatsRow.dribble_success,
+        tackles: manualStatsRow.tackles,
+        interceptions: manualStatsRow.interceptions,
+        duelsTotal: manualStatsRow.duels_total,
+        duelsWon: manualStatsRow.duels_won,
+        passesTotal: manualStatsRow.passes_total,
+        passesKey: manualStatsRow.passes_key,
+        foulsDrawn: manualStatsRow.fouls_drawn,
+        foulsCommitted: manualStatsRow.fouls_committed,
+        yellowCards: manualStatsRow.yellow_cards,
+        redCards: manualStatsRow.red_cards,
+      };
+    }
+  }
+
+  // Hand-entered height/weight win over the API's whenever they're filled
+  // in — same "internal beats external" rule as the season stats — falling
+  // back to the API's own reading (e.g. "181 cm") when nothing's been
+  // entered yet, instead of showing nothing at all.
+  function parseMetricNumber(raw: string | null | undefined): number | null {
+    if (!raw) return null;
+    const match = raw.match(/[\d.]+/);
+    return match ? Number(match[0]) : null;
+  }
+  const resolvedHeightCm = heightCm ?? parseMetricNumber(bio?.height);
+  const apiWeightKg = parseMetricNumber(bio?.weight);
+  const resolvedWeightKg = weightEntries[0]?.weightKg ?? apiWeightKg;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dueReturnInjury = injuryRows.find(
+    (inj) => inj.actual_return_at == null && inj.expected_return_at != null && inj.expected_return_at <= today,
+  );
 
   // Notes are about the player, not about the club — they follow the
   // player across every club the coach moves to, instead of being left
@@ -257,7 +385,7 @@ export default async function PlayerDetailPage({
 
   const { data: videoData } = await supabase
     .from("preparation_videos")
-    .select("id, url, notes, category, team")
+    .select("id, url, notes, category, team, created_at")
     .eq("team_id", teamId)
     .eq("player_id", playerId)
     .order("created_at", { ascending: false });
@@ -358,6 +486,33 @@ export default async function PlayerDetailPage({
   const isGoalkeeper = (squadPlayer?.position ?? seasonStats[0]?.games.position) === "Goalkeeper";
   const displayName = squadPlayer?.name ?? bio?.name ?? "";
 
+  // Same field set as PlayerManualStatsInput, so the internal (hand-entered)
+  // numbers can be compared row by row against these external (API) ones.
+  const externalValues: PlayerManualStatsInput = {
+    appearances: totals.appearances,
+    minutes: totals.minutes,
+    goals: totals.goals,
+    assists: totals.assists,
+    saves: totals.saves,
+    conceded: totals.conceded,
+    lineups: totals.lineups,
+    rating: rating ? Number(rating) : null,
+    shotsTotal: totals.shotsTotal,
+    shotsOn: totals.shotsOn,
+    dribbleAttempts: totals.dribbleAttempts,
+    dribbleSuccess: totals.dribbleSuccess,
+    tackles: totals.tackles,
+    interceptions: totals.interceptions,
+    duelsTotal: totals.duelsTotal,
+    duelsWon: totals.duelsWon,
+    passesTotal: totals.passesTotal,
+    passesKey: totals.passesKey,
+    foulsDrawn: totals.foulsDrawn,
+    foulsCommitted: totals.foulsCommitted,
+    yellowCards: totals.yellow,
+    redCards: totals.red,
+  };
+
   // "N/A" and "Return from loan" entries are loan returns, not a real
   // move — noise we don't need to show.
   const isLoanReturn = (type: string | null) => {
@@ -402,8 +557,8 @@ export default async function PlayerDetailPage({
     position ? { label: t("squadColumnPosition"), value: translatePosition(position, t) } : null,
     bio?.age != null ? { label: t("statAge"), value: bio.age } : null,
     bio?.nationality ? { label: t("statNationality"), value: bio.nationality } : null,
-    bio?.height ? { label: t("statHeight"), value: bio.height } : null,
-    bio?.weight ? { label: t("statWeight"), value: bio.weight } : null,
+    resolvedHeightCm != null ? { label: t("statHeight"), value: `${resolvedHeightCm} cm` } : null,
+    resolvedWeightKg != null ? { label: t("statWeight"), value: `${resolvedWeightKg} kg` } : null,
   ];
   const filteredGeneralInfoStats = generalInfoStats.filter(
     (s): s is { label: string; value: string | number } => s != null,
@@ -412,6 +567,71 @@ export default async function PlayerDetailPage({
   const realSidelined = sidelined.filter(
     (s) => s.type !== "Yellow Cards" && s.type !== "Red Card",
   );
+
+  // The team-scoped /injuries endpoint (pendingInjuryReason, above) can miss
+  // a real injury when a player's squad listing doesn't match the club its
+  // injury record is actually tracked under — a real API-Football data
+  // quirk. /sidelined is scoped to the player directly, so an ongoing
+  // period there (end: null) is checked too, as a second, more reliable
+  // signal — but only when there isn't already an open internal record for
+  // it (already being tracked, nothing to confirm again).
+  const ongoingSidelined = realSidelined.find((s) => !s.end);
+  const hasOpenInternalInjury = injuryRows.some((inj) => inj.actual_return_at == null);
+  // Only for our own players — availability/injury tracking has no meaning
+  // for an opponent we're just scouting.
+  const sidelinedPendingReason =
+    squadPlayer && ongoingSidelined && !hasOpenInternalInjury ? ongoingSidelined.type : null;
+
+  const pendingInjury =
+    pendingInjuryReason && pendingInjuryReason !== availabilityRow?.last_seen_injury_key
+      ? { key: pendingInjuryReason, reason: translateInjuryType(pendingInjuryReason, locale) }
+      : sidelinedPendingReason && sidelinedPendingReason !== availabilityRow?.last_seen_injury_key
+        ? { key: sidelinedPendingReason, reason: translateInjuryType(sidelinedPendingReason, locale) }
+        : null;
+
+  interface InjuryHistoryItem {
+    key: string;
+    description: string;
+    start: string;
+    end: string | null;
+    expectedReturnAt: string | null;
+    source: "internal" | "api";
+  }
+
+  // For our own players, the internal log is the source of truth, but the
+  // API's sidelined history still has value — periods it reports that
+  // aren't already covered by an internal record (before this feature
+  // existed, or simply not logged) get folded in too, marked as coming from
+  // the API instead of silently dropped.
+  const injuryHistory: InjuryHistoryItem[] = squadPlayer
+    ? [
+        ...injuryRows.map((inj) => ({
+          key: `internal-${inj.id}`,
+          description: inj.description,
+          start: inj.started_at,
+          end: inj.actual_return_at,
+          expectedReturnAt: inj.expected_return_at,
+          source: "internal" as const,
+        })),
+        ...realSidelined
+          .filter(
+            (s) =>
+              !injuryRows.some(
+                (inj) =>
+                  inj.started_at <= (s.end ?? "9999-12-31") &&
+                  (inj.actual_return_at ?? "9999-12-31") >= s.start,
+              ),
+          )
+          .map((s) => ({
+            key: `api-${s.start}-${s.end}-${s.type}`,
+            description: translateInjuryType(s.type, locale),
+            start: s.start,
+            end: s.end,
+            expectedReturnAt: null,
+            source: "api" as const,
+          })),
+      ].sort((a, b) => b.start.localeCompare(a.start))
+    : [];
 
   const trophyGroups = new Map<string, { league: string; country: string; years: string[] }>();
   trophies
@@ -430,6 +650,452 @@ export default async function PlayerDetailPage({
     ...group,
     years: group.years.sort((a, b) => b.localeCompare(a)),
   }));
+
+  // Extracted so it can be shown either directly (opponent players — no
+  // manual-stats tab makes sense for them) or inside PlayerStatsTabs
+  // alongside PlayerManualStatsForm (our own squad).
+  const externalStatsContent = (
+    <>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <HeadlineStat
+          label={t("playerStatAppearances")}
+          value={totals.appearances}
+          verified={hasVerifiedTotals}
+        />
+        <HeadlineStat
+          label={t("playerStatMinutes")}
+          value={totals.minutes}
+          verified={hasVerifiedTotals}
+        />
+        <HeadlineStat
+          label={isGoalkeeper ? t("playerStatSaves") : t("playerStatGoals")}
+          value={isGoalkeeper ? totals.saves : totals.goals}
+          verified={hasVerifiedTotals}
+        />
+        <HeadlineStat
+          label={isGoalkeeper ? t("playerStatConceded") : t("playerStatAssists")}
+          value={isGoalkeeper ? totals.conceded : totals.assists}
+          verified={hasVerifiedTotals}
+        />
+      </div>
+
+      <StatGroup title={t("statGroupGeneral")}>
+        <StatRow label={t("statLineups")} value={totals.lineups} verified={hasVerifiedTotals} />
+        <StatRow
+          label={t("statRating")}
+          value={rating ? Number(rating).toFixed(1) : "-"}
+          verified={ratingIsVerified}
+        />
+      </StatGroup>
+
+      {isGoalkeeper ? null : (
+        <>
+          <StatGroup title={t("statGroupAttack")}>
+            <StatRow label={t("statShots")} value={totals.shotsTotal} />
+            <StatRow label={t("statShotsOn")} value={totals.shotsOn} />
+            <StatRow
+              label={t("statDribbles")}
+              value={`${totals.dribbleSuccess}/${totals.dribbleAttempts}`}
+            />
+          </StatGroup>
+          <StatGroup title={t("statGroupDefense")}>
+            <StatRow label={t("statTackles")} value={totals.tackles} />
+            <StatRow label={t("statInterceptions")} value={totals.interceptions} />
+            <StatRow
+              label={t("statDuelsWon")}
+              value={`${totals.duelsWon}/${totals.duelsTotal}`}
+            />
+          </StatGroup>
+        </>
+      )}
+
+      <StatGroup title={t("statGroupPasses")}>
+        <StatRow label={t("statPasses")} value={totals.passesTotal} />
+        <StatRow label={t("statKeyPasses")} value={totals.passesKey} />
+      </StatGroup>
+
+      <StatGroup title={t("statGroupDiscipline")}>
+        <StatRow label={t("statFoulsDrawn")} value={totals.foulsDrawn} />
+        <StatRow label={t("statFoulsCommitted")} value={totals.foulsCommitted} />
+        <StatRow label={t("statYellowCards")} value={totals.yellow} verified={hasVerifiedTotals} />
+        <StatRow label={t("statRedCards")} value={totals.red} verified={hasVerifiedTotals} />
+      </StatGroup>
+
+      <p className="mt-4 border-t border-border pt-3 text-xs text-muted">
+        <span className="text-green-600">✓</span> {t("verifiedStatsLegend")}
+      </p>
+    </>
+  );
+
+  const overviewContent = (
+    <div className="space-y-8">
+      {seasonStats.length > 0 || playerMatches.length > 0 ? (
+        <section className="grid items-start gap-6 lg:grid-cols-2">
+          {(seasonStats.length > 0 || hasVerifiedTotals) && (
+            <div
+              id="player-season-stats-card"
+              className="rounded-2xl border border-border bg-surface p-5 shadow-sm"
+            >
+              {squadPlayer ? (
+                <PlayerStatsComparison
+                  teamId={teamId}
+                  playerId={playerId}
+                  isCoach={isCoach}
+                  isGoalkeeper={isGoalkeeper}
+                  externalValues={externalValues}
+                  initialInternalValues={manualStats}
+                  title={t("seasonStatsTitle")}
+                />
+              ) : (
+                <>
+                  <h2 className="text-lg font-semibold">{t("seasonStatsTitle")}</h2>
+                  <div className="mt-4">{externalStatsContent}</div>
+                </>
+              )}
+            </div>
+          )}
+
+        <div className="js-matches-card flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">⚽ {t("playerMatchesTitle")}</h2>
+          {displayedMatches.length === 0 ? (
+            <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
+          ) : (
+            <MatchesScrollList statsCardId="player-season-stats-card">
+              {displayedMatches.map((pm) => {
+                const fx = pm.fixture;
+                const result = matchResult(fx, teamId);
+                return (
+                  <div
+                    key={fx.fixture.id}
+                    className="rounded-lg border border-border bg-background p-3 text-sm"
+                  >
+                    <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+                      <Link href={`/club/fixture/${fx.fixture.id}`} className="hover:text-accent">
+                        {new Date(fx.fixture.date).toLocaleDateString(locale)}
+                      </Link>
+                      {result && (
+                        <span
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
+                            result === "W"
+                              ? "bg-green-600"
+                              : result === "L"
+                                ? "bg-red-500"
+                                : "bg-muted"
+                          }`}
+                        >
+                          {result}
+                        </span>
+                      )}
+                    </div>
+                    <FixtureTeamsRow
+                      home={fx.teams.home}
+                      away={fx.teams.away}
+                      center={
+                        <Link
+                          href={`/club/fixture/${fx.fixture.id}`}
+                          className="font-semibold hover:text-accent"
+                        >
+                          {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
+                        </Link>
+                      }
+                    />
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      <span>{pm.minutes}&apos;</span>
+                      {pm.rating && <span>⭐ {Number(pm.rating).toFixed(1)}</span>}
+                      {pm.goals > 0 && <span>⚽ {pm.goals}</span>}
+                      {pm.assists > 0 && <span>🅰️ {pm.assists}</span>}
+                      {pm.yellow > 0 && <span>🟨 {pm.yellow}</span>}
+                      {pm.red > 0 && <span>🟥 {pm.red}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </MatchesScrollList>
+          )}
+        </div>
+      </section>
+      ) : (
+        <p className="text-sm text-muted">{t("noRecentResults")}</p>
+      )}
+
+      <section className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <div className="grid gap-6 sm:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-semibold text-muted">🩹 {t("injuryHistoryTitle")}</h3>
+            {squadPlayer ? (
+              // Our own players: the internal log is the source of truth
+              // (it's what actually drove the "injured" status), topped up
+              // with any API-reported period not already covered by an
+              // internal record — still useful data, just not coach-confirmed.
+              injuryHistory.length === 0 ? (
+                <p className="mt-2 text-sm text-muted">{t("noInjuryHistory")}</p>
+              ) : (
+                <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+                  {injuryHistory.map((inj) => {
+                    const start = new Date(inj.start);
+                    const end = inj.end ? new Date(inj.end) : null;
+                    const durationDays = end
+                      ? Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+                      : null;
+                    return (
+                      <div key={inj.key} className="rounded-lg border border-border bg-background p-3 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 font-medium">
+                            {inj.description}
+                            {inj.source === "api" && (
+                              <span className="rounded-full bg-surface px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
+                                {t("injurySourceApiBadge")}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                              end ? "bg-surface text-muted" : "bg-red-500/10 text-red-500"
+                            }`}
+                          >
+                            {end ? t("injuryDurationDays", { count: durationDays ?? 0 }) : t("injuryOngoingBadge")}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted">
+                          {start.toLocaleDateString(locale)}
+                          {end && ` – ${end.toLocaleDateString(locale)}`}
+                          {!end &&
+                            inj.expectedReturnAt &&
+                            ` · ${t("injuryExpectedReturnPrefix")} ${new Date(
+                              inj.expectedReturnAt,
+                            ).toLocaleDateString(locale)}`}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : realSidelined.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">{t("noInjuryHistory")}</p>
+            ) : (
+              <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+                {realSidelined.map((s, i) => {
+                  const start = new Date(s.start);
+                  const end = s.end ? new Date(s.end) : null;
+                  const durationDays = end
+                    ? Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+                    : null;
+                  return (
+                    <div key={i} className="rounded-lg border border-border bg-background p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium">{translateInjuryType(s.type, locale)}</div>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                            end ? "bg-surface text-muted" : "bg-red-500/10 text-red-500"
+                          }`}
+                        >
+                          {end ? t("injuryDurationDays", { count: durationDays ?? 0 }) : t("injuryOngoingBadge")}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted">
+                        {start.toLocaleDateString(locale)}
+                        {end && ` – ${end.toLocaleDateString(locale)}`}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-semibold text-muted">🔄 {t("careerTransfersTitle")}</h3>
+            {realTransfers.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">{t("noTransfersFound")}</p>
+            ) : (
+              <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+                {realTransfers.map((transfer, i) => {
+                  const isLoan = transfer.type != null && /loan/i.test(transfer.type);
+                  return (
+                    <div
+                      key={i}
+                      className={`rounded-lg border-y border-r border-border bg-background p-3 text-sm ${
+                        isLoan ? "border-l-4 border-l-accent" : "border-l border-l-border"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Link
+                          href={`/club/${transfer.teams.out.id}`}
+                          className="flex min-w-0 items-center gap-1.5 hover:text-accent"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={transfer.teams.out.logo}
+                            alt=""
+                            className="h-4 w-4 shrink-0 object-contain"
+                          />
+                          <span className="truncate">{transfer.teams.out.name}</span>
+                        </Link>
+                        <span className="shrink-0 text-muted">→</span>
+                        <Link
+                          href={`/club/${transfer.teams.in.id}`}
+                          className="flex min-w-0 items-center gap-1.5 hover:text-accent"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={transfer.teams.in.logo}
+                            alt=""
+                            className="h-4 w-4 shrink-0 object-contain"
+                          />
+                          <span className="truncate">{transfer.teams.in.name}</span>
+                        </Link>
+                      </div>
+                      <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted">
+                        {isLoan ? (
+                          <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                            {t("careerTransferLoanBadge")}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                            {transfer.type ?? "—"}
+                          </span>
+                        )}
+                        <span>{new Date(transfer.date).toLocaleDateString(locale)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 border-t border-border pt-6">
+          <h3 className="text-sm font-semibold text-muted">🏆 {t("trophiesTitle")}</h3>
+          {groupedTrophies.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">{t("noTrophiesFound")}</p>
+          ) : (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {groupedTrophies.map((trophy, i) => (
+                <div key={i} className="rounded-lg border border-border bg-background p-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{trophy.league}</div>
+                    <div className="truncate text-xs text-muted">{trophy.country}</div>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {trophy.years.map((year) => (
+                      <span key={year} className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                        {year}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+
+  const physicalContent = squadPlayer ? (
+    <PlayerBodyMetrics
+      teamId={teamId}
+      playerId={playerId}
+      isCoach={isCoach}
+      heightCm={resolvedHeightCm}
+      weightEntries={weightEntries}
+      apiWeightKg={apiWeightKg}
+    />
+  ) : null;
+
+  const CATEGORY_LABEL_KEYS: Record<(typeof VIDEO_CATEGORIES)[number], string> = {
+    attack: "videoCategoryAttack",
+    defense: "videoCategoryDefense",
+    set_pieces: "videoCategorySetPieces",
+    transitions: "videoCategoryTransitions",
+  };
+  // Hand-entered stats win over the API ones wherever the coach has filled
+  // them in — same rule as the comparison table's own external/internal
+  // pair, resolved to a single number for the report.
+  function resolveStat(internal: number | null, external: number | null): number | null {
+    return internal ?? external;
+  }
+  const progressionReport: ProgressionReportData = {
+    playerName: displayName,
+    clubName: currentClub?.name ?? null,
+    clubLogoUrl: currentClub?.logo ?? null,
+    photoUrl: squadPlayer?.photo || bio?.photo || null,
+    isGoalkeeper,
+    seasonTotals: {
+      appearances: resolveStat(manualStats.appearances, externalValues.appearances),
+      minutes: resolveStat(manualStats.minutes, externalValues.minutes),
+      rating: resolveStat(manualStats.rating, externalValues.rating),
+      goalsOrSaves: resolveStat(
+        isGoalkeeper ? manualStats.saves : manualStats.goals,
+        isGoalkeeper ? externalValues.saves : externalValues.goals,
+      ),
+      assistsOrConceded: resolveStat(
+        isGoalkeeper ? manualStats.conceded : manualStats.assists,
+        isGoalkeeper ? externalValues.conceded : externalValues.assists,
+      ),
+    },
+    physical: {
+      heightCm: resolvedHeightCm,
+      currentWeight: resolvedWeightKg,
+      previousWeight: weightEntries[1]?.weightKg ?? null,
+      firstWeight: weightEntries[weightEntries.length - 1]?.weightKg ?? null,
+    },
+    tracking: {
+      notesCount: notes.length,
+      videosCount: playerVideoRows.length,
+      videosByCategory: VIDEO_CATEGORIES.map((cat) => ({
+        category: cat,
+        label: t(CATEGORY_LABEL_KEYS[cat]),
+        count: playerVideoRows.filter((v) => v.category === cat).length,
+      })).filter((c) => c.count > 0),
+    },
+    availability: {
+      status,
+      injuryCount: injuryHistory.length,
+    },
+    // Full lists (not just counts) for the downloadable PDF, which is meant
+    // to be a complete, self-contained capture of the player rather than a
+    // quick-glance summary — the on-page card above stays compact since this
+    // same data is one tab-click away (Notas e Vídeos, Físico).
+    notes: notes.map((n) => ({ content: n.content, date: n.created_at })),
+    videos: (videoData ?? [])
+      .slice()
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((v) => ({
+        url: v.url,
+        categoryLabel: v.category
+          ? t(CATEGORY_LABEL_KEYS[v.category as (typeof VIDEO_CATEGORIES)[number]])
+          : null,
+        notes: v.notes,
+        date: v.created_at,
+      })),
+    // Same merged list (internal log + uncovered API history) as the injury
+    // history section above — an ongoing injury (end: null) has no duration.
+    injuries: injuryHistory.map((inj) => ({
+      description: inj.description,
+      start: inj.start,
+      end: inj.end,
+      durationDays: inj.end
+        ? Math.round((new Date(inj.end).getTime() - new Date(inj.start).getTime()) / (24 * 60 * 60 * 1000)) + 1
+        : null,
+      expectedReturnAt: inj.expectedReturnAt,
+    })),
+    weightEntries,
+  };
+
+  const notesContent = (
+    <div className="space-y-8">
+      {isCoach && <PlayerNotesList teamId={teamId} playerId={playerId} notes={notes} />}
+      <div>
+        <h3 className="text-sm font-semibold text-muted">{t("playerVideosTitle")}</h3>
+        <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
+      </div>
+    </div>
+  );
+
+  const progressionContent =
+    isCoach && squadPlayer ? <PlayerProgressionReport data={progressionReport} /> : null;
 
   return (
     <div>
@@ -482,299 +1148,22 @@ export default async function PlayerDetailPage({
             />
           )}
 
-          {isCoach && (
-            <div className="mt-8">
-              <PlayerNotesList teamId={teamId} playerId={playerId} notes={notes} />
-            </div>
+          {isCoach && dueReturnInjury && (
+            <InjuryReturnPrompt
+              teamId={teamId}
+              playerId={playerId}
+              playerName={displayName}
+              injuryId={dueReturnInjury.id}
+              expectedReturnAt={dueReturnInjury.expected_return_at!}
+            />
           )}
 
-          {playerVideoRows.length > 0 && (
-            <div className="mt-8">
-              <h3 className="text-sm font-semibold text-muted">{t("playerVideosTitle")}</h3>
-              <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
-            </div>
-          )}
-
-          {(seasonStats.length > 0 || playerMatches.length > 0) && (
-            <section className="mt-10 grid items-start gap-6 lg:grid-cols-2">
-              {(seasonStats.length > 0 || hasVerifiedTotals) && (
-                <div
-                  id="player-season-stats-card"
-                  className="rounded-2xl border border-border bg-surface p-5 shadow-sm"
-                >
-                  <h2 className="text-lg font-semibold">📊 {t("seasonStatsTitle")}</h2>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <HeadlineStat
-                      label={t("playerStatAppearances")}
-                      value={totals.appearances}
-                      verified={hasVerifiedTotals}
-                    />
-                    <HeadlineStat
-                      label={t("playerStatMinutes")}
-                      value={totals.minutes}
-                      verified={hasVerifiedTotals}
-                    />
-                    <HeadlineStat
-                      label={isGoalkeeper ? t("playerStatSaves") : t("playerStatGoals")}
-                      value={isGoalkeeper ? totals.saves : totals.goals}
-                      verified={hasVerifiedTotals}
-                    />
-                    <HeadlineStat
-                      label={isGoalkeeper ? t("playerStatConceded") : t("playerStatAssists")}
-                      value={isGoalkeeper ? totals.conceded : totals.assists}
-                      verified={hasVerifiedTotals}
-                    />
-                  </div>
-
-                  <StatGroup title={t("statGroupGeneral")}>
-                    <StatRow label={t("statLineups")} value={totals.lineups} verified={hasVerifiedTotals} />
-                    <StatRow
-                      label={t("statRating")}
-                      value={rating ? Number(rating).toFixed(1) : "-"}
-                      verified={ratingIsVerified}
-                    />
-                  </StatGroup>
-
-                  {isGoalkeeper ? null : (
-                    <>
-                      <StatGroup title={t("statGroupAttack")}>
-                        <StatRow label={t("statShots")} value={totals.shotsTotal} />
-                        <StatRow label={t("statShotsOn")} value={totals.shotsOn} />
-                        <StatRow
-                          label={t("statDribbles")}
-                          value={`${totals.dribbleSuccess}/${totals.dribbleAttempts}`}
-                        />
-                      </StatGroup>
-                      <StatGroup title={t("statGroupDefense")}>
-                        <StatRow label={t("statTackles")} value={totals.tackles} />
-                        <StatRow label={t("statInterceptions")} value={totals.interceptions} />
-                        <StatRow
-                          label={t("statDuelsWon")}
-                          value={`${totals.duelsWon}/${totals.duelsTotal}`}
-                        />
-                      </StatGroup>
-                    </>
-                  )}
-
-                  <StatGroup title={t("statGroupPasses")}>
-                    <StatRow label={t("statPasses")} value={totals.passesTotal} />
-                    <StatRow label={t("statKeyPasses")} value={totals.passesKey} />
-                  </StatGroup>
-
-                  <StatGroup title={t("statGroupDiscipline")}>
-                    <StatRow label={t("statFoulsDrawn")} value={totals.foulsDrawn} />
-                    <StatRow label={t("statFoulsCommitted")} value={totals.foulsCommitted} />
-                    <StatRow
-                      label={t("statYellowCards")}
-                      value={totals.yellow}
-                      verified={hasVerifiedTotals}
-                    />
-                    <StatRow label={t("statRedCards")} value={totals.red} verified={hasVerifiedTotals} />
-                  </StatGroup>
-
-                  <p className="mt-4 border-t border-border pt-3 text-xs text-muted">
-                    <span className="text-green-600">✓</span> {t("verifiedStatsLegend")}
-                  </p>
-                </div>
-              )}
-
-              <div className="js-matches-card flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-sm">
-                <h2 className="text-lg font-semibold">⚽ {t("playerMatchesTitle")}</h2>
-                {displayedMatches.length === 0 ? (
-                  <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
-                ) : (
-                  <MatchesScrollList statsCardId="player-season-stats-card">
-                    {displayedMatches.map((pm) => {
-                      const fx = pm.fixture;
-                      const result = matchResult(fx, teamId);
-                      return (
-                        <div
-                          key={fx.fixture.id}
-                          className="rounded-lg border border-border bg-background p-3 text-sm"
-                        >
-                          <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                            <Link
-                              href={`/club/fixture/${fx.fixture.id}`}
-                              className="hover:text-accent"
-                            >
-                              {new Date(fx.fixture.date).toLocaleDateString(locale)}
-                            </Link>
-                            {result && (
-                              <span
-                                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                                  result === "W"
-                                    ? "bg-green-600"
-                                    : result === "L"
-                                      ? "bg-red-500"
-                                      : "bg-muted"
-                                }`}
-                              >
-                                {result}
-                              </span>
-                            )}
-                          </div>
-                          <FixtureTeamsRow
-                            home={fx.teams.home}
-                            away={fx.teams.away}
-                            center={
-                              <Link
-                                href={`/club/fixture/${fx.fixture.id}`}
-                                className="font-semibold hover:text-accent"
-                              >
-                                {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                              </Link>
-                            }
-                          />
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-                            <span>{pm.minutes}&apos;</span>
-                            {pm.rating && <span>⭐ {Number(pm.rating).toFixed(1)}</span>}
-                            {pm.goals > 0 && <span>⚽ {pm.goals}</span>}
-                            {pm.assists > 0 && <span>🅰️ {pm.assists}</span>}
-                            {pm.yellow > 0 && <span>🟨 {pm.yellow}</span>}
-                            {pm.red > 0 && <span>🟥 {pm.red}</span>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </MatchesScrollList>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="mt-10 rounded-2xl border border-border bg-surface p-5 shadow-sm">
-            <h2 className="text-lg font-semibold">ℹ️ {t("playerInfoTitle")}</h2>
-
-            <div className="mt-4 grid gap-6 sm:grid-cols-2">
-              <div>
-                <h3 className="text-sm font-semibold text-muted">
-                  🩹 {t("injuryHistoryTitle")}
-                </h3>
-                {realSidelined.length === 0 ? (
-                  <p className="mt-2 text-sm text-muted">{t("noInjuryHistory")}</p>
-                ) : (
-                  <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {realSidelined.map((s, i) => {
-                      const start = new Date(s.start);
-                      const end = new Date(s.end);
-                      const durationDays =
-                        Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-                      return (
-                        <div
-                          key={i}
-                          className="rounded-lg border border-border bg-background p-3 text-sm"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium">{translateInjuryType(s.type, locale)}</div>
-                            {durationDays > 0 && (
-                              <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                                {t("injuryDurationDays", { count: durationDays })}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 text-xs text-muted">
-                            {start.toLocaleDateString(locale)} – {end.toLocaleDateString(locale)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-muted">
-                  🔄 {t("careerTransfersTitle")}
-                </h3>
-                {realTransfers.length === 0 ? (
-                  <p className="mt-2 text-sm text-muted">{t("noTransfersFound")}</p>
-                ) : (
-                  <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {realTransfers.map((transfer, i) => {
-                      const isLoan = transfer.type != null && /loan/i.test(transfer.type);
-                      return (
-                        <div
-                          key={i}
-                          className={`rounded-lg border-y border-r border-border bg-background p-3 text-sm ${
-                            isLoan ? "border-l-4 border-l-accent" : "border-l border-l-border"
-                          }`}
-                        >
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <Link
-                              href={`/club/${transfer.teams.out.id}`}
-                              className="flex min-w-0 items-center gap-1.5 hover:text-accent"
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={transfer.teams.out.logo}
-                                alt=""
-                                className="h-4 w-4 shrink-0 object-contain"
-                              />
-                              <span className="truncate">{transfer.teams.out.name}</span>
-                            </Link>
-                            <span className="shrink-0 text-muted">→</span>
-                            <Link
-                              href={`/club/${transfer.teams.in.id}`}
-                              className="flex min-w-0 items-center gap-1.5 hover:text-accent"
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={transfer.teams.in.logo}
-                                alt=""
-                                className="h-4 w-4 shrink-0 object-contain"
-                              />
-                              <span className="truncate">{transfer.teams.in.name}</span>
-                            </Link>
-                          </div>
-                          <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted">
-                            {isLoan ? (
-                              <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-                                {t("careerTransferLoanBadge")}
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                                {transfer.type ?? "—"}
-                              </span>
-                            )}
-                            <span>{new Date(transfer.date).toLocaleDateString(locale)}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 border-t border-border pt-6">
-              <h3 className="text-sm font-semibold text-muted">🏆 {t("trophiesTitle")}</h3>
-              {groupedTrophies.length === 0 ? (
-                <p className="mt-2 text-sm text-muted">{t("noTrophiesFound")}</p>
-              ) : (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {groupedTrophies.map((trophy, i) => (
-                    <div key={i} className="rounded-lg border border-border bg-background p-3 text-sm">
-                      <div className="min-w-0">
-                        <div className="truncate font-medium">{trophy.league}</div>
-                        <div className="truncate text-xs text-muted">{trophy.country}</div>
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {trophy.years.map((year) => (
-                          <span
-                            key={year}
-                            className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted"
-                          >
-                            {year}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
+          <PlayerDetailTabs
+            overviewContent={overviewContent}
+            physicalContent={physicalContent}
+            notesContent={notesContent}
+            progressionContent={progressionContent}
+          />
         </>
       )}
     </div>
