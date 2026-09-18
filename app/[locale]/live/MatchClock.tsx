@@ -45,7 +45,22 @@ export default function MatchClock({
 }) {
   const t = useTranslations("dashboard");
   const phase = phaseOf(startedAt, halftimeAt, secondHalfAt, endedAt);
-  const [now, setNow] = useState(() => Date.now());
+  // Starts null (not Date.now()) so the server render and the client's
+  // pre-hydration render agree — Date.now() at request time vs. at
+  // hydration time almost always differ by a beat, which was causing a
+  // hydration mismatch on the ticking seconds. The real time is filled in
+  // right after mount, client-only, which is a normal post-hydration
+  // update rather than a mismatch.
+  const [now, setNow] = useState<number | null>(null);
+
+  // Deferred via setTimeout(0), not called directly in the effect body —
+  // still fires right after mount, but as a callback rather than a
+  // synchronous setState-in-effect (which react-hooks/set-state-in-effect
+  // flags even though it's exactly what's needed here for SSR-safe timing).
+  useEffect(() => {
+    const id = setTimeout(() => setNow(Date.now()), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     if (phase !== "first-half" && phase !== "second-half") return;
@@ -67,7 +82,10 @@ export default function MatchClock({
     );
   }
 
-  const referenceMs = phase === "ended" && endedAt ? new Date(endedAt).getTime() : now;
+  const referenceMs =
+    phase === "ended" && endedAt
+      ? new Date(endedAt).getTime()
+      : (now ?? new Date(startedAt!).getTime());
   const elapsedMs =
     phase === "halftime" && halftimeAt && startedAt
       ? new Date(halftimeAt).getTime() - new Date(startedAt).getTime()

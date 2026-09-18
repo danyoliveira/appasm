@@ -6,7 +6,7 @@ import TacticalAnalysisSection from "./TacticalAnalysisSection";
 import VideoAnalysisSection from "./VideoAnalysisSection";
 import TeamTabs from "./TeamTabs";
 import { useTeamColors } from "./useTeamColors";
-import type { Team, OpponentSquadOption, OurSquadOption } from "./TacticalBoard";
+import type { BenchOption, Team, OpponentSquadOption, OurSquadOption } from "./TacticalBoard";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { PreparationVideoRow } from "./PreparationVideoList";
 import type { VideoPlayerOption } from "./videoCategories";
@@ -38,8 +38,40 @@ export default function PreGameAnalysis({
   const t = useTranslations("dashboard");
   const [activeTeam, setActiveTeam] = useState<Team>("us");
   const teamColors = useTeamColors(ourLogo, opponentLogo);
-  const ourPlayers: VideoPlayerOption[] = ourSquad.map((p) => ({ id: p.id, name: p.name }));
-  const opponentPlayers: VideoPlayerOption[] = opponentSquad.map((p) => ({ id: p.id, name: p.name }));
+  // Owned here (not inside TacticalBoard) so a player added to the Plantel
+  // while building a tactical snapshot is also available to tag in Video
+  // Analysis below, instead of being scoped to the board alone. Seeded from
+  // every saved snapshot's positions (not just the one being edited) — a
+  // custom player only ever gets their name/photo recorded there, so this
+  // is what keeps them in the picker across a page reload instead of only
+  // reappearing once their specific snapshot is reopened for editing.
+  const [customPlayers, setCustomPlayers] = useState<BenchOption[]>(() => {
+    const squadIds = new Set([...ourSquad.map((p) => p.id), ...opponentSquad.map((p) => p.id)]);
+    const byId = new Map<number, BenchOption>();
+    for (const row of tacticalRows) {
+      for (const pos of row.positions) {
+        if (!squadIds.has(pos.playerId) && !byId.has(pos.playerId)) {
+          byId.set(pos.playerId, {
+            id: pos.playerId,
+            name: pos.name,
+            number: pos.number,
+            photo: pos.photo,
+            position: "Midfielder",
+            team: pos.team ?? "opponent",
+          });
+        }
+      }
+    }
+    return Array.from(byId.values());
+  });
+  const ourPlayers: VideoPlayerOption[] = [
+    ...ourSquad.map((p) => ({ id: p.id, name: p.name })),
+    ...customPlayers.filter((p) => p.team === "us").map((p) => ({ id: p.id, name: p.name })),
+  ];
+  const opponentPlayers: VideoPlayerOption[] = [
+    ...opponentSquad.map((p) => ({ id: p.id, name: p.name })),
+    ...customPlayers.filter((p) => p.team === "opponent").map((p) => ({ id: p.id, name: p.name })),
+  ];
 
   return (
     <div className="space-y-4">
@@ -61,6 +93,8 @@ export default function PreGameAnalysis({
             activeTeam={activeTeam}
             onActiveTeamChange={setActiveTeam}
             teamColors={teamColors}
+            customPlayers={customPlayers}
+            onCustomPlayersChange={setCustomPlayers}
           />
         </div>
       </details>

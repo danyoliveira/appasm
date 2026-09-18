@@ -3,6 +3,7 @@ import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getTeamInfo, getTeamSeasonFixtures } from "@/lib/api-football/cache";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { toCalendarRow } from "../../club/fixtureHelpers";
 import type { CalendarRow } from "../../club/FixtureCalendar";
 import { translatePosition, STATUS_DOT, STATUS_TEXT, statusLabelKey } from "../../club/playerShared";
@@ -70,7 +71,7 @@ export default async function ArchivedStintPage({
         .eq("stint_id", stint.id),
       supabase
         .from("manual_preparations")
-        .select("id, opponent_team_id, match_date")
+        .select("id, opponent_team_id, opponent_name, opponent_logo, match_date")
         .eq("team_id", stint.team_id)
         .gte("created_at", stint.started_at)
         .lte("created_at", stint.ended_at!),
@@ -121,9 +122,7 @@ export default async function ArchivedStintPage({
   }));
 
   const manualRows = manualPrepRows ?? [];
-  const opponentInfos = await Promise.all(
-    manualRows.map((r) => getTeamInfo(r.opponent_team_id).catch(() => [])),
-  );
+  const opponents = await Promise.all(manualRows.map(resolveManualOpponent));
 
   function renderPlayerCard(p: (typeof squad)[number]) {
     const availability = availabilityByPlayerId.get(p.player_id);
@@ -247,8 +246,7 @@ export default async function ArchivedStintPage({
           <h2 className="text-lg font-semibold">{t("archivePreparationsTitle")}</h2>
           <div className="mt-4 space-y-2">
             {manualRows.map((r, i) => {
-              const opponent = opponentInfos[i][0]?.team;
-              if (!opponent) return null;
+              const opponent = opponents[i];
               return (
                 <div
                   key={r.id}

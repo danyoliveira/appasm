@@ -44,12 +44,6 @@ import TeamStatsComparison, {
   BIGGEST_RESULTS_FIELDS,
   PENALTY_FIELDS,
 } from "./TeamStatsComparison";
-import {
-  FormStrip,
-  RollingFormChart,
-  GoalDifferenceChart,
-  type ProgressionMatch,
-} from "./ClubProgressionChart";
 import type { TeamManualStatsInput } from "../actions";
 
 function StatRow({ label, value }: { label: string; value: string | number }) {
@@ -350,9 +344,9 @@ export default async function ClubPage({
     });
   }
 
-  // Chronological (oldest first) for the progression chart — pastCalendarRows
+  // Chronological (oldest first) so streaks read correctly — pastCalendarRows
   // is newest-first for the calendar list above.
-  const progressionMatches: ProgressionMatch[] = [...pastCalendarRows].reverse().map((row) => ({
+  const progressionMatches = [...pastCalendarRows].reverse().map((row) => ({
     id: row.id,
     date: row.date,
     opponentName: row.opponent.name,
@@ -550,6 +544,12 @@ export default async function ClubPage({
     </div>
   );
 
+  const progressionContent = (
+    <div className="rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
+      <p className="text-sm text-muted">{t("clubProgressionComingSoon")}</p>
+    </div>
+  );
+
   const statsContent = teamId ? (
     <div className="space-y-8">
       <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
@@ -626,32 +626,6 @@ export default async function ClubPage({
       </div>
     </div>
   ) : null;
-
-  const progressionContent = (
-    <div className="space-y-8">
-      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-muted">{t("progressionFormStripTitle")}</h3>
-        <div className="mt-3">
-          <FormStrip matches={progressionMatches} />
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <h2 className="text-lg font-semibold">📈 {t("clubProgressionTitle")}</h2>
-        <p className="mt-1 text-xs text-muted">{t("progressionRollingExplainer", { count: 5 })}</p>
-        <div className="mt-4">
-          <RollingFormChart matches={progressionMatches} />
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-muted">{t("progressionGoalDifferenceTitle")}</h3>
-        <div className="mt-4">
-          <GoalDifferenceChart matches={progressionMatches} />
-        </div>
-      </div>
-    </div>
-  );
 
   const notesContent =
     isCoach && teamId ? <ClubNotesList teamId={teamId} notes={clubNotes} /> : null;

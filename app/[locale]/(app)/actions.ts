@@ -13,7 +13,7 @@ import {
 } from "@/lib/api-football/client";
 import { getTeamsByCountry, getSquad } from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
-import type { VideoCategory } from "./preparations/videoCategories";
+import type { GameSubmoment, VideoCategory } from "./preparations/videoCategories";
 
 export type ClubsResult = {
   results: TeamSearchResult[];
@@ -51,7 +51,13 @@ export async function searchOpponentClubs(query: string): Promise<ClubsResult> {
   }
 }
 
-export async function createManualPreparation(opponentTeamId: number, matchDateIso: string) {
+// Opponent is either a real API-Football club (opponentTeamId) or, when the
+// coach couldn't find the club in that search at all, a plain typed name —
+// exactly one of the two is ever passed.
+export async function createManualPreparation(
+  opponent: { teamId: number } | { name: string },
+  matchDateIso: string,
+) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -70,7 +76,8 @@ export async function createManualPreparation(opponentTeamId: number, matchDateI
     .from("manual_preparations")
     .insert({
       team_id: teamId,
-      opponent_team_id: opponentTeamId,
+      opponent_team_id: "teamId" in opponent ? opponent.teamId : null,
+      opponent_name: "name" in opponent ? opponent.name : null,
       match_date: matchDateIso,
       created_by: user.id,
     })
@@ -80,6 +87,33 @@ export async function createManualPreparation(opponentTeamId: number, matchDateI
   if (error) throw new Error(error.message);
   revalidatePath("/", "layout");
   return data.id as string;
+}
+
+// null opponent means "keep whichever one this preparation already has" —
+// the edit form only sends one when the coach actually searched and picked
+// (or typed) a different club.
+export async function updateManualPreparation(
+  id: string,
+  opponent: { teamId: number } | { name: string } | null,
+  matchDateIso: string,
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const update: { match_date: string; opponent_team_id?: number | null; opponent_name?: string | null } = {
+    match_date: matchDateIso,
+  };
+  if (opponent) {
+    update.opponent_team_id = "teamId" in opponent ? opponent.teamId : null;
+    update.opponent_name = "name" in opponent ? opponent.name : null;
+  }
+
+  const { error } = await supabase.from("manual_preparations").update(update).eq("id", id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
 }
 
 export async function deleteManualPreparation(id: string) {
@@ -111,6 +145,7 @@ export async function addPreparationVideo(
   url: string,
   notes: string,
   category: VideoCategory | null,
+  submoment: GameSubmoment | null,
   playerId: number | null,
   team: "us" | "opponent",
 ) {
@@ -144,6 +179,7 @@ export async function addPreparationVideo(
     url: parsedUrl.toString(),
     notes: notes.trim() || null,
     category,
+    submoment,
     player_id: playerId,
     team,
     created_by: user.id,
@@ -158,6 +194,7 @@ export async function updatePreparationVideo(
   url: string,
   notes: string,
   category: VideoCategory | null,
+  submoment: GameSubmoment | null,
   playerId: number | null,
   team: "us" | "opponent",
 ) {
@@ -183,6 +220,7 @@ export async function updatePreparationVideo(
       url: parsedUrl.toString(),
       notes: notes.trim() || null,
       category,
+      submoment,
       player_id: playerId,
       team,
     })
@@ -231,6 +269,9 @@ export interface TacticalArrow {
   y1: number;
   x2: number;
   y2: number;
+  // Missing on snapshots saved before the plain-line tool existed —
+  // treated as "arrow" (the original, only style).
+  style?: "arrow" | "line";
 }
 
 // The jsonb `positions` column stores this whole shape now, not just the
@@ -244,6 +285,10 @@ export interface TacticalSnapshotData {
   // saved-analyses list filter by team the same way the board's bench does.
   // Optional: missing on snapshots saved before both squads existed.
   team?: "us" | "opponent";
+  // Which phase of play this analysis documents — same taxonomy as video
+  // tagging. Optional: missing on snapshots saved before moments existed.
+  moment?: VideoCategory | null;
+  submoment?: GameSubmoment | null;
 }
 
 // Each save is a new, separately-kept snapshot (like preparation_videos) —

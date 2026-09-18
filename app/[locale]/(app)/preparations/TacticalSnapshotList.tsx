@@ -11,7 +11,10 @@ import {
 } from "../actions";
 import StaticTacticalPitch from "./StaticTacticalPitch";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import ExpandableText from "@/components/ExpandableText";
 import type { TeamColors } from "./useTeamColors";
+import type { GameSubmoment, VideoCategory } from "./videoCategories";
+import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
 
 export interface TacticalSnapshotRow {
   id: string;
@@ -21,6 +24,8 @@ export interface TacticalSnapshotRow {
   ball: { x: number; y: number } | null;
   markers: TacticalMarker[];
   arrows: TacticalArrow[];
+  moment: VideoCategory | null;
+  submoment: GameSubmoment | null;
   notes: string | null;
   videoUrl: string | null;
   videoEmbedUrl: string | null;
@@ -73,6 +78,21 @@ export default function TacticalSnapshotList({
           >
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">{row.title}</p>
 
+            {(row.moment || row.submoment) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {row.moment && (
+                  <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
+                    {t(CATEGORY_LABEL_KEYS[row.moment])}
+                  </span>
+                )}
+                {row.submoment && (
+                  <span className="rounded-full bg-background px-2 py-0.5 text-[11px] font-medium text-muted">
+                    {t(SUBMOMENT_LABEL_KEYS[row.submoment])}
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="mt-2">
               <StaticTacticalPitch
                 positions={row.positions}
@@ -104,7 +124,7 @@ export default function TacticalSnapshotList({
                 </a>
               ))}
 
-            {row.notes && <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{row.notes}</p>}
+            {row.notes && <ExpandableText text={row.notes} className="mt-2 text-sm text-muted" />}
 
             {isCoach && (
               <div className="mt-2 flex items-center gap-3">

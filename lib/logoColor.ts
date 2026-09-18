@@ -83,6 +83,104 @@ export function getLogoColor(url: string | null | undefined): Promise<string> {
   return promise;
 }
 
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+  else if (max === gn) h = (bn - rn) / d + 2;
+  else h = (rn - gn) / d + 4;
+  return { h: h * 60, s, l };
+}
+
+const vividColorCache = new Map<string, string>();
+const vividPending = new Map<string, Promise<string>>();
+
+// Same crest sampling as extractDominantColor, but picks the most saturated
+// common color instead of the most frequent one — a badge's most frequent
+// pixel is often a neutral outline/background, not the "loud" brand color a
+// UI accent should borrow.
+function extractVividColor(url: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const size = 24;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("no 2d context");
+        ctx.drawImage(img, 0, 0, size, size);
+        const { data } = ctx.getImageData(0, 0, size, size);
+
+        const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
+        let total = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          if (a < 128) continue;
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          if (max > 235 && min > 200) continue;
+          if (max < 30) continue;
+          total += 1;
+          const key = `${r >> 4}-${g >> 4}-${b >> 4}`;
+          const bucket = buckets.get(key) ?? { count: 0, r: 0, g: 0, b: 0 };
+          bucket.count += 1;
+          bucket.r += r;
+          bucket.g += g;
+          bucket.b += b;
+          buckets.set(key, bucket);
+        }
+
+        // Ignore buckets too small to be a real crest color (stray
+        // anti-aliasing pixels), then take whichever survivor is most
+        // saturated.
+        const minCount = Math.max(3, total * 0.03);
+        let best: { r: number; g: number; b: number; s: number } | null = null;
+        for (const bucket of buckets.values()) {
+          if (bucket.count < minCount) continue;
+          const r = Math.round(bucket.r / bucket.count);
+          const g = Math.round(bucket.g / bucket.count);
+          const b = Math.round(bucket.b / bucket.count);
+          const { s } = rgbToHsl(r, g, b);
+          if (!best || s > best.s) best = { r, g, b, s };
+        }
+        resolve(best ? rgbToHex(best.r, best.g, best.b) : DEFAULT_COLOR);
+      } catch {
+        resolve(DEFAULT_COLOR);
+      }
+    };
+    img.onerror = () => resolve(DEFAULT_COLOR);
+    img.src = url;
+  });
+}
+
+export function getVividLogoColor(url: string | null | undefined): Promise<string> {
+  if (!url) return Promise.resolve(DEFAULT_COLOR);
+  if (vividColorCache.has(url)) return Promise.resolve(vividColorCache.get(url)!);
+  const inFlight = vividPending.get(url);
+  if (inFlight) return inFlight;
+  const promise = extractVividColor(url).then((color) => {
+    vividColorCache.set(url, color);
+    vividPending.delete(url);
+    return color;
+  });
+  vividPending.set(url, promise);
+  return promise;
+}
+
 function relativeLuminance(hex: string): number {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;

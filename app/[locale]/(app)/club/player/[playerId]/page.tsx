@@ -55,6 +55,7 @@ import PlayerProgressionReport, {
 import PlayerDetailTabs from "./PlayerDetailTabs";
 import MatchesScrollList from "./MatchesScrollList";
 import { VIDEO_CATEGORIES } from "../../../preparations/videoCategories";
+import { CATEGORY_LABEL_KEYS } from "../../../preparations/gameMomentLabels";
 
 function StatRow({
   label,
@@ -385,7 +386,7 @@ export default async function PlayerDetailPage({
 
   const { data: videoData } = await supabase
     .from("preparation_videos")
-    .select("id, url, notes, category, team, created_at")
+    .select("id, url, notes, category, submoment, team, created_at")
     .eq("team_id", teamId)
     .eq("player_id", playerId)
     .order("created_at", { ascending: false });
@@ -396,6 +397,7 @@ export default async function PlayerDetailPage({
     notes: row.notes,
     embedUrl: getVideoEmbedUrl(row.url),
     category: row.category,
+    submoment: row.submoment,
     player: null,
     team: (row.team as "us" | "opponent") ?? "opponent",
   }));
@@ -994,22 +996,21 @@ export default async function PlayerDetailPage({
   );
 
   const physicalContent = squadPlayer ? (
-    <PlayerBodyMetrics
-      teamId={teamId}
-      playerId={playerId}
-      isCoach={isCoach}
-      heightCm={resolvedHeightCm}
-      weightEntries={weightEntries}
-      apiWeightKg={apiWeightKg}
-    />
+    <div className="space-y-6">
+      <PlayerBodyMetrics
+        teamId={teamId}
+        playerId={playerId}
+        isCoach={isCoach}
+        heightCm={resolvedHeightCm}
+        weightEntries={weightEntries}
+        apiWeightKg={apiWeightKg}
+      />
+      <div className="rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
+        <p className="text-sm text-muted">{t("playerGpsDataComingSoon")}</p>
+      </div>
+    </div>
   ) : null;
 
-  const CATEGORY_LABEL_KEYS: Record<(typeof VIDEO_CATEGORIES)[number], string> = {
-    attack: "videoCategoryAttack",
-    defense: "videoCategoryDefense",
-    set_pieces: "videoCategorySetPieces",
-    transitions: "videoCategoryTransitions",
-  };
   // Hand-entered stats win over the API ones wherever the coach has filled
   // them in — same rule as the comparison table's own external/internal
   // pair, resolved to a single number for the report.

@@ -18,6 +18,8 @@ import {
   combineTeamStats,
 } from "@/lib/api-football/teamStats";
 import type { Fixture, TeamStatistics, Injury } from "@/lib/api-football/client";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
+import EditManualPreparation from "../EditManualPreparation";
 import PreparationTabs from "../PreparationTabs";
 import BackLink from "../../BackLink";
 import Countdown from "../../Countdown";
@@ -28,11 +30,16 @@ import { type PreparationVideoRow } from "../PreparationVideoList";
 import PreGameAnalysis from "../PreGameAnalysis";
 import type { TacticalSnapshotRow } from "../TacticalSnapshotList";
 import type { PlayerStatus, TacticalArrow, TacticalMarker, TacticalPosition } from "../../actions";
+import type { GameSubmoment, VideoCategory } from "../videoCategories";
 import LiveStatsPanel from "../LiveStatsPanel";
+import LiveMatchRecapSection from "../LiveMatchRecapSection";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
 
 interface PreparationMatch {
-  opponentId: number;
+  // null for a custom opponent typed by hand — one that isn't in
+  // API-Football's own database, so there's nothing to fetch scouting data,
+  // a squad, or stats for.
+  opponentId: number | null;
   opponentName: string;
   opponentLogo: string;
   date: string;
@@ -86,28 +93,53 @@ export default async function PreparationDetailPage({
     const manualId = fixtureIdParam.slice("manual-".length);
     const { data: manualRow } = await supabase
       .from("manual_preparations")
-      .select("opponent_team_id, match_date")
+      .select("opponent_team_id, opponent_name, opponent_logo, match_date")
       .eq("id", manualId)
       .maybeSingle();
 
     if (manualRow) {
-      const opponentInfo = await getTeamInfo(manualRow.opponent_team_id).catch(() => []);
-      if (opponentInfo[0]) {
-        match = {
-          opponentId: manualRow.opponent_team_id,
-          opponentName: opponentInfo[0].team.name,
-          opponentLogo: opponentInfo[0].team.logo,
-          date: manualRow.match_date,
-          realFixtureId: null,
-          finished: false,
-          ourTeamName: ourTeam?.name ?? "",
-          ourTeamLogo: ourTeam?.logo ?? "",
-          isHome: true,
-          score: null,
-          competition: null,
-          venue: null,
+      const opponent = await resolveManualOpponent(manualRow);
+
+      // A manual game has no external result — the only place a final
+      // score can come from is a finished Modo Jogo session for it.
+      let finished = false;
+      let score: { home: number | null; away: number | null } | null = null;
+      const { data: manualSession } = await supabase
+        .from("live_match_sessions")
+        .select("id")
+        .eq("preparation_key", fixtureIdParam)
+        .not("ended_at", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (manualSession) {
+        const { data: goalEntries } = await supabase
+          .from("live_match_entries")
+          .select("team_side")
+          .eq("session_id", manualSession.id)
+          .eq("kind", "event")
+          .eq("event_type", "goal");
+        finished = true;
+        score = {
+          home: (goalEntries ?? []).filter((e) => e.team_side === "home").length,
+          away: (goalEntries ?? []).filter((e) => e.team_side === "away").length,
         };
       }
+
+      match = {
+        opponentId: opponent.id,
+        opponentName: opponent.name,
+        opponentLogo: opponent.logo,
+        date: manualRow.match_date,
+        realFixtureId: null,
+        finished,
+        ourTeamName: ourTeam?.name ?? "",
+        ourTeamLogo: ourTeam?.logo ?? "",
+        isHome: true,
+        score,
+        competition: null,
+        venue: null,
+      };
     }
   } else {
     const fixtureId = Number(fixtureIdParam);
@@ -170,22 +202,25 @@ export default async function PreparationDetailPage({
   let opponentInjuries: Injury[] = [];
   let opponentUnavailable: Injury[] = [];
   let headToHead: Fixture[] = [];
+  // Hoisted out of `match.opponentId` — a plain const narrows cleanly across
+  // the awaits and closures below, where the nested property wouldn't.
+  const opponentId = match?.opponentId ?? null;
 
-  if (match) {
+  if (match && opponentId != null) {
     try {
-      const opponentCompetitions = await getCurrentCompetitions(match.opponentId);
+      const opponentCompetitions = await getCurrentCompetitions(opponentId);
       if (opponentCompetitions.defaultSeason) {
         const [statsByCompetitionId, lastFixtures, nextFixtures, injuriesResult, headToHeadResult] =
           await Promise.all([
             getStatsPerCompetition(
-              match.opponentId,
+              opponentId,
               opponentCompetitions.competitions,
               opponentCompetitions.defaultSeason,
             ),
-            getLastFixtures(match.opponentId).catch(() => []),
-            getNextFixtures(match.opponentId).catch(() => []),
-            getInjuries(match.opponentId, opponentCompetitions.defaultSeason).catch(() => []),
-            teamId ? getHeadToHead(teamId, match.opponentId).catch(() => []) : Promise.resolve([]),
+            getLastFixtures(opponentId).catch(() => []),
+            getNextFixtures(opponentId).catch(() => []),
+            getInjuries(opponentId, opponentCompetitions.defaultSeason).catch(() => []),
+            teamId ? getHeadToHead(teamId, opponentId).catch(() => []) : Promise.resolve([]),
           ]);
         opponentStats = combineTeamStats(Array.from(statsByCompetitionId.values()));
         opponentLastFixture = lastFixtures[0] ?? null;
@@ -219,16 +254,16 @@ export default async function PreparationDetailPage({
   }
 
   const opponentLastResult =
-    opponentLastFixture && match ? matchResult(opponentLastFixture, match.opponentId) : null;
+    opponentLastFixture && opponentId != null ? matchResult(opponentLastFixture, opponentId) : null;
   const opponentLastOpponent =
-    opponentLastFixture && match
-      ? opponentLastFixture.teams.home.id === match.opponentId
+    opponentLastFixture && opponentId != null
+      ? opponentLastFixture.teams.home.id === opponentId
         ? opponentLastFixture.teams.away
         : opponentLastFixture.teams.home
       : null;
   const opponentNextOpponent =
-    opponentNextFixture && match
-      ? opponentNextFixture.teams.home.id === match.opponentId
+    opponentNextFixture && opponentId != null
+      ? opponentNextFixture.teams.home.id === opponentId
         ? opponentNextFixture.teams.away
         : opponentNextFixture.teams.home
       : null;
@@ -253,7 +288,7 @@ export default async function PreparationDetailPage({
     const currentStintId = teamId ? await getCurrentStintId(supabase, teamId) : null;
     const [squadResult, ourSquadResult, { data: availabilityRows }, { data: tacticsRows }] =
       await Promise.all([
-        getSquad(match.opponentId).catch(() => []),
+        opponentId != null ? getSquad(opponentId).catch(() => []) : Promise.resolve([]),
         teamId ? getSquad(teamId).catch(() => []) : Promise.resolve([]),
         teamId
           ? supabase
@@ -301,6 +336,8 @@ export default async function PreparationDetailPage({
             markers?: TacticalMarker[];
             arrows?: TacticalArrow[];
             team?: "us" | "opponent";
+            moment?: VideoCategory | null;
+            submoment?: GameSubmoment | null;
           }
         | null;
       const isLegacyArray = Array.isArray(raw);
@@ -318,6 +355,8 @@ export default async function PreparationDetailPage({
         ball: isLegacyArray ? null : (raw?.ball ?? null),
         markers: isLegacyArray ? [] : (raw?.markers ?? []),
         arrows: isLegacyArray ? [] : (raw?.arrows ?? []),
+        moment: isLegacyArray ? null : (raw?.moment ?? null),
+        submoment: isLegacyArray ? null : (raw?.submoment ?? null),
         notes: row.notes,
         videoUrl: row.video_url,
         videoEmbedUrl: row.video_url ? getVideoEmbedUrl(row.video_url) : null,
@@ -327,18 +366,35 @@ export default async function PreparationDetailPage({
 
   const opponentSquadById = new Map(opponentSquad.map((p) => [p.id, p]));
   const ourSquadById = new Map(ourSquad.map((p) => [p.id, p]));
+  // A player added ad hoc on the tactical board (not from either real
+  // squad) only ever gets their name/photo recorded inside a saved
+  // snapshot's positions — there's no other table for them. Rebuilding this
+  // from every snapshot (not just one) is what lets a video tagged with one
+  // of them still resolve to a name after a reload, instead of silently
+  // losing the tag.
+  const customPlayerById = new Map<number, { id: number; name: string; photo: string }>();
+  for (const snapshot of tacticalSnapshots) {
+    for (const pos of snapshot.positions) {
+      if (!opponentSquadById.has(pos.playerId) && !ourSquadById.has(pos.playerId)) {
+        customPlayerById.set(pos.playerId, { id: pos.playerId, name: pos.name, photo: pos.photo });
+      }
+    }
+  }
 
   let videoRows: PreparationVideoRow[] = [];
   if (match) {
     const { data } = await supabase
       .from("preparation_videos")
-      .select("id, url, notes, category, player_id, team")
+      .select("id, url, notes, category, submoment, player_id, team")
       .eq("preparation_key", fixtureIdParam)
       .order("created_at", { ascending: false });
 
     videoRows = (data ?? []).map((row) => {
       const player = row.player_id
-        ? (opponentSquadById.get(row.player_id) ?? ourSquadById.get(row.player_id) ?? null)
+        ? (opponentSquadById.get(row.player_id) ??
+          ourSquadById.get(row.player_id) ??
+          customPlayerById.get(row.player_id) ??
+          null)
         : null;
 
       return {
@@ -347,6 +403,7 @@ export default async function PreparationDetailPage({
         notes: row.notes,
         embedUrl: getVideoEmbedUrl(row.url),
         category: row.category,
+        submoment: row.submoment,
         player: player ? { id: player.id, name: player.name, photo: player.photo } : null,
         team: (row.team as "us" | "opponent") ?? "opponent",
       };
@@ -354,6 +411,14 @@ export default async function PreparationDetailPage({
   }
 
   const generalInfoContent = match && (
+    opponentId == null ? (
+      // A custom opponent (not in API-Football's own database) has nothing
+      // to scout automatically — say so once instead of leaving every
+      // section below either empty or silently absent.
+      <div className="mt-6 rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
+        {t("preparationCustomOpponentScoutingHint")}
+      </div>
+    ) : (
     <div>
       <div className="mt-6">
         <h3 className="text-sm font-semibold text-muted">{t("injuriesTitle")}</h3>
@@ -558,6 +623,7 @@ export default async function PreparationDetailPage({
         </div>
       )}
     </div>
+    )
   );
 
   // Rendered twice (normal width, then focus mode's wider layout) instead
@@ -590,9 +656,26 @@ export default async function PreparationDetailPage({
     );
   }
 
+  function renderPostGameContent() {
+    if (!match) return null;
+    if (!liveSession) {
+      // Explains how this tab actually fills in, instead of the generic
+      // "coming soon" placeholder — there's no session yet to hand
+      // LiveMatchRecapSection, so it can't render its own more specific
+      // "match not finished yet" message.
+      return (
+        <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
+          {t("preparationPostGameNoSessionHint")}
+        </div>
+      );
+    }
+    return <LiveMatchRecapSection sessionId={liveSession.id} preparationKey={fixtureIdParam} />;
+  }
+
   const preGameContent = match ? renderPreGameContent(false) : null;
   const preGameContentFocus = match ? renderPreGameContent(true) : null;
   const inGameContent = renderInGameContent();
+  const postGameContent = renderPostGameContent();
 
   return (
     <div>
@@ -624,12 +707,18 @@ export default async function PreparationDetailPage({
 
             <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
               <div className="flex flex-col items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={match.isHome ? match.ourTeamLogo : match.opponentLogo}
-                  alt=""
-                  className="h-12 w-12 object-contain"
-                />
+                {(match.isHome ? match.ourTeamLogo : match.opponentLogo) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={match.isHome ? match.ourTeamLogo : match.opponentLogo}
+                    alt=""
+                    className="h-12 w-12 object-contain"
+                  />
+                ) : (
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/20 text-lg font-semibold text-accent">
+                    {(match.isHome ? match.ourTeamName : match.opponentName).charAt(0).toUpperCase()}
+                  </span>
+                )}
                 <span className="max-w-[110px] truncate text-center text-sm font-medium">
                   {match.isHome ? match.ourTeamName : match.opponentName}
                 </span>
@@ -648,12 +737,18 @@ export default async function PreparationDetailPage({
               </div>
 
               <div className="flex flex-col items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={match.isHome ? match.opponentLogo : match.ourTeamLogo}
-                  alt=""
-                  className="h-12 w-12 object-contain"
-                />
+                {(match.isHome ? match.opponentLogo : match.ourTeamLogo) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={match.isHome ? match.opponentLogo : match.ourTeamLogo}
+                    alt=""
+                    className="h-12 w-12 object-contain"
+                  />
+                ) : (
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/20 text-lg font-semibold text-accent">
+                    {(match.isHome ? match.opponentName : match.ourTeamName).charAt(0).toUpperCase()}
+                  </span>
+                )}
                 <span className="max-w-[110px] truncate text-center text-sm font-medium">
                   {match.isHome ? match.opponentName : match.ourTeamName}
                 </span>
@@ -670,6 +765,16 @@ export default async function PreparationDetailPage({
               </span>
               {match.venue && <span>🏟️ {match.venue}</span>}
             </div>
+
+            {!match.realFixtureId && isCoach && (
+              <div className="mt-2 flex justify-center">
+                <EditManualPreparation
+                  id={fixtureIdParam.replace(/^manual-/, "")}
+                  opponentName={match.opponentName}
+                  matchDate={match.date}
+                />
+              </div>
+            )}
 
             {!match.finished && (
               <div className="mt-3 flex justify-center">
@@ -695,10 +800,17 @@ export default async function PreparationDetailPage({
               preGameContentFocus={preGameContentFocus}
               inGameContent={inGameContent}
               inGameContentFocus={inGameContent}
+              postGameContent={postGameContent}
+              postGameContentFocus={postGameContent}
               matchDate={match.date}
               opponentName={match.opponentName}
               liveSession={liveSession}
               finished={match.finished}
+              ourLogo={match.ourTeamLogo}
+              opponentLogo={match.opponentLogo}
+              ourTeamName={match.ourTeamName}
+              tacticalRows={tacticalSnapshots}
+              videoRows={videoRows}
             />
           </div>
         </>

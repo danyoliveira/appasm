@@ -4,9 +4,15 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveLiveMatchTeams } from "@/lib/liveStats";
 import {
   mapLiveEntryRow,
   emptyLineup,
+  toLineup,
+  computeCollectiveStats,
+  computeGkStats,
+  type CollectiveStats,
+  type GkStats,
   type LiveEntryInput,
   type LiveEntryRow,
   type TeamLineup,
@@ -42,6 +48,7 @@ export interface LiveSessionInfo {
   id: string;
   memberLink: string;
   viewerLink: string;
+  gkLink: string;
   startedAt: string | null;
   endedAt: string | null;
   homeLineup: TeamLineup;
@@ -50,12 +57,13 @@ export interface LiveSessionInfo {
 }
 
 const SESSION_COLUMNS =
-  "id, member_token, viewer_token, started_at, ended_at, home_lineup, away_lineup, bench_notes";
+  "id, member_token, viewer_token, gk_token, started_at, ended_at, home_lineup, away_lineup, bench_notes";
 
 function toSessionInfo(row: {
   id: string;
   member_token: string;
   viewer_token: string;
+  gk_token: string;
   started_at: string | null;
   ended_at: string | null;
   home_lineup: unknown;
@@ -67,6 +75,7 @@ function toSessionInfo(row: {
     id: row.id,
     memberLink: `/live/${row.member_token}`,
     viewerLink: `/live/${row.viewer_token}`,
+    gkLink: `/live/${row.gk_token}`,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     homeLineup: {
@@ -148,13 +157,13 @@ export async function saveBenchNotes(sessionId: string, notes: string) {
 // hex) so nothing downstream needs to care which side minted it.
 export async function regenerateLiveSessionToken(
   sessionId: string,
-  which: "member" | "viewer",
+  which: "member" | "viewer" | "gk",
 ): Promise<LiveSessionInfo> {
   const { supabase, profile } = await requireProfile();
   requireManager(profile);
 
   const newToken = randomBytes(16).toString("hex");
-  const column = which === "member" ? "member_token" : "viewer_token";
+  const column = which === "member" ? "member_token" : which === "viewer" ? "viewer_token" : "gk_token";
 
   const { data, error } = await supabase
     .from("live_match_sessions")
@@ -171,6 +180,7 @@ export async function regenerateLiveSessionToken(
 export interface LiveSessionPresence {
   memberCount: number;
   viewerCount: number;
+  gkCoachCount: number;
 }
 
 // A connection counts as "online" if its last poll landed within this
@@ -204,6 +214,7 @@ export async function getLiveSessionPresence(sessionId: string): Promise<LiveSes
   return {
     memberCount: rows.filter((r) => r.role === "member").length,
     viewerCount: rows.filter((r) => r.role === "viewer").length,
+    gkCoachCount: rows.filter((r) => r.role === "gk_coach").length,
   };
 }
 
@@ -228,11 +239,71 @@ export async function getLiveEntries(sessionId: string): Promise<LiveEntryRow[]>
   const { supabase } = await requireProfile();
   const { data } = await supabase
     .from("live_match_entries")
-    .select("id, event_type, team_side, minute, extra_minute, player_name, notes, created_at, created_by_label")
+    .select("id, kind, event_type, team_side, minute, extra_minute, player_name, notes, created_at, created_by_label")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: false });
 
-  return (data ?? []).map(mapLiveEntryRow);
+  // Collective-stat taps (kind: "stat") live on this same table but aren't
+  // part of the match-events feed this panel shows.
+  return (data ?? []).filter((row) => row.kind === "event").map(mapLiveEntryRow);
+}
+
+export interface LiveMatchRecap {
+  homeName: string;
+  homeLogo: string;
+  awayName: string;
+  awayLogo: string;
+  ourSide: "home" | "away";
+  homeLineup: TeamLineup;
+  awayLineup: TeamLineup;
+  entries: LiveEntryRow[];
+  collectiveStats: CollectiveStats;
+  gkStats: GkStats;
+}
+
+// Same data getLiveFeedByToken assembles for the guest link's Pós-Jogo tab,
+// just resolved from an authenticated session instead of a token — so the
+// coach sees the recap right here on the dashboard too, not only via the
+// shareable link. Returns null before the match has actually ended (nothing
+// final to show yet).
+export async function getLiveMatchRecap(sessionId: string): Promise<LiveMatchRecap | null> {
+  const { supabase } = await requireProfile();
+
+  const { data: session } = await supabase
+    .from("live_match_sessions")
+    .select("team_id, preparation_key, home_lineup, away_lineup, home_lineup_live, away_lineup_live, ended_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session || !session.ended_at) return null;
+
+  const teams = await resolveLiveMatchTeams(session.preparation_key, session.team_id);
+  if (!teams) return null;
+
+  const { data: entriesData } = await supabase
+    .from("live_match_entries")
+    .select(
+      "id, kind, event_type, team_side, stat_key, stat_value, minute, extra_minute, player_name, notes, created_at, created_by_label",
+    )
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false });
+
+  const allEntries = entriesData ?? [];
+
+  return {
+    homeName: teams.homeName,
+    homeLogo: teams.homeLogo,
+    awayName: teams.awayName,
+    awayLogo: teams.awayLogo,
+    ourSide: teams.ourSide,
+    homeLineup: toLineup(session.home_lineup_live ?? session.home_lineup),
+    awayLineup: toLineup(session.away_lineup_live ?? session.away_lineup),
+    entries: allEntries.filter((r) => r.kind === "event").map(mapLiveEntryRow),
+    collectiveStats: computeCollectiveStats(
+      allEntries.filter((r) => r.kind === "stat"),
+      session.ended_at,
+    ),
+    gkStats: computeGkStats(allEntries.filter((r) => r.kind === "stat")),
+  };
 }
 
 export async function addLiveEntry(sessionId: string, input: LiveEntryInput) {

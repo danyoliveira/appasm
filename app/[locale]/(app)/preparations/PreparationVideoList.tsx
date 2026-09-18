@@ -4,16 +4,17 @@ import { useState, useTransition } from "react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { deletePreparationVideo, updatePreparationVideo } from "../actions";
-import { VIDEO_CATEGORIES, type VideoCategory, type VideoPlayerOption } from "./videoCategories";
+import {
+  VIDEO_CATEGORIES,
+  submomentsFor,
+  type GameSubmoment,
+  type VideoCategory,
+  type VideoPlayerOption,
+} from "./videoCategories";
+import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
 import type { Team } from "./TacticalBoard";
 import ConfirmDialog from "@/components/ConfirmDialog";
-
-const CATEGORY_LABEL_KEYS: Record<VideoCategory, string> = {
-  attack: "videoCategoryAttack",
-  defense: "videoCategoryDefense",
-  set_pieces: "videoCategorySetPieces",
-  transitions: "videoCategoryTransitions",
-};
+import ExpandableText from "@/components/ExpandableText";
 
 export interface PreparationVideoRow {
   id: string;
@@ -21,6 +22,7 @@ export interface PreparationVideoRow {
   notes: string | null;
   embedUrl: string | null;
   category: VideoCategory | null;
+  submoment: GameSubmoment | null;
   player: { id: number; name: string; photo: string } | null;
   team: Team;
 }
@@ -38,10 +40,18 @@ function EditVideoForm({
   const router = useRouter();
   const [url, setUrl] = useState(row.url);
   const [notes, setNotes] = useState(row.notes ?? "");
-  const [category, setCategory] = useState(row.category ?? "");
+  const [category, setCategory] = useState<VideoCategory | "">(row.category ?? "");
+  const [submoment, setSubmoment] = useState(row.submoment ?? "");
   const [playerId, setPlayerId] = useState(row.player ? String(row.player.id) : "");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
+  const submomentOptions = submomentsFor(category);
+
+  function handleCategoryChange(value: string) {
+    setCategory(value as VideoCategory | "");
+    setSubmoment("");
+    setPlayerId("");
+  }
 
   function handleSave() {
     if (!url.trim()) return;
@@ -53,6 +63,7 @@ function EditVideoForm({
           url.trim(),
           notes,
           (category || null) as VideoCategory | null,
+          (submoment || null) as GameSubmoment | null,
           playerId ? Number(playerId) : null,
           row.team,
         );
@@ -90,7 +101,7 @@ function EditVideoForm({
           <label className="mb-1 block text-xs text-muted">{t("videoCategoryLabel")}</label>
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={(e) => handleCategoryChange(e.target.value)}
             className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
           >
             <option value="">{t("videoCategoryNone")}</option>
@@ -102,7 +113,25 @@ function EditVideoForm({
           </select>
         </div>
 
-        {players.length > 0 && (
+        {submomentOptions && (
+          <div>
+            <label className="mb-1 block text-xs text-muted">{t("videoSubmomentLabel")}</label>
+            <select
+              value={submoment}
+              onChange={(e) => setSubmoment(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+            >
+              <option value="">{t("videoSubmomentNone")}</option>
+              {submomentOptions.map((key) => (
+                <option key={key} value={key}>
+                  {t(SUBMOMENT_LABEL_KEYS[key])}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {category === "player" && players.length > 0 && (
           <div>
             <label className="mb-1 block text-xs text-muted">{t("videoPlayerLabel")}</label>
             <select
@@ -201,11 +230,16 @@ export default function PreparationVideoList({
             </a>
           )}
 
-          {(row.category || row.player) && (
+          {(row.category || row.submoment || row.player) && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {row.category && (
                 <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
                   {t(CATEGORY_LABEL_KEYS[row.category])}
+                </span>
+              )}
+              {row.submoment && (
+                <span className="rounded-full bg-background px-2 py-0.5 text-[11px] font-medium text-muted">
+                  {t(SUBMOMENT_LABEL_KEYS[row.submoment])}
                 </span>
               )}
               {row.player && (
@@ -225,9 +259,7 @@ export default function PreparationVideoList({
             <EditVideoForm row={row} players={players} onDone={() => setEditingId(null)} />
           ) : (
             <>
-              {row.notes && (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{row.notes}</p>
-              )}
+              {row.notes && <ExpandableText text={row.notes} className="mt-2 text-sm text-muted" />}
 
               {isCoach && (
                 <div className="mt-2 flex items-center gap-3">

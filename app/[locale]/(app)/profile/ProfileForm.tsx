@@ -3,37 +3,10 @@
 import { useActionState, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
+import { cropToSquare } from "@/lib/cropToSquare";
 import { updateProfile, updateAvatarUrl, type ProfileFormState } from "../actions";
 
 const initialState: ProfileFormState = {};
-
-function cropToSquare(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const size = Math.min(img.width, img.height);
-      const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 512;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return reject(new Error("no canvas context"));
-      ctx.drawImage(
-        img,
-        (img.width - size) / 2,
-        (img.height - size) / 2,
-        size,
-        size,
-        0,
-        0,
-        512,
-        512,
-      );
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("crop failed"))), "image/jpeg", 0.9);
-    };
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
-}
 
 export default function ProfileForm({
   userId,

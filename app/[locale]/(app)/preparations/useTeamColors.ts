@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { contrastTextColor, getLogoColor, resolveOpponentColor } from "@/lib/logoColor";
+import { contrastTextColor, getLogoColor, getVividLogoColor, resolveOpponentColor } from "@/lib/logoColor";
 
 export interface TeamColors {
   usColor: string;
@@ -41,4 +41,23 @@ export function useTeamColors(ourLogo?: string, opponentLogo?: string): TeamColo
   }, [ourLogo, opponentLogo]);
 
   return colors;
+}
+
+// Just the loudest color in our own crest — used where the UI wants to
+// borrow the club's identity as an accent (e.g. flagging which match phase
+// is live right now) rather than the full us-vs-opponent pin scheme above.
+export function useVividLogoColor(logo?: string): string {
+  const [color, setColor] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getVividLogoColor(logo).then((c) => {
+      if (!cancelled) setColor(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [logo]);
+
+  return color ?? DEFAULT_COLORS.usColor;
 }

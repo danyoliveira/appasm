@@ -4,15 +4,15 @@ import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { addPreparationVideo } from "../actions";
-import { VIDEO_CATEGORIES, type VideoCategory, type VideoPlayerOption } from "./videoCategories";
+import {
+  VIDEO_CATEGORIES,
+  submomentsFor,
+  type GameSubmoment,
+  type VideoCategory,
+  type VideoPlayerOption,
+} from "./videoCategories";
+import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
 import type { Team } from "./TacticalBoard";
-
-const CATEGORY_LABEL_KEYS: Record<VideoCategory, string> = {
-  attack: "videoCategoryAttack",
-  defense: "videoCategoryDefense",
-  set_pieces: "videoCategorySetPieces",
-  transitions: "videoCategoryTransitions",
-};
 
 export default function AddPreparationVideo({
   preparationKey,
@@ -29,9 +29,17 @@ export default function AddPreparationVideo({
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [category, setCategory] = useState("");
+  const [submoment, setSubmoment] = useState("");
   const [playerId, setPlayerId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
+  const submomentOptions = submomentsFor(category as VideoCategory | "");
+
+  function handleCategoryChange(value: string) {
+    setCategory(value);
+    setSubmoment("");
+    setPlayerId("");
+  }
 
   function handleSubmit() {
     if (!url.trim()) return;
@@ -43,12 +51,14 @@ export default function AddPreparationVideo({
           url.trim(),
           notes,
           (category || null) as VideoCategory | null,
+          (submoment || null) as GameSubmoment | null,
           playerId ? Number(playerId) : null,
           team,
         );
         setUrl("");
         setNotes("");
         setCategory("");
+        setSubmoment("");
         setPlayerId("");
         setIsOpen(false);
         router.refresh();
@@ -109,7 +119,7 @@ export default function AddPreparationVideo({
             <label className="mb-1 block text-xs text-muted">{t("videoCategoryLabel")}</label>
             <select
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => handleCategoryChange(e.target.value)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
             >
               <option value="">{t("videoCategoryNone")}</option>
@@ -121,7 +131,25 @@ export default function AddPreparationVideo({
             </select>
           </div>
 
-          {players.length > 0 && (
+          {submomentOptions && (
+            <div>
+              <label className="mb-1 block text-xs text-muted">{t("videoSubmomentLabel")}</label>
+              <select
+                value={submoment}
+                onChange={(e) => setSubmoment(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              >
+                <option value="">{t("videoSubmomentNone")}</option>
+                {submomentOptions.map((key) => (
+                  <option key={key} value={key}>
+                    {t(SUBMOMENT_LABEL_KEYS[key])}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {category === "player" && players.length > 0 && (
             <div>
               <label className="mb-1 block text-xs text-muted">{t("videoPlayerLabel")}</label>
               <select

@@ -24,6 +24,7 @@ export default function StaticTacticalPitch({
   arrows,
   teamColors = DEFAULT_TEAM_COLORS,
   size = "sm",
+  iconsByPositionId,
 }: {
   positions: TacticalPosition[];
   ball?: { x: number; y: number } | null;
@@ -31,6 +32,12 @@ export default function StaticTacticalPitch({
   arrows?: TacticalArrow[];
   teamColors?: TeamColors;
   size?: "sm" | "lg";
+  // Read-only counterpart to LiveFormationPitch's eventIcons — Modo Jogo's
+  // viewer link renders this component instead of the editable pitch, so
+  // event icons (⚽, 🟨, ...) need a way in here too. Keyed by playerId
+  // (Live Mode sets that to the player's array index) rather than name,
+  // since this component has no other stable per-position key.
+  iconsByPositionId?: Record<number, string[]>;
 }) {
   const tokenClass = size === "lg" ? "h-11 w-11 text-sm" : "h-7 w-7 text-[10px]";
   const labelClass =
@@ -71,34 +78,46 @@ export default function StaticTacticalPitch({
               y2={a.y2}
               stroke="#ffffff"
               strokeWidth={0.6}
-              markerEnd="url(#tactical-arrowhead-static)"
+              markerEnd={a.style === "line" ? undefined : "url(#tactical-arrowhead-static)"}
             />
           ))}
         </svg>
       )}
 
-      {positions.map((pos) => (
-        <div
-          key={pos.playerId}
-          className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
-          style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-        >
+      {positions.map((pos) => {
+        const icons = iconsByPositionId?.[pos.playerId] ?? [];
+        return (
           <div
-            style={{
-              backgroundColor: pos.team === "us" ? teamColors.usColor : teamColors.opponentColor,
-              color: pos.team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
-            }}
-            className={`flex items-center justify-center rounded-full font-bold shadow ring-2 ring-white/40 ${tokenClass}`}
+            key={pos.playerId}
+            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
           >
-            {pos.number ?? "-"}
+            <div
+              style={{
+                backgroundColor: pos.team === "us" ? teamColors.usColor : teamColors.opponentColor,
+                color: pos.team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
+              }}
+              className={`flex items-center justify-center rounded-full font-bold shadow ring-2 ring-white/40 ${tokenClass}`}
+            >
+              {pos.number ?? "-"}
+            </div>
+            {icons.length > 0 && (
+              <div className="mt-0.5 flex gap-0.5">
+                {icons.map((icon, idx) => (
+                  <span key={idx} className="text-[11px] leading-none">
+                    {icon}
+                  </span>
+                ))}
+              </div>
+            )}
+            <span
+              className={`mt-1 truncate rounded bg-black/60 text-center font-medium text-white ${labelClass}`}
+            >
+              {pos.name}
+            </span>
           </div>
-          <span
-            className={`mt-1 truncate rounded bg-black/60 text-center font-medium text-white ${labelClass}`}
-          >
-            {pos.name}
-          </span>
-        </div>
-      ))}
+        );
+      })}
 
       {markers?.map((m) => (
         <div

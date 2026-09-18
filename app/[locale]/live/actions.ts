@@ -1,38 +1,43 @@
 "use server";
 
+import { getTranslations } from "next-intl/server";
+import type { Locale } from "@/i18n/routing";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveLiveMatchTeams } from "@/lib/liveStats";
-import { getFixtureById, getFixtureLineups } from "@/lib/api-football/cache";
+import { getFixtureById, getFixtureLineups, getFixtureStatistics } from "@/lib/api-football/cache";
+import {
+  buildFixtureStatSections,
+  type FixtureStatSections,
+} from "../(app)/club/fixture/[fixtureId]/fixtureStatsHelpers";
 import {
   mapLiveEntryRow,
-  emptyLineup,
+  toLineup,
+  computeCollectiveStats,
+  computeGkStats,
+  type CollectiveCounterKey,
+  type CollectiveStats,
+  type GkCounterKey,
+  type GkStats,
   type LineupPlayer,
   type LiveEntryInput,
   type LiveEntryRow,
   type LiveMatchInfo,
+  type PossessionSide,
   type TeamLineup,
 } from "./liveStatsShared";
 
 export interface GuestLiveFeed {
-  role: "member" | "viewer";
+  role: "member" | "viewer" | "gk_coach";
   match: LiveMatchInfo;
   entries: LiveEntryRow[];
+  collectiveStats: CollectiveStats;
+  gkStats: GkStats;
 }
 
 const SESSION_COLUMNS =
-  "id, team_id, preparation_key, member_token, viewer_token, started_at, halftime_at, second_half_at, ended_at, home_lineup, away_lineup, home_lineup_live, away_lineup_live, bench_notes";
+  "id, team_id, preparation_key, member_token, viewer_token, gk_token, started_at, halftime_at, second_half_at, ended_at, home_lineup, away_lineup, home_lineup_live, away_lineup_live, bench_notes";
 
-function toLineup(rawPlayers: unknown): TeamLineup {
-  const fallback = emptyLineup();
-  return {
-    players:
-      Array.isArray(rawPlayers) && rawPlayers.length > 0
-        ? (rawPlayers as TeamLineup["players"])
-        : fallback.players,
-  };
-}
-
-// Every mutation below is triggered from the Member link — resolve that
+// Most mutations below are triggered from the Member link — resolve that
 // token to a session id (or bail) once, instead of repeating the lookup.
 async function requireSessionIdByMemberToken(token: string): Promise<string> {
   const admin = createAdminClient();
@@ -40,6 +45,22 @@ async function requireSessionIdByMemberToken(token: string): Promise<string> {
     .from("live_match_sessions")
     .select("id")
     .eq("member_token", token)
+    .maybeSingle();
+
+  if (!session) throw new Error("Invalid link");
+  return session.id;
+}
+
+// The GK stat endpoints alone also accept the GK Coach link — that link has
+// no access to anything else (lineup, formation, events, collective stats,
+// clock), enforced simply by which actions call this instead of the
+// member-only helper above.
+async function requireSessionIdByMemberOrGkToken(token: string): Promise<string> {
+  const admin = createAdminClient();
+  const { data: session } = await admin
+    .from("live_match_sessions")
+    .select("id")
+    .or(`member_token.eq.${token},gk_token.eq.${token}`)
     .maybeSingle();
 
   if (!session) throw new Error("Invalid link");
@@ -61,12 +82,12 @@ export async function getLiveFeedByToken(
   const { data: session } = await admin
     .from("live_match_sessions")
     .select(SESSION_COLUMNS)
-    .or(`member_token.eq.${token},viewer_token.eq.${token}`)
+    .or(`member_token.eq.${token},viewer_token.eq.${token},gk_token.eq.${token}`)
     .maybeSingle();
 
   if (!session) return null;
 
-  const role = session.member_token === token ? "member" : "viewer";
+  const role = session.member_token === token ? "member" : session.gk_token === token ? "gk_coach" : "viewer";
 
   if (connectionId) {
     await admin
@@ -86,18 +107,24 @@ export async function getLiveFeedByToken(
 
   const { data: entriesData } = await admin
     .from("live_match_entries")
-    .select("id, event_type, team_side, minute, extra_minute, player_name, notes, created_at, created_by_label")
+    .select(
+      "id, kind, event_type, team_side, stat_key, stat_value, minute, extra_minute, player_name, notes, created_at, created_by_label",
+    )
     .eq("session_id", session.id)
     .order("created_at", { ascending: false });
+
+  const allEntries = entriesData ?? [];
 
   return {
     role,
     match: {
       sessionId: session.id,
+      preparationKey: session.preparation_key,
       homeName: teams.homeName,
       homeLogo: teams.homeLogo,
       awayName: teams.awayName,
       awayLogo: teams.awayLogo,
+      ourSide: teams.ourSide,
       startedAt: session.started_at,
       halftimeAt: session.halftime_at,
       secondHalfAt: session.second_half_at,
@@ -110,7 +137,12 @@ export async function getLiveFeedByToken(
       awayLineupLive: toLineup(session.away_lineup_live ?? session.away_lineup),
       benchNotes: session.bench_notes,
     },
-    entries: (entriesData ?? []).map(mapLiveEntryRow),
+    entries: allEntries.filter((r) => r.kind === "event").map(mapLiveEntryRow),
+    collectiveStats: computeCollectiveStats(
+      allEntries.filter((r) => r.kind === "stat"),
+      session.ended_at,
+    ),
+    gkStats: computeGkStats(allEntries.filter((r) => r.kind === "stat")),
   };
 }
 
@@ -143,6 +175,152 @@ export async function deleteLiveEntryByToken(token: string, entryId: string) {
     .eq("id", entryId)
     .eq("session_id", sessionId);
 
+  if (error) throw new Error(error.message);
+}
+
+// Each tap is its own row — the count is just how many rows match a given
+// team/stat_key, so there's nothing to "update", only insert (below) and
+// undo (further down).
+export async function addCollectiveStatByToken(
+  token: string,
+  statKey: CollectiveCounterKey,
+  teamSide: "home" | "away",
+) {
+  const sessionId = await requireSessionIdByMemberToken(token);
+  const admin = createAdminClient();
+
+  const { error } = await admin.from("live_match_entries").insert({
+    session_id: sessionId,
+    kind: "stat",
+    stat_key: statKey,
+    team_side: teamSide,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+// "-1" on a counter — there's no specific row for the guest to pick (taps
+// aren't shown as a feed), so this removes whichever tap of that stat/team
+// was most recent, same undo-the-last-action idea as deleteLiveEntryByToken.
+export async function undoCollectiveStatByToken(
+  token: string,
+  statKey: CollectiveCounterKey,
+  teamSide: "home" | "away",
+) {
+  const sessionId = await requireSessionIdByMemberToken(token);
+  const admin = createAdminClient();
+
+  const { data: last } = await admin
+    .from("live_match_entries")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("kind", "stat")
+    .eq("stat_key", statKey)
+    .eq("team_side", teamSide)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!last) return;
+
+  const { error } = await admin.from("live_match_entries").delete().eq("id", last.id);
+  if (error) throw new Error(error.message);
+}
+
+// Logs "possession changed to X now" — computeCollectiveStats derives
+// per-side totals from the gaps between consecutive rows of these.
+export async function setPossessionByToken(token: string, side: PossessionSide) {
+  const sessionId = await requireSessionIdByMemberToken(token);
+  const admin = createAdminClient();
+
+  const { error } = await admin.from("live_match_entries").insert({
+    session_id: sessionId,
+    kind: "stat",
+    stat_key: "possession",
+    stat_value: side,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+// Marks who's in goal for a side right now — logged the same way as a
+// possession change (a "state changed to X" row), so computeGkStats can
+// tell which player each GK counter tap below belongs to.
+export async function setGkByToken(token: string, side: "home" | "away", playerName: string) {
+  const sessionId = await requireSessionIdByMemberOrGkToken(token);
+  const admin = createAdminClient();
+
+  const { error } = await admin.from("live_match_entries").insert({
+    session_id: sessionId,
+    kind: "stat",
+    stat_key: "gk_selection",
+    team_side: side,
+    player_name: playerName,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+// Looks up whichever player is currently marked as `side`'s goalkeeper —
+// shared by addGkStatByToken/undoGkStatByToken so a tap always lands on
+// the right player even if the client's own copy of the selection is
+// slightly stale (e.g. two coaches on the bench with two phones).
+async function currentGkName(
+  admin: ReturnType<typeof createAdminClient>,
+  sessionId: string,
+  side: "home" | "away",
+): Promise<string | null> {
+  const { data } = await admin
+    .from("live_match_entries")
+    .select("player_name")
+    .eq("session_id", sessionId)
+    .eq("kind", "stat")
+    .eq("stat_key", "gk_selection")
+    .eq("team_side", side)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.player_name ?? null;
+}
+
+export async function addGkStatByToken(token: string, side: "home" | "away", statKey: GkCounterKey) {
+  const sessionId = await requireSessionIdByMemberOrGkToken(token);
+  const admin = createAdminClient();
+
+  const gkName = await currentGkName(admin, sessionId, side);
+  if (!gkName) return;
+
+  const { error } = await admin.from("live_match_entries").insert({
+    session_id: sessionId,
+    kind: "stat",
+    stat_key: statKey,
+    team_side: side,
+    player_name: gkName,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function undoGkStatByToken(token: string, side: "home" | "away", statKey: GkCounterKey) {
+  const sessionId = await requireSessionIdByMemberOrGkToken(token);
+  const admin = createAdminClient();
+
+  const gkName = await currentGkName(admin, sessionId, side);
+  if (!gkName) return;
+
+  const { data: last } = await admin
+    .from("live_match_entries")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("kind", "stat")
+    .eq("stat_key", statKey)
+    .eq("team_side", side)
+    .eq("player_name", gkName)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!last) return;
+
+  const { error } = await admin.from("live_match_entries").delete().eq("id", last.id);
   if (error) throw new Error(error.message);
 }
 
@@ -195,6 +373,47 @@ export async function fetchAutoLineupByToken(token: string): Promise<AutoLineupR
   return {
     home: [...toAutoLineupPlayers(homeLineup.startXI, true), ...toAutoLineupPlayers(homeLineup.substitutes, false)],
     away: [...toAutoLineupPlayers(awayLineup.startXI, true), ...toAutoLineupPlayers(awayLineup.substitutes, false)],
+  };
+}
+
+export interface FixtureExternalStats extends FixtureStatSections {
+  homeLogo: string;
+  awayLogo: string;
+}
+
+// The same "Estatísticas do jogo" API-Football bars shown on /club/fixture/
+// <id> — no session/token needed, just the preparation key: manual preps
+// (opponent outside the fixture list) have no real fixture to pull from and
+// return null, same as fetchAutoLineupByToken. Callable from both the
+// authenticated dashboard and the token-based guest link, since it's the
+// same public match data either way.
+export async function getFixtureExternalStats(
+  preparationKey: string,
+  locale: Locale,
+): Promise<FixtureExternalStats | null> {
+  const fixtureId = Number(preparationKey);
+  if (Number.isNaN(fixtureId)) return null;
+
+  const [fixtureResult, statistics] = await Promise.all([
+    getFixtureById(fixtureId).catch(() => []),
+    getFixtureStatistics(fixtureId).catch(() => []),
+  ]);
+  const fixture = fixtureResult[0];
+  if (!fixture) return null;
+
+  const homeStats = statistics.find((s) => s.team.id === fixture.teams.home.id);
+  const awayStats = statistics.find((s) => s.team.id === fixture.teams.away.id);
+  if (!homeStats || !awayStats) return null;
+
+  const t = await getTranslations({ locale, namespace: "dashboard" });
+  const { headline, sections } = buildFixtureStatSections(homeStats, awayStats, locale, t);
+  if (headline.length === 0 && sections.every((s) => s.rows.length === 0)) return null;
+
+  return {
+    homeLogo: fixture.teams.home.logo,
+    awayLogo: fixture.teams.away.logo,
+    headline,
+    sections,
   };
 }
 

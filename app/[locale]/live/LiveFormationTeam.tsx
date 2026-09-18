@@ -63,6 +63,11 @@ export default function LiveFormationTeam({
                   y: pos.y,
                 };
               })}
+            iconsByPositionId={Object.fromEntries(
+              players
+                .map((p, i) => [i, eventIcons?.[p.name] ?? []] as const)
+                .filter(([, icons]) => icons.length > 0),
+            )}
           />
         )}
       </div>

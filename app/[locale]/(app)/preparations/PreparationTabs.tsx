@@ -2,6 +2,10 @@
 
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { useTeamColors, useVividLogoColor } from "./useTeamColors";
+import PreGamePdfExport from "./PreGamePdfExport";
+import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
+import type { PreparationVideoRow } from "./PreparationVideoList";
 
 type Phase = "pre" | "in" | "post";
 type TabKey = "general" | Phase;
@@ -41,24 +45,52 @@ export default function PreparationTabs({
   preGameContentFocus,
   inGameContent,
   inGameContentFocus,
+  postGameContent,
+  postGameContentFocus,
   matchDate,
   opponentName,
   liveSession,
   finished = false,
+  ourLogo,
+  opponentLogo,
+  ourTeamName,
+  tacticalRows,
+  videoRows,
 }: {
   generalInfoContent?: ReactNode;
   preGameContent?: ReactNode;
   preGameContentFocus?: ReactNode;
   inGameContent?: ReactNode;
   inGameContentFocus?: ReactNode;
+  postGameContent?: ReactNode;
+  postGameContentFocus?: ReactNode;
   matchDate: string;
   opponentName: string;
   liveSession?: { startedAt: string | null; endedAt: string | null } | null;
   finished?: boolean;
+  ourLogo?: string;
+  opponentLogo?: string;
+  ourTeamName: string;
+  // Pré-Jogo PDF export sits here, next to Modo Foco, but only shows while
+  // that tab is the one open — it has nothing to export from Em Jogo/Pós-
+  // Jogo/Informação Geral.
+  tacticalRows: TacticalSnapshotRow[];
+  videoRows: PreparationVideoRow[];
 }) {
   const t = useTranslations("dashboard");
-  const [tab, setTab] = useState<TabKey>("general");
+  // Opens straight on whichever phase the match is actually in right now
+  // (pre/in/post) instead of always "Informação Geral" — same signal the
+  // tab's own color highlight uses, computed once at mount/refresh.
+  const [tab, setTab] = useState<TabKey>(() => currentPhase(matchDate, liveSession ?? null, finished));
   const [isFocusMode, setIsFocusMode] = useState(false);
+  // Which phase the match is actually in right now — independent of which
+  // tab the coach happens to be looking at, so e.g. the "Em Jogo" tab can
+  // flag itself as live even while they're reading "Informação Geral".
+  const activePhase = currentPhase(matchDate, liveSession ?? null, finished);
+  // Borrows the club's own crest color instead of a generic scheme, so the
+  // highlight reads as "our" match status rather than an arbitrary color.
+  const phaseColor = useVividLogoColor(ourLogo);
+  const teamColors = useTeamColors(ourLogo, opponentLogo);
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: "general", label: t("generalInfoTitle") },
@@ -77,7 +109,7 @@ export default function PreparationTabs({
     if (key === "general") return generalInfoContent ?? comingSoon;
     if (key === "pre") return (isFocusModeArg ? preGameContentFocus : preGameContent) ?? comingSoon;
     if (key === "in") return (isFocusModeArg ? inGameContentFocus : inGameContent) ?? comingSoon;
-    return comingSoon;
+    return (isFocusModeArg ? postGameContentFocus : postGameContent) ?? comingSoon;
   }
 
   if (isFocusMode) {
@@ -109,28 +141,60 @@ export default function PreparationTabs({
     <div>
       <div className="flex items-center justify-between gap-2 border-b border-border">
         <div className="flex flex-wrap gap-1">
-          {tabs.map((t2) => (
-            <button
-              key={t2.key}
-              type="button"
-              onClick={() => setTab(t2.key)}
-              className={`-mb-px shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-                tab === t2.key
-                  ? "border-accent text-accent"
-                  : "border-transparent text-muted hover:text-foreground"
-              }`}
-            >
-              {t2.label}
-            </button>
-          ))}
+          {tabs.map((t2) => {
+            const isCurrentPhase = t2.key !== "general" && t2.key === activePhase;
+            const isSelected = tab === t2.key;
+            return (
+              <button
+                key={t2.key}
+                type="button"
+                onClick={() => setTab(t2.key)}
+                style={
+                  isCurrentPhase
+                    ? {
+                        color: phaseColor,
+                        borderColor: phaseColor,
+                        backgroundColor: isSelected ? `${phaseColor}26` : `${phaseColor}14`,
+                      }
+                    : undefined
+                }
+                className={`-mb-px flex shrink-0 items-center gap-1.5 rounded-t-md border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+                  isCurrentPhase
+                    ? ""
+                    : isSelected
+                      ? "border-accent text-accent"
+                      : "border-transparent font-medium text-muted hover:text-foreground"
+                }`}
+              >
+                {isCurrentPhase && (
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${t2.key === "in" ? "animate-pulse" : ""}`}
+                    style={{ backgroundColor: phaseColor }}
+                  />
+                )}
+                {t2.label}
+              </button>
+            );
+          })}
         </div>
-        <button
-          type="button"
-          onClick={() => setIsFocusMode(true)}
-          className="mb-1.5 shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
-        >
-          {t("focusModeButton")}
-        </button>
+        <div className="mb-1.5 flex shrink-0 items-center gap-2">
+          {tab === "pre" && (
+            <PreGamePdfExport
+              ourTeamName={ourTeamName}
+              opponentName={opponentName}
+              tacticalRows={tacticalRows}
+              videoRows={videoRows}
+              teamColors={teamColors}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => setIsFocusMode(true)}
+            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+          >
+            {t("focusModeButton")}
+          </button>
+        </div>
       </div>
 
       <div className="mt-6">{contentFor(tab, false)}</div>

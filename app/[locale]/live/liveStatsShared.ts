@@ -45,6 +45,40 @@ export interface TeamLineup {
   players: LineupPlayer[];
 }
 
+// Dev/testing convenience — a quick way to fill both sheets with plausible
+// starting XIs + bench without typing every name by hand. Drawn from one
+// shuffled pool so the two teams (and their subs) never collide on a name.
+const SUB_COUNT = 7;
+const SQUAD_SIZE = STARTING_XI_SIZE + SUB_COUNT;
+const RANDOM_PLAYER_NAMES = [
+  "João Silva", "Pedro Santos", "Rui Costa", "Tiago Ferreira", "André Oliveira",
+  "Miguel Pereira", "Bruno Rodrigues", "Carlos Martins", "Diogo Alves", "Hugo Gomes",
+  "Nuno Carvalho", "Ricardo Lopes", "Filipe Marques", "Vítor Sousa", "Luís Pinto",
+  "Gonçalo Teixeira", "Sérgio Ribeiro", "Manuel Fonseca", "Paulo Nunes", "José Correia",
+  "Fernando Azevedo", "Renato Mendes", "Duarte Cardoso", "Emanuel Cunha", "Igor Ramos",
+  "João Pedro Freitas", "Mário Antunes", "Óscar Simões", "Pedro Miguel Reis", "Rafael Moura",
+  "Samuel Vaz", "Tomás Neves", "Xavier Batista", "Alexandre Coelho", "Bernardo Matos",
+  "César Domingues",
+];
+
+function randomSquad(names: string[]): LineupPlayer[] {
+  return names.map((name, i) => ({
+    number: i + 1,
+    name,
+    starting: i < STARTING_XI_SIZE,
+    x: null,
+    y: null,
+  }));
+}
+
+export function randomLineups(): { home: LineupPlayer[]; away: LineupPlayer[] } {
+  const shuffled = [...RANDOM_PLAYER_NAMES].sort(() => Math.random() - 0.5);
+  return {
+    home: randomSquad(shuffled.slice(0, SQUAD_SIZE)),
+    away: randomSquad(shuffled.slice(SQUAD_SIZE, SQUAD_SIZE * 2)),
+  };
+}
+
 export function emptyLineup(): TeamLineup {
   return {
     players: Array.from({ length: STARTING_XI_SIZE }, () => ({
@@ -54,6 +88,20 @@ export function emptyLineup(): TeamLineup {
       x: null,
       y: null,
     })),
+  };
+}
+
+// A saved lineup's `players` jsonb column starts out empty ([]) — falls
+// back to the 11 blank starting slots above until someone actually enters
+// one. Shared by the token-based guest actions and the authenticated
+// dashboard's recap action, so both read the same stored shape the same way.
+export function toLineup(rawPlayers: unknown): TeamLineup {
+  const fallback = emptyLineup();
+  return {
+    players:
+      Array.isArray(rawPlayers) && rawPlayers.length > 0
+        ? (rawPlayers as TeamLineup["players"])
+        : fallback.players,
   };
 }
 
@@ -111,19 +159,40 @@ export function currentMatchMinute(match: {
   return Math.max(0, Math.floor(elapsedMs / 60000));
 }
 
+// Bakes in the pitch's own default-computed slot for every starting player
+// whose position isn't explicit yet (x/y still null — an auto/random-filled
+// lineup nobody dragged). Must run *before* the starting set's composition
+// changes: LiveFormationPitch falls back to defaultFormationPosition(index
+// within the starting-only list) when rendering, so removing or adding one
+// starter shifts everyone after them to a different index — and therefore a
+// different default slot — the instant the list is re-filtered. Freezing
+// first means the players who were already on screen stay exactly where
+// they were drawn, instead of sliding into each other.
+function freezeStartingPositions(players: LineupPlayer[]): LineupPlayer[] {
+  const startingPlayers = players.filter((p) => p.starting);
+  return players.map((p) => {
+    if (!p.starting || (p.x != null && p.y != null)) return p;
+    const pos = defaultFormationPosition(startingPlayers.indexOf(p));
+    return { ...p, x: pos.x, y: pos.y };
+  });
+}
+
 // Swaps one starting player off for one bench player on, within a team's
 // full players array. Matched by name (the only stable identifier a click
 // site has) rather than array index/reference, since the array may have
 // been refetched by the 4s poll between the two taps that make a sub. The
-// incoming player inherits the outgoing player's pitch position.
+// incoming player inherits the outgoing player's (now-frozen) pitch
+// position, and every other starter's frozen position comes along
+// unchanged — nobody moves, nobody overlaps.
 export function applySubstitution(
   players: LineupPlayer[],
   outPlayerName: string,
   inPlayerName: string,
 ): LineupPlayer[] {
-  const outPlayer = players.find((p) => p.starting && p.name === outPlayerName);
+  const frozen = freezeStartingPositions(players);
+  const outPlayer = frozen.find((p) => p.starting && p.name === outPlayerName);
   const pos = outPlayer ? { x: outPlayer.x, y: outPlayer.y } : { x: null, y: null };
-  return players.map((p) => {
+  return frozen.map((p) => {
     if (p.starting && p.name === outPlayerName) return { ...p, starting: false, x: null, y: null };
     if (!p.starting && p.name === inPlayerName) return { ...p, starting: true, x: pos.x, y: pos.y };
     return p;
@@ -131,28 +200,262 @@ export function applySubstitution(
 }
 
 // A red card sends the player off — no one comes on for them, so this is
-// applySubstitution's removal half on its own.
+// applySubstitution's removal half on its own. Same freeze-first reasoning:
+// shrinking the starting list by one shouldn't reshuffle who's left.
 export function removeFromField(players: LineupPlayer[], playerName: string): LineupPlayer[] {
-  return players.map((p) =>
+  const frozen = freezeStartingPositions(players);
+  return frozen.map((p) =>
     p.starting && p.name === playerName ? { ...p, starting: false, x: null, y: null } : p,
   );
 }
 
 // Undoes removeFromField — deleting a mistaken red card puts the player back
-// on the pitch. x/y stay null: LiveFormationPitch falls back to a default
-// formation slot for an unplaced starter, since the old spot wasn't kept.
+// on the pitch. x/y stay null for *them* (there's no vacated slot to inherit
+// here, unlike a substitution) — LiveFormationPitch falls back to a default
+// formation slot for an unplaced starter. The rest of the XI is frozen first
+// so re-inserting this player doesn't shift anyone else's slot instead.
 export function restoreToField(players: LineupPlayer[], playerName: string): LineupPlayer[] {
-  return players.map((p) =>
+  const frozen = freezeStartingPositions(players);
+  return frozen.map((p) =>
     !p.starting && p.name === playerName ? { ...p, starting: true, x: null, y: null } : p,
   );
 }
 
+// Collective stats — counted per team, never tied to a specific player
+// (unlike goals/cards/subs above). Stored as `kind: "stat"` rows on the same
+// live_match_entries table (stat_key/stat_value already exist on it for
+// exactly this), so no schema change was needed to add this.
+export const COLLECTIVE_COUNTER_KEYS = [
+  "offensive_transition",
+  "tackle",
+  "interception",
+  "recovery_own_half",
+  "recovery_opp_half",
+  "progressive_pass",
+] as const;
+export type CollectiveCounterKey = (typeof COLLECTIVE_COUNTER_KEYS)[number];
+
+export type CollectiveStatsSide = Record<CollectiveCounterKey, number>;
+
+export type PossessionSide = "home" | "away" | "neutral";
+
+export interface CollectiveStats {
+  home: CollectiveStatsSide;
+  away: CollectiveStatsSide;
+  // Cumulative milliseconds attributed to each side/neutral since kickoff —
+  // % of possession is derived from these three on the client.
+  possessionMsHome: number;
+  possessionMsAway: number;
+  possessionMsNeutral: number;
+  currentPossession: PossessionSide | null;
+  // Timestamp of the most recent stat tap (any kind) — lets the UI flag the
+  // Estatísticas tab as having unseen activity when it's not the active one.
+  lastStatAt: string | null;
+}
+
+export function emptyCollectiveStatsSide(): CollectiveStatsSide {
+  return {
+    offensive_transition: 0,
+    tackle: 0,
+    interception: 0,
+    recovery_own_half: 0,
+    recovery_opp_half: 0,
+    progressive_pass: 0,
+  };
+}
+
+// Raw `kind: "stat"` rows -> aggregated totals. Counters are just a tally of
+// matching rows; possession is reconstructed from consecutive "possession
+// changed to X" rows, attributing the time between each pair to whichever
+// side was current at the start of that interval (the last, still-open
+// interval runs up to `now`, or to full-time if the match already ended).
+export function computeCollectiveStats(
+  rows: { stat_key: string | null; stat_value: string | null; team_side: string | null; created_at: string }[],
+  endedAt: string | null,
+): CollectiveStats {
+  const home = emptyCollectiveStatsSide();
+  const away = emptyCollectiveStatsSide();
+
+  for (const row of rows) {
+    if (row.team_side !== "home" && row.team_side !== "away") continue;
+    if (!(COLLECTIVE_COUNTER_KEYS as readonly string[]).includes(row.stat_key ?? "")) continue;
+    const bucket = row.team_side === "home" ? home : away;
+    bucket[row.stat_key as CollectiveCounterKey] += 1;
+  }
+
+  const possessionRows = rows
+    .filter((r) => r.stat_key === "possession")
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  let possessionMsHome = 0;
+  let possessionMsAway = 0;
+  let possessionMsNeutral = 0;
+  let currentPossession: PossessionSide | null = null;
+  const closeAt = endedAt ? new Date(endedAt).getTime() : Date.now();
+
+  possessionRows.forEach((row, i) => {
+    const side = row.stat_value as PossessionSide;
+    currentPossession = side;
+    const start = new Date(row.created_at).getTime();
+    const end = i + 1 < possessionRows.length ? new Date(possessionRows[i + 1].created_at).getTime() : closeAt;
+    const durationMs = Math.max(0, end - start);
+    if (side === "home") possessionMsHome += durationMs;
+    else if (side === "away") possessionMsAway += durationMs;
+    else possessionMsNeutral += durationMs;
+  });
+
+  // rows here is every "kind: stat" row for the session — computeGkStats
+  // gets the same unfiltered set, so this has to filter down to collective-
+  // only stat_keys itself, or a GK tap would falsely flag this tab (and any
+  // future stat category would too) as having new activity.
+  const collectiveKeySet: readonly string[] = COLLECTIVE_COUNTER_KEYS;
+  const lastStatAt = rows
+    .filter((r) => r.stat_key === "possession" || (r.stat_key && collectiveKeySet.includes(r.stat_key)))
+    .reduce<string | null>((latest, r) => {
+      if (!latest) return r.created_at;
+      return new Date(r.created_at).getTime() > new Date(latest).getTime() ? r.created_at : latest;
+    }, null);
+
+  return { home, away, possessionMsHome, possessionMsAway, possessionMsNeutral, currentPossession, lastStatAt };
+}
+
+// Modo GK — same "kind: stat" rows, but scoped to whichever player is
+// currently marked as each team's goalkeeper (stat_key: "gk_selection",
+// player_name carries who) rather than the whole team. Switching the
+// selected keeper doesn't lose the old one's tally — it's still in the
+// rows, just not what's being summed until they're picked again.
+export const GK_COUNTER_KEYS = [
+  "gk_reposicao",
+  "gk_reposicao_mao",
+  "gk_bloqueio_medio",
+  "gk_bloqueio_alto",
+  "gk_bloqueio_baixo",
+  "gk_defesa_lateral_baixa",
+  "gk_pontape_baliza",
+  "gk_saida_fora_area",
+  "gk_comunicacao",
+  "gk_saida_1x1",
+  "gk_cruzamento_soco_desvio",
+  "gk_cruzamentos",
+  "gk_jogo_pes",
+] as const;
+export type GkCounterKey = (typeof GK_COUNTER_KEYS)[number];
+
+export type GkStatsSide = Record<GkCounterKey, number>;
+
+export interface GkStatsByPlayer {
+  name: string;
+  stats: GkStatsSide;
+}
+
+export interface GkStats {
+  home: GkStatsSide;
+  away: GkStatsSide;
+  homeGkName: string | null;
+  awayGkName: string | null;
+  // Every goalkeeper credited with at least one stat this match, oldest
+  // first — home/away above only reflect whoever ended the match in goal,
+  // so a mid-match keeper change (sub, red card) would otherwise silently
+  // fold an earlier keeper's tally into the wrong name. The post-match
+  // recap uses this to show each keeper who actually played separately.
+  homeByPlayer: GkStatsByPlayer[];
+  awayByPlayer: GkStatsByPlayer[];
+  lastStatAt: string | null;
+}
+
+export function emptyGkStatsSide(): GkStatsSide {
+  return Object.fromEntries(GK_COUNTER_KEYS.map((key) => [key, 0])) as GkStatsSide;
+}
+
+// Groups every stat row by whichever goalkeeper was selected at the moment
+// each one was tapped (stamped on the row at insert time — see
+// addGkStatByToken), independent of who's selected now. Order of first
+// appearance, oldest first.
+function gkStatsByPlayer(
+  rows: { stat_key: string | null; team_side: string | null; player_name: string | null; created_at: string }[],
+  side: "home" | "away",
+): GkStatsByPlayer[] {
+  const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
+  const order: string[] = [];
+  const totals = new Map<string, GkStatsSide>();
+
+  const sorted = rows
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  for (const row of sorted) {
+    if (row.team_side !== side || !row.stat_key || !row.player_name || !counterKeySet.includes(row.stat_key)) {
+      continue;
+    }
+    if (!totals.has(row.player_name)) {
+      totals.set(row.player_name, emptyGkStatsSide());
+      order.push(row.player_name);
+    }
+    totals.get(row.player_name)![row.stat_key as GkCounterKey] += 1;
+  }
+
+  return order.map((name) => ({ name, stats: totals.get(name)! }));
+}
+
+export function computeGkStats(
+  rows: { stat_key: string | null; team_side: string | null; player_name: string | null; created_at: string }[],
+): GkStats {
+  const selectionRows = rows
+    .filter((r) => r.stat_key === "gk_selection")
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  let homeGkName: string | null = null;
+  let awayGkName: string | null = null;
+  for (const row of selectionRows) {
+    if (row.team_side === "home") homeGkName = row.player_name;
+    else if (row.team_side === "away") awayGkName = row.player_name;
+  }
+
+  const home = emptyGkStatsSide();
+  const away = emptyGkStatsSide();
+  const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
+  for (const row of rows) {
+    if (!row.stat_key || !counterKeySet.includes(row.stat_key)) continue;
+    if (row.team_side === "home" && row.player_name && row.player_name === homeGkName) {
+      home[row.stat_key as GkCounterKey] += 1;
+    } else if (row.team_side === "away" && row.player_name && row.player_name === awayGkName) {
+      away[row.stat_key as GkCounterKey] += 1;
+    }
+  }
+
+  const lastStatAt = rows
+    .filter((r) => r.stat_key === "gk_selection" || (r.stat_key && counterKeySet.includes(r.stat_key)))
+    .reduce<string | null>((latest, r) => {
+      if (!latest) return r.created_at;
+      return new Date(r.created_at).getTime() > new Date(latest).getTime() ? r.created_at : latest;
+    }, null);
+
+  return {
+    home,
+    away,
+    homeGkName,
+    awayGkName,
+    homeByPlayer: gkStatsByPlayer(rows, "home"),
+    awayByPlayer: gkStatsByPlayer(rows, "away"),
+    lastStatAt,
+  };
+}
+
 export interface LiveMatchInfo {
   sessionId: string;
+  // The fixture_preparations key this session belongs to — a numeric
+  // API-Football fixture id for a real match, or an opaque manual-prep key.
+  // Only the former has "Externa" (API-Football) stats to show in the recap.
+  preparationKey: string;
   homeName: string;
   awayName: string;
   homeLogo: string;
   awayLogo: string;
+  // Which side (home/away) is the coach's own club — Modo GK only tracks
+  // our own goalkeeper, so it needs to know which lineup that is.
+  ourSide: "home" | "away";
   startedAt: string | null;
   halftimeAt: string | null;
   secondHalfAt: string | null;
@@ -195,4 +498,23 @@ export function mapLiveEntryRow(row: {
     createdAt: row.created_at,
     authorLabel: row.created_by_label,
   };
+}
+
+// The final score is never tracked as its own field — it's just a tally of
+// "goal" events per side, same source the live feed already renders from.
+export function countGoals(entries: LiveEntryRow[], side: "home" | "away"): number {
+  return entries.filter((e) => e.eventType === "goal" && e.teamSide === side).length;
+}
+
+// Icons for events already logged, keyed by player name — covers both the
+// pitch and the substitutes list, and a player subbed off keeps whatever
+// they logged while still on. Shared by the live formation pitch and the
+// post-match recap (same events, same rendering).
+export function eventIconsByName(entries: LiveEntryRow[], side: "home" | "away"): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  for (const entry of entries) {
+    if (entry.teamSide !== side || !entry.eventType || !entry.playerName) continue;
+    (map[entry.playerName] ??= []).push(LIVE_EVENT_ICON[entry.eventType]);
+  }
+  return map;
 }

@@ -1,9 +1,11 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { createClient } from "@/lib/supabase/server";
-import { getTeamInfo, getFixtureById, getSquad } from "@/lib/api-football/cache";
+import { getFixtureById, getSquad } from "@/lib/api-football/cache";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { getVideoEmbedUrl } from "@/lib/videoEmbed";
 import type { TacticalMarker, TacticalArrow, TacticalPosition } from "../../../../actions";
+import type { GameSubmoment, VideoCategory } from "../../../../preparations/videoCategories";
 import BackLink from "../../../../BackLink";
 import PreparationVideoList, {
   type PreparationVideoRow,
@@ -60,15 +62,15 @@ export default async function ArchivedPreparationPage({
     const manualId = prepKey.slice("manual-".length);
     const { data: manual } = await supabase
       .from("manual_preparations")
-      .select("opponent_team_id, match_date")
+      .select("opponent_team_id, opponent_name, opponent_logo, match_date")
       .eq("id", manualId)
       .maybeSingle();
     if (manual) {
       matchDate = manual.match_date;
-      opponentId = manual.opponent_team_id;
-      const info = await getTeamInfo(manual.opponent_team_id).catch(() => []);
-      opponentName = info[0]?.team.name ?? "";
-      opponentLogo = info[0]?.team.logo ?? "";
+      const opponent = await resolveManualOpponent(manual);
+      opponentId = opponent.id;
+      opponentName = opponent.name;
+      opponentLogo = opponent.logo;
     }
   } else {
     const fixtureId = Number(prepKey);
@@ -96,7 +98,7 @@ export default async function ArchivedPreparationPage({
         .order("created_at", { ascending: false }),
       supabase
         .from("preparation_videos")
-        .select("id, url, notes, category, player_id, team")
+        .select("id, url, notes, category, submoment, player_id, team")
         .eq("team_id", stint.team_id)
         .eq("preparation_key", prepKey)
         .order("created_at", { ascending: false }),
@@ -124,6 +126,8 @@ export default async function ArchivedPreparationPage({
           markers?: TacticalMarker[];
           arrows?: TacticalArrow[];
           team?: "us" | "opponent";
+          moment?: VideoCategory | null;
+          submoment?: GameSubmoment | null;
         }
       | null;
     const isLegacyArray = Array.isArray(raw);
@@ -136,6 +140,8 @@ export default async function ArchivedPreparationPage({
       ball: isLegacyArray ? null : (raw?.ball ?? null),
       markers: isLegacyArray ? [] : (raw?.markers ?? []),
       arrows: isLegacyArray ? [] : (raw?.arrows ?? []),
+      moment: isLegacyArray ? null : (raw?.moment ?? null),
+      submoment: isLegacyArray ? null : (raw?.submoment ?? null),
       notes: row.notes,
       videoUrl: row.video_url,
       videoEmbedUrl: row.video_url ? getVideoEmbedUrl(row.video_url) : null,
@@ -152,6 +158,7 @@ export default async function ArchivedPreparationPage({
       notes: row.notes,
       embedUrl: getVideoEmbedUrl(row.url),
       category: row.category,
+      submoment: row.submoment,
       player,
       team: row.team,
     };

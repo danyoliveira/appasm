@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslations } from "next-intl";
-import TacticalBoard, { type OpponentSquadOption, type OurSquadOption, type Team } from "./TacticalBoard";
+import TacticalBoard, {
+  type BenchOption,
+  type OpponentSquadOption,
+  type OurSquadOption,
+  type Team,
+} from "./TacticalBoard";
 import TacticalSnapshotList, { type TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { TeamColors } from "./useTeamColors";
 
@@ -16,6 +21,8 @@ export default function TacticalAnalysisSection({
   activeTeam,
   onActiveTeamChange,
   teamColors,
+  customPlayers,
+  onCustomPlayersChange,
 }: {
   preparationKey: string;
   opponentSquad: OpponentSquadOption[];
@@ -26,6 +33,8 @@ export default function TacticalAnalysisSection({
   activeTeam: Team;
   onActiveTeamChange: (team: Team) => void;
   teamColors: TeamColors;
+  customPlayers: BenchOption[];
+  onCustomPlayersChange: Dispatch<SetStateAction<BenchOption[]>>;
 }) {
   const t = useTranslations("dashboard");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -49,6 +58,8 @@ export default function TacticalAnalysisSection({
         duplicateSeed={duplicateSeed}
         teamColors={teamColors}
         activeTeam={activeTeam}
+        customPlayers={customPlayers}
+        onCustomPlayersChange={onCustomPlayersChange}
       />
 
       <h4 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-muted">

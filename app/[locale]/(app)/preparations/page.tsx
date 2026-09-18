@@ -3,8 +3,8 @@ import type { Locale } from "@/i18n/routing";
 import { createClient } from "@/lib/supabase/server";
 import { getTeamSeasonFixtures, getTeamInfo } from "@/lib/api-football/cache";
 import { getCurrentCompetitions } from "@/lib/api-football/teamStats";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
 import AddManualPreparation from "./AddManualPreparation";
-import ManualPreparationsList, { type ManualPreparationRow } from "./ManualPreparationsList";
 import PreparationFixtureList, {
   type PreparationFixtureRow,
 } from "./PreparationFixtureList";
@@ -100,24 +100,39 @@ export default async function PreparationListPage({
     }
   }
 
-  let manualPreparationRows: ManualPreparationRow[] = [];
+  // Manual games join the same past/future lists as real fixtures (split by
+  // today's date, since they carry no score to tell finished from upcoming)
+  // instead of living in their own separate section — PreparationFixtureList
+  // flags them visually via `isManual`.
   if (teamId) {
     const { data: manualRows } = await supabase
       .from("manual_preparations")
-      .select("id, opponent_team_id, match_date")
+      .select("id, opponent_team_id, opponent_name, opponent_logo, match_date")
       .eq("team_id", teamId)
       .order("match_date", { ascending: true });
 
     if (manualRows?.length) {
-      const opponentInfos = await Promise.all(
-        manualRows.map((row) => getTeamInfo(row.opponent_team_id).catch(() => [])),
-      );
-      manualPreparationRows = manualRows.map((row, i) => ({
-        id: row.id,
-        matchDate: row.match_date,
-        opponentName: opponentInfos[i][0]?.team.name ?? "?",
-        opponentLogo: opponentInfos[i][0]?.team.logo ?? "",
+      const opponents = await Promise.all(manualRows.map(resolveManualOpponent));
+      const now = new Date().getTime();
+      const manualFixtureRows: PreparationFixtureRow[] = manualRows.map((row, i) => ({
+        id: `manual-${row.id}`,
+        date: row.match_date,
+        opponentName: opponents[i].name,
+        opponentLogo: opponents[i].logo,
+        competitionName: null,
+        competitionLogo: null,
+        isHome: true,
+        isPrepared: true,
+        isManual: true,
       }));
+      pastFixtureRows = [
+        ...pastFixtureRows,
+        ...manualFixtureRows.filter((r) => new Date(r.date).getTime() < now),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      futureFixtureRows = [
+        ...futureFixtureRows,
+        ...manualFixtureRows.filter((r) => new Date(r.date).getTime() >= now),
+      ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     }
   }
 
@@ -133,6 +148,7 @@ export default async function PreparationListPage({
         future={futureFixtureRows}
         locale={locale}
         logoUrl={ourLogo}
+        isCoach={isCoach}
         labels={{
           dateTime: t("columnDateTime"),
           opponent: t("columnOpponent"),
@@ -147,10 +163,11 @@ export default async function PreparationListPage({
           showMoreFuture: t("showMoreFutureButton"),
           noFixturesFound: t("noFixturesFoundInCalendar"),
           nextFixture: t("nextFixtureLabel"),
+          manualBadge: t("preparationManualBadge"),
+          deleteAction: t("deleteButton"),
+          confirmDelete: t("confirmDeleteMessage"),
         }}
       />
-
-      <ManualPreparationsList rows={manualPreparationRows} locale={locale} isCoach={isCoach} />
     </div>
   );
 }

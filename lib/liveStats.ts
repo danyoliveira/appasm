@@ -1,12 +1,17 @@
 import "server-only";
 import { getFixtureById, getTeamInfo } from "@/lib/api-football/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
 
 export interface LiveMatchTeams {
   homeName: string;
   homeLogo: string;
   awayName: string;
   awayLogo: string;
+  // Which side is the coach's own club — Live Mode's home/away is whatever
+  // the fixture says, not necessarily "us", so anything scoped to our own
+  // team only (e.g. Modo GK) needs this to know which side to use.
+  ourSide: "home" | "away";
 }
 
 // Shared by the authenticated dashboard path and the token-based guest path
@@ -26,14 +31,12 @@ export async function resolveLiveMatchTeams(
     const manualId = preparationKey.slice("manual-".length);
     const { data: manualRow } = await admin
       .from("manual_preparations")
-      .select("opponent_team_id")
+      .select("opponent_team_id, opponent_name, opponent_logo")
       .eq("id", manualId)
       .maybeSingle();
     if (!manualRow) return null;
 
-    const opponentInfo = await getTeamInfo(manualRow.opponent_team_id).catch(() => []);
-    const opponent = opponentInfo[0]?.team ?? null;
-    if (!opponent) return null;
+    const opponent = await resolveManualOpponent(manualRow);
 
     // Manual preparations don't record home/away — default to us at home.
     return {
@@ -41,6 +44,7 @@ export async function resolveLiveMatchTeams(
       homeLogo: our.logo,
       awayName: opponent.name,
       awayLogo: opponent.logo,
+      ourSide: "home",
     };
   }
 
@@ -54,5 +58,6 @@ export async function resolveLiveMatchTeams(
     homeLogo: fixture.teams.home.logo,
     awayName: fixture.teams.away.name,
     awayLogo: fixture.teams.away.logo,
+    ourSide: fixture.teams.home.id === teamId ? "home" : "away",
   };
 }

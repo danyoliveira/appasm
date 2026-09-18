@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import { createClient } from "@/lib/supabase/client";
+import { cropToSquare } from "@/lib/cropToSquare";
 import {
   addTacticalSnapshot,
   updateTacticalSnapshot,
@@ -14,6 +16,13 @@ import {
 import { translatePosition, STATUS_DOT } from "../club/playerShared";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { TeamColors } from "./useTeamColors";
+import {
+  VIDEO_CATEGORIES,
+  submomentsFor,
+  type GameSubmoment,
+  type VideoCategory,
+} from "./videoCategories";
+import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
 
 // Fixed, team-independent color for the generic marker ("boneco") — team
 // pins are now derived from club crests, which can land on almost any
@@ -37,7 +46,7 @@ export type Team = "us" | "opponent";
 // The bench merges both squads (plus any custom players added on either
 // side) into one shape tagged by team, so drag/placement logic doesn't
 // need to care which squad a player came from.
-interface BenchOption {
+export interface BenchOption {
   id: number;
   name: string;
   number: number | null;
@@ -71,6 +80,7 @@ interface DrawingArrow {
   y1: number;
   x2: number;
   y2: number;
+  style: "arrow" | "line";
 }
 
 const POSITION_GROUPS = ["Goalkeeper", "Defender", "Midfielder", "Attacker"] as const;
@@ -81,6 +91,17 @@ const PITCH_VIEWBOX_WIDTH = 75;
 let nextCustomId = -1;
 let nextMarkerId = 1;
 let nextArrowId = 1;
+
+// Adds only the entries not already present (by id) — used when restoring a
+// snapshot's custom players into the shared, whole-session list instead of
+// overwriting it.
+function mergeCustomPlayers(prev: BenchOption[], restored: BenchOption[]): BenchOption[] {
+  const merged = [...prev];
+  for (const p of restored) {
+    if (!merged.some((m) => m.id === p.id)) merged.push(p);
+  }
+  return merged;
+}
 
 export default function TacticalBoard({
   preparationKey,
@@ -94,6 +115,8 @@ export default function TacticalBoard({
   duplicateSeed = null,
   teamColors,
   activeTeam,
+  customPlayers,
+  onCustomPlayersChange,
 }: {
   preparationKey: string;
   opponentSquad: OpponentSquadOption[];
@@ -106,6 +129,10 @@ export default function TacticalBoard({
   duplicateSeed?: TacticalSnapshotRow | null;
   teamColors: TeamColors;
   activeTeam: Team;
+  // Owned by PreGameAnalysis instead of locally — shared with the Video
+  // Analysis player picker, so a player added here shows up there too.
+  customPlayers: BenchOption[];
+  onCustomPlayersChange: Dispatch<SetStateAction<BenchOption[]>>;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -114,19 +141,24 @@ export default function TacticalBoard({
   const [ball, setBall] = useState<{ x: number; y: number } | null>(editingSnapshot?.ball ?? null);
   const [markers, setMarkers] = useState<TacticalMarker[]>(editingSnapshot?.markers ?? []);
   const [arrows, setArrows] = useState<TacticalArrow[]>(editingSnapshot?.arrows ?? []);
-  const [activeTool, setActiveTool] = useState<"select" | "arrow">("select");
+  const [activeTool, setActiveTool] = useState<"select" | "arrow" | "line">("select");
   const [drawingArrow, setDrawingArrow] = useState<DrawingArrow | null>(null);
+  const [moment, setMoment] = useState<VideoCategory | "">(editingSnapshot?.moment ?? "");
+  const [submoment, setSubmoment] = useState<GameSubmoment | "">(editingSnapshot?.submoment ?? "");
   const [notes, setNotes] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const pinStyle = (team: Team) => ({
     backgroundColor: team === "us" ? teamColors.usColor : teamColors.opponentColor,
     color: team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
   });
-  const [customPlayers, setCustomPlayers] = useState<BenchOption[]>([]);
+  const setCustomPlayers = onCustomPlayersChange;
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
   const [newName, setNewName] = useState("");
   const [newNumber, setNewNumber] = useState("");
   const [newPosition, setNewPosition] = useState<(typeof POSITION_GROUPS)[number]>("Midfielder");
+  const [newPhoto, setNewPhoto] = useState("");
+  const [uploadingNewPhoto, setUploadingNewPhoto] = useState(false);
+  const newPhotoInputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [simpleDrag, setSimpleDrag] = useState<SimpleDragState | null>(null);
   const [isSaving, startSaving] = useTransition();
@@ -144,21 +176,29 @@ export default function TacticalBoard({
     setBall(editingSnapshot.ball);
     setMarkers(editingSnapshot.markers);
     setArrows(editingSnapshot.arrows);
+    setMoment(editingSnapshot.moment ?? "");
+    setSubmoment(editingSnapshot.submoment ?? "");
     setNotes(editingSnapshot.notes ?? "");
     setVideoUrl(editingSnapshot.videoUrl ?? "");
-    setCustomPlayers(
-      editingSnapshot.positions
-        .filter(
-          (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
-        )
-        .map((p) => ({
-          id: p.playerId,
-          name: p.name,
-          number: p.number,
-          photo: p.photo,
-          position: "Midfielder",
-          team: p.team ?? "opponent",
-        })),
+    // Merge in (rather than replace) — customPlayers is now shared across
+    // the whole preparation session, so restoring one snapshot's custom
+    // players shouldn't drop ones added for a different analysis.
+    setCustomPlayers((prev) =>
+      mergeCustomPlayers(
+        prev,
+        editingSnapshot.positions
+          .filter(
+            (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
+          )
+          .map((p) => ({
+            id: p.playerId,
+            name: p.name,
+            number: p.number,
+            photo: p.photo,
+            position: "Midfielder" as const,
+            team: p.team ?? "opponent",
+          })),
+      ),
     );
   } else if (!editingSnapshot && appliedEditingId !== null) {
     setAppliedEditingId(null);
@@ -174,21 +214,26 @@ export default function TacticalBoard({
     setBall(duplicateSeed.ball);
     setMarkers(duplicateSeed.markers);
     setArrows(duplicateSeed.arrows);
+    setMoment(duplicateSeed.moment ?? "");
+    setSubmoment(duplicateSeed.submoment ?? "");
     setNotes(duplicateSeed.notes ?? "");
     setVideoUrl("");
-    setCustomPlayers(
-      duplicateSeed.positions
-        .filter(
-          (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
-        )
-        .map((p) => ({
-          id: p.playerId,
-          name: p.name,
-          number: p.number,
-          photo: p.photo,
-          position: "Midfielder",
-          team: p.team ?? "opponent",
-        })),
+    setCustomPlayers((prev) =>
+      mergeCustomPlayers(
+        prev,
+        duplicateSeed.positions
+          .filter(
+            (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
+          )
+          .map((p) => ({
+            id: p.playerId,
+            name: p.name,
+            number: p.number,
+            photo: p.photo,
+            position: "Midfielder" as const,
+            team: p.team ?? "opponent",
+          })),
+      ),
     );
   } else if (!duplicateSeed && appliedDuplicateId !== null) {
     setAppliedDuplicateId(null);
@@ -374,16 +419,44 @@ export default function TacticalBoard({
   }
 
   function handlePitchPointerDown(e: React.PointerEvent) {
-    if (!isCoach || activeTool !== "arrow") return;
+    if (!isCoach || (activeTool !== "arrow" && activeTool !== "line")) return;
     const rect = pitchRef.current?.getBoundingClientRect();
     if (!rect) return;
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setDrawingArrow({ x1: x, y1: y, x2: x, y2: y });
+    setDrawingArrow({ x1: x, y1: y, x2: x, y2: y, style: activeTool });
   }
 
   function removeArrow(id: number) {
     setArrows((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function handleNewPlayerPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingNewPhoto(true);
+    try {
+      const blob = await cropToSquare(file);
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const path = `${user.id}/custom-player-${crypto.randomUUID()}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(path, blob, { contentType: "image/jpeg" });
+      if (uploadError) throw uploadError;
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("avatars").getPublicUrl(path);
+      setNewPhoto(publicUrl);
+    } finally {
+      setUploadingNewPhoto(false);
+    }
   }
 
   function handleAddCustomPlayer() {
@@ -392,13 +465,14 @@ export default function TacticalBoard({
       id: nextCustomId--,
       name: newName.trim(),
       number: newNumber.trim() ? Number(newNumber.trim()) : null,
-      photo: "",
+      photo: newPhoto,
       position: newPosition,
       team: activeTeam,
     };
     setCustomPlayers((prev) => [...prev, player]);
     setNewName("");
     setNewNumber("");
+    setNewPhoto("");
     setIsAddingPlayer(false);
   }
 
@@ -409,29 +483,37 @@ export default function TacticalBoard({
     setBall(null);
     setMarkers([]);
     setArrows([]);
+    setMoment("");
+    setSubmoment("");
     setNotes("");
     setVideoUrl("");
-    setCustomPlayers([]);
+    // customPlayers is intentionally left as-is — it's now shared for the
+    // whole preparation session (Video Analysis's player picker included),
+    // not scratch state for the one snapshot just saved.
+  }
+
+  function handleMomentChange(value: VideoCategory | "") {
+    setMoment(value);
+    setSubmoment("");
   }
 
   function handleSave() {
     startSaving(async () => {
+      const data = {
+        players: positions,
+        ball,
+        markers,
+        arrows,
+        team: activeTeam,
+        moment: moment || null,
+        submoment: submoment || null,
+      };
       if (editingSnapshot) {
-        await updateTacticalSnapshot(
-          editingSnapshot.id,
-          { players: positions, ball, markers, arrows, team: activeTeam },
-          notes,
-          videoUrl,
-        );
+        await updateTacticalSnapshot(editingSnapshot.id, data, notes, videoUrl);
         resetBoard();
         onSaved?.();
       } else {
-        await addTacticalSnapshot(
-          preparationKey,
-          { players: positions, ball, markers, arrows, team: activeTeam },
-          notes,
-          videoUrl,
-        );
+        await addTacticalSnapshot(preparationKey, data, notes, videoUrl);
         resetBoard();
       }
       setSaved(true);
@@ -517,13 +599,25 @@ export default function TacticalBoard({
           >
             ➜ {t("tacticalArrowLabel")}
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTool((tool) => (tool === "line" ? "select" : "line"))}
+            title={t("tacticalLineLabel")}
+            className={`flex h-8 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors ${
+              activeTool === "line"
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-surface text-muted hover:text-foreground"
+            }`}
+          >
+            ─ {t("tacticalLineLabel")}
+          </button>
         </div>
       )}
       <div
         ref={pitchRef}
         onPointerDown={handlePitchPointerDown}
         className={`relative mx-auto aspect-[3/4] w-full max-w-md touch-none select-none overflow-hidden rounded-xl shadow-inner ${
-          activeTool === "arrow" ? "cursor-crosshair" : ""
+          activeTool === "arrow" || activeTool === "line" ? "cursor-crosshair" : ""
         }`}
         style={{
           backgroundImage:
@@ -572,7 +666,7 @@ export default function TacticalBoard({
                 y2={a.y2}
                 stroke="#ffffff"
                 strokeWidth={0.6}
-                markerEnd="url(#tactical-arrowhead)"
+                markerEnd={a.style === "line" ? undefined : "url(#tactical-arrowhead)"}
               />
             </g>
           ))}
@@ -585,7 +679,7 @@ export default function TacticalBoard({
               stroke="#ffffff"
               strokeWidth={0.6}
               strokeDasharray="2,2"
-              markerEnd="url(#tactical-arrowhead)"
+              markerEnd={drawingArrow.style === "line" ? undefined : "url(#tactical-arrowhead)"}
             />
           )}
         </svg>
@@ -761,6 +855,34 @@ export default function TacticalBoard({
           {isAddingPlayer ? (
             <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-border bg-background p-3">
               <div>
+                <label className="mb-1 block text-[10px] text-muted">{t("addPhoto")}</label>
+                <button
+                  type="button"
+                  onClick={() => newPhotoInputRef.current?.click()}
+                  disabled={uploadingNewPhoto}
+                  className="group relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-border bg-surface disabled:opacity-50"
+                >
+                  {newPhoto ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={newPhoto} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center text-[9px] text-muted">
+                      {t("addPhoto")}
+                    </span>
+                  )}
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-[8px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                    {uploadingNewPhoto ? "..." : t("changePhoto")}
+                  </span>
+                </button>
+                <input
+                  ref={newPhotoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleNewPlayerPhotoChange}
+                  className="hidden"
+                />
+              </div>
+              <div>
                 <label className="mb-1 block text-[10px] text-muted">{t("tacticalPlayerNameLabel")}</label>
                 <input
                   type="text"
@@ -820,6 +942,48 @@ export default function TacticalBoard({
         </div>
       )}
       </div>
+
+      {isCoach && (
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+              {t("videoCategoryLabel")}
+            </label>
+            <select
+              value={moment}
+              onChange={(e) => handleMomentChange(e.target.value as VideoCategory | "")}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+            >
+              <option value="">{t("videoCategoryNone")}</option>
+              {VIDEO_CATEGORIES.map((key) => (
+                <option key={key} value={key}>
+                  {t(CATEGORY_LABEL_KEYS[key])}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {submomentsFor(moment) && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+                {t("videoSubmomentLabel")}
+              </label>
+              <select
+                value={submoment}
+                onChange={(e) => setSubmoment(e.target.value as GameSubmoment | "")}
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              >
+                <option value="">{t("videoSubmomentNone")}</option>
+                {submomentsFor(moment)!.map((key) => (
+                  <option key={key} value={key}>
+                    {t(SUBMOMENT_LABEL_KEYS[key])}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-4">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">

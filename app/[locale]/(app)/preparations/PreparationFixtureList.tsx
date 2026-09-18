@@ -1,19 +1,33 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { getLogoColor } from "@/lib/logoColor";
+import { deleteManualPreparation } from "../actions";
+
+// Same violet used elsewhere in this app for "custom, not from the API"
+// things (the tactical board's generic marker) — reused here so a manual
+// game reads as the same kind of "hand-added" entry at a glance.
+const MANUAL_COLOR = "#7c3aed";
 
 export interface PreparationFixtureRow {
-  id: number;
+  // A real fixture's numeric API-Football id, or a manual preparation's
+  // `manual-<uuid>` route segment — either way, exactly what belongs after
+  // `/preparations/` for this row's link.
+  id: number | string;
   date: string;
   opponentName: string;
   opponentLogo: string;
-  competitionName: string;
-  competitionLogo: string;
+  // null for a manual game — it has no API-Football competition.
+  competitionName: string | null;
+  competitionLogo: string | null;
   isHome: boolean;
   isPrepared: boolean;
+  // A hand-added game (opponent outside the fixture list, possibly outside
+  // API-Football entirely) rather than one pulled from the team's real
+  // calendar — shown in the same table, just visually flagged.
+  isManual?: boolean;
 }
 
 const PAGE_SIZE = 5;
@@ -23,12 +37,14 @@ export default function PreparationFixtureList({
   future,
   locale,
   logoUrl,
+  isCoach,
   labels,
 }: {
   past: PreparationFixtureRow[];
   future: PreparationFixtureRow[];
   locale: string;
   logoUrl?: string | null;
+  isCoach: boolean;
   labels: {
     dateTime: string;
     opponent: string;
@@ -43,12 +59,17 @@ export default function PreparationFixtureList({
     showMoreFuture: string;
     noFixturesFound: string;
     nextFixture: string;
+    manualBadge: string;
+    deleteAction: string;
+    confirmDelete: string;
   };
 }) {
   const router = useRouter();
   const [pastCount, setPastCount] = useState(PAGE_SIZE);
   const [futureCount, setFutureCount] = useState(PAGE_SIZE);
-  const [pendingFixtureId, setPendingFixtureId] = useState<number | null>(null);
+  const [pendingFixtureId, setPendingFixtureId] = useState<number | string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [isDeleting, startDeleting] = useTransition();
 
   // Same crest-color extractor used across the club pages — the
   // next-fixture marker uses it instead of the generic accent.
@@ -70,13 +91,25 @@ export default function PreparationFixtureList({
     setPendingFixtureId(null);
   }
 
-  // Already-started preparations just reopen — no need to ask again.
+  // Already-started preparations just reopen — no need to ask again. Manual
+  // games are always "already prepared" (creating one is the same as
+  // starting it), so they always go straight through this branch too.
   function handlePrepareClick(row: PreparationFixtureRow) {
     if (row.isPrepared) {
       router.push(`/preparations/${row.id}`);
     } else {
       setPendingFixtureId(row.id);
     }
+  }
+
+  function handleConfirmDelete() {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    startDeleting(async () => {
+      await deleteManualPreparation(id);
+      setPendingDeleteId(null);
+      router.refresh();
+    });
   }
 
   if (past.length === 0 && future.length === 0) {
@@ -145,7 +178,9 @@ export default function PreparationFixtureList({
                     style={
                       i === nextFixtureIndex && clubColor
                         ? { borderLeft: `3px solid ${clubColor}`, backgroundColor: `${clubColor}14` }
-                        : undefined
+                        : row.isManual
+                          ? { borderLeft: `3px solid ${MANUAL_COLOR}`, backgroundColor: `${MANUAL_COLOR}0d` }
+                          : undefined
                     }
                   >
                   <td className="whitespace-nowrap px-3 py-2">
@@ -157,8 +192,17 @@ export default function PreparationFixtureList({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={row.opponentLogo} alt="" className="h-5 w-5 object-contain" />
+                      {row.opponentLogo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={row.opponentLogo} alt="" className="h-5 w-5 object-contain" />
+                      ) : (
+                        <span
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold"
+                          style={{ backgroundColor: `${MANUAL_COLOR}1a`, color: MANUAL_COLOR }}
+                        >
+                          {row.opponentName.charAt(0).toUpperCase()}
+                        </span>
+                      )}
                       {row.opponentName}
                       <span className="text-xs text-muted">
                         ({row.isHome ? labels.home : labels.away})
@@ -166,28 +210,47 @@ export default function PreparationFixtureList({
                     </div>
                   </td>
                   <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={row.competitionLogo}
-                        alt=""
-                        className="h-4 w-4 object-contain"
-                      />
-                      {row.competitionName}
-                    </div>
+                    {row.isManual ? (
+                      <span className="text-xs font-medium" style={{ color: MANUAL_COLOR }}>
+                        {labels.manualBadge}
+                      </span>
+                    ) : row.competitionName ? (
+                      <div className="flex items-center gap-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={row.competitionLogo ?? undefined}
+                          alt=""
+                          className="h-4 w-4 object-contain"
+                        />
+                        {row.competitionName}
+                      </div>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handlePrepareClick(row)}
-                      className={
-                        row.isPrepared
-                          ? "inline-block rounded-full border border-accent px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
-                          : "inline-block rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
-                      }
-                    >
-                      {row.isPrepared ? labels.resumeAction : labels.prepareAction}
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      {row.isManual && isCoach && (
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteId(String(row.id).replace(/^manual-/, ""))}
+                          className="text-xs font-medium text-red-500 hover:underline"
+                        >
+                          {labels.deleteAction}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handlePrepareClick(row)}
+                        className={
+                          row.isPrepared
+                            ? "inline-block rounded-full border border-accent px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
+                            : "inline-block rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
+                        }
+                      >
+                        {row.isPrepared ? labels.resumeAction : labels.prepareAction}
+                      </button>
+                    </div>
                   </td>
                   </tr>
                 </Fragment>
@@ -223,6 +286,14 @@ export default function PreparationFixtureList({
         cancelLabel={labels.cancel}
         onConfirm={handleConfirm}
         onCancel={() => setPendingFixtureId(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteId != null}
+        message={labels.confirmDelete}
+        isPending={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
       />
     </div>
   );

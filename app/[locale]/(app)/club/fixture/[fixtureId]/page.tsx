@@ -11,70 +11,9 @@ import {
 import PitchDiagram from "./PitchDiagram";
 import BackLink from "../../../BackLink";
 import FixtureHeroAccent from "../../../FixtureHeroAccent";
-import FixtureStatsBars, { type StatBarRow } from "./FixtureStatsBars";
+import FixtureStatsBars from "./FixtureStatsBars";
 import LineupSubsList from "./LineupSubsList";
-
-const STAT_LABELS: Record<string, { pt: string; es: string; fr: string; en: string }> = {
-  "Shots on Goal": { pt: "Remates à baliza", es: "Tiros a puerta", fr: "Tirs cadrés", en: "Shots on target" },
-  "Shots off Goal": { pt: "Remates ao lado", es: "Tiros fuera", fr: "Tirs non cadrés", en: "Shots off target" },
-  "Total Shots": { pt: "Remates totais", es: "Tiros totales", fr: "Tirs totaux", en: "Total shots" },
-  "Blocked Shots": { pt: "Remates bloqueados", es: "Tiros bloqueados", fr: "Tirs bloqués", en: "Blocked shots" },
-  "Shots insidebox": { pt: "Remates dentro da área", es: "Tiros dentro del área", fr: "Tirs dans la surface", en: "Shots inside box" },
-  "Shots outsidebox": { pt: "Remates fora da área", es: "Tiros fuera del área", fr: "Tirs hors surface", en: "Shots outside box" },
-  Fouls: { pt: "Faltas", es: "Faltas", fr: "Fautes", en: "Fouls" },
-  "Corner Kicks": { pt: "Cantos", es: "Córners", fr: "Corners", en: "Corners" },
-  Offsides: { pt: "Fora de jogo", es: "Fueras de juego", fr: "Hors-jeu", en: "Offsides" },
-  "Ball Possession": { pt: "Posse de bola", es: "Posesión", fr: "Possession", en: "Possession" },
-  "Yellow Cards": { pt: "Cartões amarelos", es: "Tarjetas amarillas", fr: "Cartons jaunes", en: "Yellow cards" },
-  "Red Cards": { pt: "Cartões vermelhos", es: "Tarjetas rojas", fr: "Cartons rouges", en: "Red cards" },
-  "Goalkeeper Saves": { pt: "Defesas do guarda-redes", es: "Paradas del portero", fr: "Arrêts du gardien", en: "Goalkeeper saves" },
-  "Total passes": { pt: "Passes totais", es: "Pases totales", fr: "Passes totales", en: "Total passes" },
-  "Passes accurate": { pt: "Passes certos", es: "Pases precisos", fr: "Passes réussies", en: "Accurate passes" },
-  "Passes %": { pt: "Precisão de passe", es: "Precisión de pase", fr: "Précision de passe", en: "Pass accuracy" },
-  expected_goals: { pt: "Golos esperados (xG)", es: "Goles esperados (xG)", fr: "Buts attendus (xG)", en: "Expected goals (xG)" },
-};
-
-function translateStatLabel(type: string, locale: Locale): string {
-  const entry = STAT_LABELS[type];
-  if (!entry) return type;
-  return entry[locale] ?? type;
-}
-
-// The two or three numbers a coach actually glances at first — everything
-// else (fouls, offsides, cards, blocked shots...) is real but secondary,
-// grouped below by category instead of one flat list.
-const HEADLINE_STAT_TYPES = new Set(["Ball Possession", "Total Shots", "Shots on Goal"]);
-
-// Rate stats that are two independent 0-100 values, not a split of one
-// shared total (unlike Ball Possession, which genuinely sums to ~100) — a
-// shared proportional bar between them would misleadingly imply otherwise.
-const INDEPENDENT_PERCENT_STAT_TYPES = new Set(["Passes %"]);
-
-type StatSectionId = "attack" | "passing" | "discipline" | "goalkeeping";
-
-const STAT_SECTION: Record<string, StatSectionId> = {
-  "Shots off Goal": "attack",
-  "Blocked Shots": "attack",
-  "Shots insidebox": "attack",
-  "Shots outsidebox": "attack",
-  "Corner Kicks": "attack",
-  expected_goals: "attack",
-  "Total passes": "passing",
-  "Passes accurate": "passing",
-  "Passes %": "passing",
-  Fouls: "discipline",
-  Offsides: "discipline",
-  "Yellow Cards": "discipline",
-  "Red Cards": "discipline",
-  "Goalkeeper Saves": "goalkeeping",
-};
-
-const STAT_SECTION_ORDER: { id: StatSectionId; titleKey: string }[] = [
-  { id: "attack", titleKey: "statGroupAttack" },
-  { id: "passing", titleKey: "statGroupPasses" },
-  { id: "discipline", titleKey: "statGroupDiscipline" },
-  { id: "goalkeeping", titleKey: "statGroupGoalkeeping" },
-];
+import { buildFixtureStatSections } from "./fixtureStatsHelpers";
 
 export default async function FixtureDetailPage({
   params,
@@ -263,24 +202,7 @@ export default async function FixtureDetailPage({
         <section className="mt-10 rounded-2xl border border-border bg-surface p-5 shadow-sm">
           <h2 className="text-lg font-semibold">{t("fixtureStatsTitle")}</h2>
           {(() => {
-            const toRow = (type: string): StatBarRow => {
-              const homeRaw = homeStats.statistics.find((s) => s.type === type)?.value;
-              const awayRaw = awayStats.statistics.find((s) => s.type === type)?.value;
-              return {
-                type,
-                label: translateStatLabel(type, locale),
-                homeDisplay: String(homeRaw ?? "-"),
-                awayDisplay: String(awayRaw ?? "-"),
-                homeNum: Number(String(homeRaw ?? "0").replace("%", "")) || 0,
-                awayNum: Number(String(awayRaw ?? "0").replace("%", "")) || 0,
-                independentPercent: INDEPENDENT_PERCENT_STAT_TYPES.has(type),
-              };
-            };
-            const headline = statTypes.filter((type) => HEADLINE_STAT_TYPES.has(type)).map(toRow);
-            const sections = STAT_SECTION_ORDER.map(({ id, titleKey }) => ({
-              title: t(titleKey),
-              rows: statTypes.filter((type) => STAT_SECTION[type] === id).map(toRow),
-            }));
+            const { headline, sections } = buildFixtureStatSections(homeStats, awayStats, locale, t);
             return (
               <FixtureStatsBars
                 homeLogo={detail.teams.home.logo}

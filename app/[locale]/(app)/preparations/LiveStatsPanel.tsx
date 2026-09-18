@@ -103,12 +103,13 @@ export default function LiveStatsPanel({
   const t = useTranslations("dashboard");
   const [session, setSession] = useState(initialSession);
   const [isCreating, setIsCreating] = useState(false);
-  const [regenerating, setRegenerating] = useState<"member" | "viewer" | null>(null);
+  const [regenerating, setRegenerating] = useState<"member" | "viewer" | "gk" | null>(null);
   // Which link a confirmation is pending for — regenerating kills the old
   // link immediately (no grace period), so this always confirms first.
-  const [confirmTarget, setConfirmTarget] = useState<"member" | "viewer" | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<"member" | "viewer" | "gk" | null>(null);
   const [memberOnline, setMemberOnline] = useState<number | null>(null);
   const [viewerOnline, setViewerOnline] = useState<number | null>(null);
+  const [gkOnline, setGkOnline] = useState<number | null>(null);
 
   // Lets the coach notice a link problem (regenerated, or nobody ever
   // opened it) within seconds instead of finding out mid-match — see
@@ -123,6 +124,7 @@ export default function LiveStatsPanel({
       if (cancelled || !result) return;
       setMemberOnline(result.memberCount);
       setViewerOnline(result.viewerCount);
+      setGkOnline(result.gkCoachCount);
     }
 
     poll();
@@ -234,6 +236,14 @@ export default function LiveStatsPanel({
           onRegenerate={() => setConfirmTarget("viewer")}
           isRegenerating={regenerating === "viewer"}
         />
+        <CopyableLink
+          icon="🧤"
+          label={t("liveStatsGkLinkLabel")}
+          path={session.gkLink}
+          onlineCount={gkOnline}
+          onRegenerate={() => setConfirmTarget("gk")}
+          isRegenerating={regenerating === "gk"}
+        />
       </div>
 
       <ConfirmDialog
@@ -241,7 +251,9 @@ export default function LiveStatsPanel({
         message={
           confirmTarget === "member"
             ? t("liveStatsRegenerateMemberConfirm")
-            : t("liveStatsRegenerateViewerConfirm")
+            : confirmTarget === "viewer"
+              ? t("liveStatsRegenerateViewerConfirm")
+              : t("liveStatsRegenerateGkConfirm")
         }
         isPending={regenerating !== null}
         confirmLabel={t("liveStatsRegenerateButton")}
