@@ -318,6 +318,7 @@ export async function addLiveEntry(sessionId: string, input: LiveEntryInput) {
     minute: input.minute,
     extra_minute: input.extraMinute,
     player_name: input.playerName.trim() || null,
+    player_id: input.playerId ?? null,
     notes: input.notes.trim() || null,
     created_by: user.id,
   });

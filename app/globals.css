@@ -34,6 +34,21 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* The page background lives on <html> too, not only <body>: when only
+   <body> has one, browsers propagate it to the whole canvas, and WebKit
+   (Safari, and Safari-based browsers like Avast's on Mac) doesn't repaint
+   that propagated background when the theme's CSS variable changes — the
+   text switched colour but the background stayed. color-scheme also lets
+   the browser's own UI (scrollbars, form controls) follow the theme. */
+html {
+  background: var(--background);
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

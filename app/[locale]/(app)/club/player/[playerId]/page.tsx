@@ -1,8 +1,21 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
-import { Link } from "@/i18n/navigation";
+import { Link, redirect } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentStintId } from "@/lib/coachingStints";
+import {
+  MANUAL_PLAYER_COLUMNS,
+  ageFromBirthDate,
+  withManualPlayers,
+  type ManualSquadPlayerRow,
+} from "@/lib/manualPlayers";
+import ManualPlayerMergePanel from "./ManualPlayerMergePanel";
+import TeamDossier from "../../TeamDossier";
+import { PLAYER_DOSSIER_CATEGORIES } from "../../dossierShared";
+import { loadDossierFiles } from "@/lib/dossier";
+import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
+import { nameSimilarity } from "@/lib/playerMatching";
+import GkLiveExplorer from "./GkLiveExplorer";
 import {
   getSquad,
   getTeamInfo,
@@ -42,20 +55,22 @@ interface PlayerMatch {
   started: boolean;
 }
 import type { PlayerStatus, PlayerManualStatsInput } from "../../../actions";
-import { translatePosition, translateInjuryType } from "../../playerShared";
+import { translatePosition, translateInjuryType, shortenPlayerName } from "../../playerShared";
 import { matchResult, FixtureTeamsRow } from "../../fixtureHelpers";
 import { HeaderStatusChip, PendingInjuryBanner, InjuryReturnPrompt } from "./PlayerHeaderStatus";
 import PlayerHero from "./PlayerHero";
-import PlayerNotesList from "./PlayerNotesList";
+import NotesList from "../../../notes/NotesList";
+import {
+  CLUB_NOTE_COLUMNS,
+  PLAYER_NOTE_COLUMNS,
+  clubNoteFromRow,
+  playerNoteFromRow,
+  type NoteItem,
+} from "../../../notes/noteShared";
 import PlayerBodyMetrics, { type WeightEntry } from "./PlayerBodyMetrics";
 import PlayerStatsComparison from "./PlayerStatsComparison";
-import PlayerProgressionReport, {
-  type ProgressionReportData,
-} from "./PlayerProgressionReport";
 import PlayerDetailTabs from "./PlayerDetailTabs";
 import MatchesScrollList from "./MatchesScrollList";
-import { VIDEO_CATEGORIES } from "../../../preparations/videoCategories";
-import { CATEGORY_LABEL_KEYS } from "../../../preparations/gameMomentLabels";
 
 function StatRow({
   label,
@@ -163,16 +178,47 @@ export default async function PlayerDetailPage({
   let competitions: Awaited<ReturnType<typeof getCurrentCompetitions>>["allCompetitions"] = [];
   let friendlyCompetitionIds = new Set<number>();
 
+  // Hand-added players: negative ids never exist in API-Football, so skip
+  // every by-id API call for them; a merged one now lives under its API id.
+  const isManualId = playerId < 0;
+  const { data: manualRowData } = await supabase
+    .from("manual_squad_players")
+    .select(MANUAL_PLAYER_COLUMNS)
+    .eq("id", playerId)
+    .maybeSingle();
+  const manualRow = manualRowData as ManualSquadPlayerRow | null;
+  if (manualRow?.merged_into_player_id) {
+    redirect({ href: `/club/player/${manualRow.merged_into_player_id}`, locale });
+  }
+  const apiSquadPlayers: { id: number; name: string; photo: string }[] = [];
+
   try {
     const [squad, teamInfo, profiles, current] = await Promise.all([
       getSquad(teamId),
       getTeamInfo(teamId),
-      getPlayerProfile(playerId),
+      isManualId ? Promise.resolve([]) : getPlayerProfile(playerId),
       getCurrentCompetitions(teamId),
     ]);
-    squadPlayer = squad[0]?.players.find((p) => p.id === playerId) ?? null;
+    apiSquadPlayers.push(...(squad[0]?.players ?? []));
+    squadPlayer =
+      withManualPlayers(squad, manualRow && manualRow.team_id === teamId ? [manualRow] : [])[0]?.players.find(
+        (p) => p.id === playerId,
+      ) ?? null;
     ourTeam = teamInfo[0]?.team ?? null;
-    bio = profiles[0]?.player ?? null;
+    bio =
+      profiles[0]?.player ??
+      (manualRow
+        ? {
+            id: manualRow.id,
+            name: manualRow.name,
+            age: ageFromBirthDate(manualRow.birth_date),
+            nationality: manualRow.nationality,
+            photo: manualRow.photo_url ?? "",
+            birth: { date: manualRow.birth_date, place: null, country: null },
+            height: null,
+            weight: null,
+          }
+        : null);
     competitions = current.allCompetitions;
     friendlyCompetitionIds = new Set(current.friendlyCompetitions.map((c) => c.league.id));
     const defaultSeason = current.defaultSeason;
@@ -216,9 +262,9 @@ export default async function PlayerDetailPage({
     }
 
     const [sidelinedResult, transfersResult, trophiesResult, playersStats, injuries] = await Promise.all([
-      getSidelined(playerId).catch(() => []),
-      getPlayerTransfers(playerId).catch(() => []),
-      getTrophies(playerId).catch(() => []),
+      isManualId ? [] : getSidelined(playerId).catch(() => []),
+      isManualId ? [] : getPlayerTransfers(playerId).catch(() => []),
+      isManualId ? [] : getTrophies(playerId).catch(() => []),
       defaultSeason ? getPlayersStatistics(teamId, defaultSeason).catch(() => []) : [],
       defaultSeason ? getInjuries(teamId, defaultSeason).catch(() => []) : [],
     ]);
@@ -374,14 +420,29 @@ export default async function PlayerDetailPage({
   // Notes are about the player, not about the club — they follow the
   // player across every club the coach moves to, instead of being left
   // behind at whichever club they were written at.
-  let notes: import("./PlayerNotesList").PlayerNote[] = [];
+  const dossierFiles =
+    squadPlayer && currentStintId
+      ? await loadDossierFiles(supabase, {
+          teamId,
+          stintId: currentStintId,
+          categories: PLAYER_DOSSIER_CATEGORIES,
+          playerId,
+        })
+      : [];
+
+  let notes: NoteItem[] = [];
+  // Club notes that @mention this player — shown read-only under their own.
+  let mentionedInNotes: NoteItem[] = [];
   if (isCoach) {
-    const { data: notesData } = await supabase
-      .from("player_notes")
-      .select("id, content, created_at, updated_at")
-      .eq("player_id", playerId)
-      .order("created_at", { ascending: true });
-    notes = notesData ?? [];
+    const [{ data: notesData }, { data: mentionData }] = await Promise.all([
+      supabase.from("player_notes").select(PLAYER_NOTE_COLUMNS).eq("player_id", playerId),
+      supabase
+        .from("club_notes")
+        .select(CLUB_NOTE_COLUMNS)
+        .contains("mentioned_player_ids", [playerId]),
+    ]);
+    notes = (notesData ?? []).map(playerNoteFromRow);
+    mentionedInNotes = (mentionData ?? []).map(clubNoteFromRow);
   }
 
   const { data: videoData } = await supabase
@@ -490,7 +551,8 @@ export default async function PlayerDetailPage({
 
   // Same field set as PlayerManualStatsInput, so the internal (hand-entered)
   // numbers can be compared row by row against these external (API) ones.
-  const externalValues: PlayerManualStatsInput = {
+  // A hand-added player has no API record at all — "-" rather than zeros.
+  const apiExternalValues: PlayerManualStatsInput = {
     appearances: totals.appearances,
     minutes: totals.minutes,
     goals: totals.goals,
@@ -514,6 +576,11 @@ export default async function PlayerDetailPage({
     yellowCards: totals.yellow,
     redCards: totals.red,
   };
+  const externalValues: PlayerManualStatsInput = isManualId
+    ? (Object.fromEntries(
+        Object.keys(apiExternalValues).map((key) => [key, null]),
+      ) as unknown as PlayerManualStatsInput)
+    : apiExternalValues;
 
   // "N/A" and "Return from loan" entries are loan returns, not a real
   // move — noise we don't need to show.
@@ -731,9 +798,12 @@ export default async function PlayerDetailPage({
 
   const overviewContent = (
     <div className="space-y-8">
-      {seasonStats.length > 0 || playerMatches.length > 0 ? (
+      {/* Our own players always get the stats card, even with no API data
+          at all (hand-added players, youth call-ups) — it's where the
+          coach enters the internal numbers. */}
+      {squadPlayer || seasonStats.length > 0 || playerMatches.length > 0 ? (
         <section className="grid items-start gap-6 lg:grid-cols-2">
-          {(seasonStats.length > 0 || hasVerifiedTotals) && (
+          {(squadPlayer || seasonStats.length > 0 || hasVerifiedTotals) && (
             <div
               id="player-season-stats-card"
               className="rounded-2xl border border-border bg-surface p-5 shadow-sm"
@@ -1011,83 +1081,21 @@ export default async function PlayerDetailPage({
     </div>
   ) : null;
 
-  // Hand-entered stats win over the API ones wherever the coach has filled
-  // them in — same rule as the comparison table's own external/internal
-  // pair, resolved to a single number for the report.
-  function resolveStat(internal: number | null, external: number | null): number | null {
-    return internal ?? external;
-  }
-  const progressionReport: ProgressionReportData = {
-    playerName: displayName,
-    clubName: currentClub?.name ?? null,
-    clubLogoUrl: currentClub?.logo ?? null,
-    photoUrl: squadPlayer?.photo || bio?.photo || null,
-    isGoalkeeper,
-    seasonTotals: {
-      appearances: resolveStat(manualStats.appearances, externalValues.appearances),
-      minutes: resolveStat(manualStats.minutes, externalValues.minutes),
-      rating: resolveStat(manualStats.rating, externalValues.rating),
-      goalsOrSaves: resolveStat(
-        isGoalkeeper ? manualStats.saves : manualStats.goals,
-        isGoalkeeper ? externalValues.saves : externalValues.goals,
-      ),
-      assistsOrConceded: resolveStat(
-        isGoalkeeper ? manualStats.conceded : manualStats.assists,
-        isGoalkeeper ? externalValues.conceded : externalValues.assists,
-      ),
-    },
-    physical: {
-      heightCm: resolvedHeightCm,
-      currentWeight: resolvedWeightKg,
-      previousWeight: weightEntries[1]?.weightKg ?? null,
-      firstWeight: weightEntries[weightEntries.length - 1]?.weightKg ?? null,
-    },
-    tracking: {
-      notesCount: notes.length,
-      videosCount: playerVideoRows.length,
-      videosByCategory: VIDEO_CATEGORIES.map((cat) => ({
-        category: cat,
-        label: t(CATEGORY_LABEL_KEYS[cat]),
-        count: playerVideoRows.filter((v) => v.category === cat).length,
-      })).filter((c) => c.count > 0),
-    },
-    availability: {
-      status,
-      injuryCount: injuryHistory.length,
-    },
-    // Full lists (not just counts) for the downloadable PDF, which is meant
-    // to be a complete, self-contained capture of the player rather than a
-    // quick-glance summary — the on-page card above stays compact since this
-    // same data is one tab-click away (Notas e Vídeos, Físico).
-    notes: notes.map((n) => ({ content: n.content, date: n.created_at })),
-    videos: (videoData ?? [])
-      .slice()
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
-      .map((v) => ({
-        url: v.url,
-        categoryLabel: v.category
-          ? t(CATEGORY_LABEL_KEYS[v.category as (typeof VIDEO_CATEGORIES)[number]])
-          : null,
-        notes: v.notes,
-        date: v.created_at,
-      })),
-    // Same merged list (internal log + uncovered API history) as the injury
-    // history section above — an ongoing injury (end: null) has no duration.
-    injuries: injuryHistory.map((inj) => ({
-      description: inj.description,
-      start: inj.start,
-      end: inj.end,
-      durationDays: inj.end
-        ? Math.round((new Date(inj.end).getTime() - new Date(inj.start).getTime()) / (24 * 60 * 60 * 1000)) + 1
-        : null,
-      expectedReturnAt: inj.expectedReturnAt,
-    })),
-    weightEntries,
-  };
-
   const notesContent = (
     <div className="space-y-8">
-      {isCoach && <PlayerNotesList teamId={teamId} playerId={playerId} notes={notes} />}
+      {isCoach && (
+        <NotesList
+          kind="player"
+          teamId={teamId}
+          playerId={playerId}
+          notes={notes}
+          mentionedIn={mentionedInNotes}
+          title={t("playerNotesTitle")}
+          emptyText={t("noNotesFound")}
+          placeholder={t("playerNotesPlaceholder")}
+          addLabel={t("addNoteButton")}
+        />
+      )}
       <div>
         <h3 className="text-sm font-semibold text-muted">{t("playerVideosTitle")}</h3>
         <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
@@ -1095,8 +1103,39 @@ export default async function PlayerDetailPage({
     </div>
   );
 
-  const progressionContent =
-    isCoach && squadPlayer ? <PlayerProgressionReport data={progressionReport} /> : null;
+  // Goalkeepers: their own ASM Live Mode history — the games (and, with a
+  // keeper change, the part) they played. Matched by the linked squad id;
+  // entries from before lineups were linked fall back to a close name match.
+  let gkLiveGames: LiveGameStats[] = [];
+  if (squadPlayer && isGoalkeeper) {
+    const { data: stintRow } = currentStintId
+      ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
+      : { data: null };
+    const allGames = await loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
+    gkLiveGames = allGames.flatMap((game) => {
+      const mine = game.gk.filter(
+        (keeper) =>
+          keeper.playerId === playerId ||
+          (keeper.playerId == null && nameSimilarity(keeper.name, displayName) >= 0.85),
+      );
+      return mine.length ? [{ ...game, gk: mine }] : [];
+    });
+  }
+  const liveContent = squadPlayer && isGoalkeeper ? <GkLiveExplorer games={gkLiveGames} /> : null;
+
+  const dossierContent =
+    squadPlayer && currentStintId ? (
+      <TeamDossier
+        teamId={teamId}
+        files={dossierFiles}
+        players={[]}
+        isCoach={isCoach}
+        categories={PLAYER_DOSSIER_CATEGORIES}
+        fixedPlayer={{ id: playerId, name: shortenPlayerName(displayName) }}
+        title={t("playerDossierTitle")}
+        subtitle={t("playerDossierSubtitle")}
+      />
+    ) : null;
 
   return (
     <div>
@@ -1140,6 +1179,13 @@ export default async function PlayerDetailPage({
             </div>
           </PlayerHero>
 
+          {isCoach && isManualId && manualRow && (
+            <ManualPlayerMergePanel
+              manualPlayerId={manualRow.id}
+              apiPlayers={apiSquadPlayers.map((p) => ({ id: p.id, name: p.name, photo: p.photo }))}
+            />
+          )}
+
           {isCoach && pendingInjury && (
             <PendingInjuryBanner
               teamId={teamId}
@@ -1163,7 +1209,8 @@ export default async function PlayerDetailPage({
             overviewContent={overviewContent}
             physicalContent={physicalContent}
             notesContent={notesContent}
-            progressionContent={progressionContent}
+            dossierContent={dossierContent}
+            liveContent={liveContent}
           />
         </>
       )}

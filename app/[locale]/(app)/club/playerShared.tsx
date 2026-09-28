@@ -7,6 +7,50 @@ export const POSITION_LABEL_KEYS: Record<string, string> = {
   Attacker: "positionAttacker",
 };
 
+// Tactical order (defence → midfield → attack) rather than alphabetical.
+export const POSITION_ORDER: Record<string, number> = {
+  Defender: 0,
+  Midfielder: 1,
+  Attacker: 2,
+};
+
+type OrderablePlayer = { id: number; name: string; position: string };
+
+// Default squad order (before any header is clicked): outfield players go
+// position (tactical order) → minutes (most first) → name; goalkeepers
+// just go minutes (most first) → name.
+export function compareSquadDefault(
+  a: OrderablePlayer,
+  b: OrderablePlayer,
+  minutesByPlayerId: Map<number, { minutes: number | null }>,
+  isGoalkeeperTable: boolean,
+): number {
+  if (!isGoalkeeperTable) {
+    const posDiff =
+      (POSITION_ORDER[a.position] ?? 99) - (POSITION_ORDER[b.position] ?? 99);
+    if (posDiff !== 0) return posDiff;
+  }
+  const minutesDiff =
+    (minutesByPlayerId.get(b.id)?.minutes ?? 0) - (minutesByPlayerId.get(a.id)?.minutes ?? 0);
+  if (minutesDiff !== 0) return minutesDiff;
+  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+}
+
+// Same order as the squad on the club's "Geral" tab: goalkeepers first,
+// then outfield players.
+export function orderSquadLikeGeneralTab<P extends OrderablePlayer>(
+  players: P[],
+  minutesByPlayerId: Map<number, { minutes: number | null }>,
+): P[] {
+  const goalkeepers = players
+    .filter((p) => p.position === "Goalkeeper")
+    .sort((a, b) => compareSquadDefault(a, b, minutesByPlayerId, true));
+  const outfield = players
+    .filter((p) => p.position !== "Goalkeeper")
+    .sort((a, b) => compareSquadDefault(a, b, minutesByPlayerId, false));
+  return [...goalkeepers, ...outfield];
+}
+
 export function translatePosition(position: string, t: (key: string) => string) {
   const key = POSITION_LABEL_KEYS[position];
   return key ? t(key) : position;

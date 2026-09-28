@@ -9,8 +9,17 @@
 ## MEU CLUBE
 
 - DADOS GPS INDIVIDUAL E COLETIVO (ANDRE TEM DE MANDAR) ✅
-- ESTATISTICAS COLETIVAS - QUE VEM DO ASM LIVE STATS ... DADOS EXTERNOS | DADOS INTERNOS (TEMOS OS DADOS DA API E DA PARA ALTERAR)
+- ESTATISTICAS COLETIVAS - QUE VEM DO ASM LIVE STATS ... DADOS EXTERNOS | DADOS INTERNOS (TEMOS OS DADOS DA API E DA PARA ALTERAR) ✅ (Estatística > ASM Live Mode: lista de jogos, ficha, comparação até 3, médias, evolução)
 - DESEMPENHO COLETIVO OBSERVAÇOES - RELATORIO PROGRESSAO ✅
+- DOSSIER DE EQUIPA - SECÇÃO PARA ARMAZENAR FICHEIROS (SÓ UPLOAD DE PDF E ARMAZENAMENTO): ✅
+  - PLANEAMENTO MENSAL (PROJETADO + REAL)
+  - AVALIAÇÃO DESENVOLVIMENTO INDIVIDUAL
+  - AVALIAÇÃO DESENVOLVIMENTO COLETIVO
+  - UNIDADES DE TREINO
+- DOSSIER DO JOGADOR (substitui Progressão na página do jogador) ✅
+- ADICIONAR MANUALMENTE UM JOGADOR AO PLANTEL (FORA DO MATCHDAY, PARA ARQUIVO) ✅ (com pesquisa na API e junção quando aparecer na API)
+- FILTRO ESTATÍSTICA EXTERNA / INTERNA NO PLANTEL ✅
+- NOTAS: POPUP, AFIXAR, LEMBRETES, @MENÇÕES, PESQUISA E NOTA RÁPIDA NO DASHBOARD ✅
 
 ## JOGO
 
@@ -52,5 +61,10 @@
 - MODO GK ✅ (separador "GK" no Modo Jogo — escolhe o guarda-redes por equipa e os 13 parâmetros: reposição, reposição com a mão, bloqueio médio/alto/baixo, defesa lateral baixa, pontapé de baliza, saída fora da área, comunicação, saída 1x1, cruzamento/soco/desvio, cruzamentos, jogo de pés)
 - AUTO PREENCHIMENTO CASO NAO HAJA 11S ✅ (botão preencher aleatório)
 - ADD ESTATISTICA INTERNAS ✅ (posse de bola, transições, desarmes, interceções, recuperações, passes progressivos — separador "Estatísticas" no Modo Jogo)
+- TREINADOR DE GR - AÇÕES COMPLETAS E INCOMPLETAS: MANTER TUDO O QUE ESTÁ, MAS DUPLICAR (MAIS UMA COLUNA PARA ADICIONAR VALORES)
+
+## GERAL
+
+- MODO ESCURO: ALTERA AS LETRAS ENTRE BRANCO E PRETO, MAS NÃO MUDA O FUNDO (SAFARI + AVAST BROWSER)
 
 ## MARCA DE AGUA

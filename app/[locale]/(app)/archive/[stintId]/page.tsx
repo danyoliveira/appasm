@@ -10,6 +10,7 @@ import { translatePosition, STATUS_DOT, STATUS_TEXT, statusLabelKey } from "../.
 import type { PlayerStatus } from "../../actions";
 import BackLink from "../../BackLink";
 import ClubHeaderAccent from "../../ClubHeaderAccent";
+import TeamCrest from "@/components/TeamCrest";
 
 // European season convention: a season starting in July/August 2026 is
 // "season 2026" in API-Football, regardless of the calendar year it ends
@@ -207,12 +208,11 @@ export default async function ArchivedStintPage({
                 key={row.id}
                 className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3 text-sm"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={row.opponent.logo} alt="" className="h-8 w-8 shrink-0 object-contain" />
+                <TeamCrest logo={row.opponent.logo} className="h-8 w-8" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{row.opponent.name}</div>
                   <div className="truncate text-xs text-muted">
-                    {new Date(row.date).toLocaleDateString(locale)} · {row.competition.name}
+                    {new Date(row.date).toLocaleDateString(locale)} · {row.competition?.name}
                   </div>
                 </div>
                 {row.result && (
@@ -252,8 +252,7 @@ export default async function ArchivedStintPage({
                   key={r.id}
                   className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3 text-sm"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={opponent.logo} alt="" className="h-8 w-8 shrink-0 object-contain" />
+                  <TeamCrest logo={opponent.logo} className="h-8 w-8" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{opponent.name}</div>
                     <div className="truncate text-xs text-muted">

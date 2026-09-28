@@ -3,21 +3,24 @@
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
-type TabKey = "overview" | "physical" | "notes" | "progression";
+type TabKey = "overview" | "physical" | "notes" | "live" | "dossier";
 
-// physicalContent/progressionContent are optional — an opponent's page (not
+// physicalContent/dossierContent are optional — an opponent's page (not
 // our own squad) has no height/weight or coach tracking of ours to show, so
 // those tabs don't exist there.
 export default function PlayerDetailTabs({
   overviewContent,
   physicalContent,
   notesContent,
-  progressionContent,
+  dossierContent,
+  liveContent,
 }: {
   overviewContent: ReactNode;
   physicalContent?: ReactNode;
   notesContent: ReactNode;
-  progressionContent?: ReactNode;
+  dossierContent?: ReactNode;
+  // Goalkeepers only: their ASM Live Mode (Modo GK) history.
+  liveContent?: ReactNode;
 }) {
   const t = useTranslations("dashboard");
   const [tab, setTab] = useState<TabKey>("overview");
@@ -26,13 +29,15 @@ export default function PlayerDetailTabs({
     { key: "overview", label: t("playerTabOverview") },
     ...(physicalContent ? ([{ key: "physical", label: t("playerTabPhysical") }] as const) : []),
     { key: "notes", label: t("playerTabNotes") },
-    ...(progressionContent ? ([{ key: "progression", label: t("playerTabProgression") }] as const) : []),
+    ...(liveContent ? ([{ key: "live", label: t("statsSubTabLive") }] as const) : []),
+    ...(dossierContent ? ([{ key: "dossier", label: t("playerTabDossier") }] as const) : []),
   ];
 
   function contentFor(key: TabKey) {
     if (key === "overview") return overviewContent;
     if (key === "physical") return physicalContent;
-    if (key === "progression") return progressionContent;
+    if (key === "dossier") return dossierContent;
+    if (key === "live") return liveContent;
     return notesContent;
   }
 

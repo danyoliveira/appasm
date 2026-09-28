@@ -3,21 +3,32 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
-import { createManualPreparation } from "../actions";
-import ManualPreparationForm, { type ManualOpponentSelection } from "./ManualPreparationForm";
+import { createManualPreparation, type ManualMatchDetails } from "../actions";
+import ManualPreparationForm, {
+  type CompetitionOption,
+  type ManualOpponentSelection,
+} from "./ManualPreparationForm";
 
-export default function AddManualPreparation() {
+// "Preparar jogo fora da lista": saving adds the game to the list below
+// (as "Preparar") and stays here — the coach opens its preparation from
+// the list when they want to.
+export default function AddManualPreparation({
+  competitions = [],
+}: {
+  competitions?: CompetitionOption[];
+}) {
   const t = useTranslations("dashboard");
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, startSaving] = useTransition();
 
-  function handleSubmit(opponent: ManualOpponentSelection, matchDateIso: string) {
+  function handleSubmit(opponent: ManualOpponentSelection, matchDateIso: string, details: ManualMatchDetails) {
     // requireOpponent (default true) guarantees this is never null here.
     if (!opponent) return;
     startSaving(async () => {
-      const id = await createManualPreparation(opponent, matchDateIso);
-      router.push(`/preparations/manual-${id}`);
+      await createManualPreparation(opponent, matchDateIso, details);
+      setIsOpen(false);
+      router.refresh();
     });
   }
 
@@ -47,7 +58,12 @@ export default function AddManualPreparation() {
       </div>
 
       <div className="mt-3">
-        <ManualPreparationForm submitLabel={t("preparationStartButton")} isSaving={isSaving} onSubmit={handleSubmit} />
+        <ManualPreparationForm
+          submitLabel={t("videoSaveButton")}
+          isSaving={isSaving}
+          onSubmit={handleSubmit}
+          competitions={competitions}
+        />
       </div>
     </div>
   );

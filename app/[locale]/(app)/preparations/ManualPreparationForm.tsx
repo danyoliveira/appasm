@@ -2,10 +2,27 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { searchOpponentClubs } from "../actions";
+import { searchOpponentClubs, type ManualMatchDetails } from "../actions";
 import type { TeamSearchResult, ApiFootballReason } from "@/lib/api-football/client";
 
 export type ManualOpponentSelection = { teamId: number } | { name: string } | null;
+
+export interface CompetitionOption {
+  id: number;
+  name: string;
+  logo: string;
+}
+
+// "" = none, "api:<id>" = one of the club's competitions, "friendly",
+// "custom" = free text.
+type CompetitionChoice = string;
+
+function initialChoice(details: ManualMatchDetails | undefined, competitions: CompetitionOption[]): CompetitionChoice {
+  const c = details?.competition;
+  if (!c) return "";
+  if (c.leagueId != null && competitions.some((o) => o.id === c.leagueId)) return `api:${c.leagueId}`;
+  return "custom";
+}
 
 // Shared by the "+ Jogo fora da lista" create form and the "Editar" form on
 // an existing manual preparation — same search/custom-name/date fields
@@ -18,6 +35,8 @@ export default function ManualPreparationForm({
   isSaving = false,
   onSubmit,
   onCancel,
+  competitions = [],
+  initialDetails,
 }: {
   initialMatchDate?: string;
   // Edit mode only: shown as context so leaving the search field empty
@@ -28,8 +47,11 @@ export default function ManualPreparationForm({
   requireOpponent?: boolean;
   submitLabel: string;
   isSaving?: boolean;
-  onSubmit: (opponent: ManualOpponentSelection, matchDateIso: string) => void;
+  onSubmit: (opponent: ManualOpponentSelection, matchDateIso: string, details: ManualMatchDetails) => void;
   onCancel?: () => void;
+  // The club's current competitions, offered as the game's competition.
+  competitions?: CompetitionOption[];
+  initialDetails?: ManualMatchDetails;
 }) {
   const t = useTranslations("dashboard");
   const [query, setQuery] = useState("");
@@ -39,6 +61,20 @@ export default function ManualPreparationForm({
   const [selectedClub, setSelectedClub] = useState<TeamSearchResult["team"] | null>(null);
   const [matchDate, setMatchDate] = useState(initialMatchDate);
   const [useCustomName, setUseCustomName] = useState(false);
+  const [competitionChoice, setCompetitionChoice] = useState<CompetitionChoice>(() =>
+    initialChoice(initialDetails, competitions),
+  );
+  const [customCompetition, setCustomCompetition] = useState(
+    initialChoice(initialDetails, competitions) === "custom" ? (initialDetails?.competition?.name ?? "") : "",
+  );
+  const [isHome, setIsHome] = useState(initialDetails?.isHome ?? true);
+  const [goalsFor, setGoalsFor] = useState(
+    initialDetails?.goalsFor != null ? String(initialDetails.goalsFor) : "",
+  );
+  const [goalsAgainst, setGoalsAgainst] = useState(
+    initialDetails?.goalsAgainst != null ? String(initialDetails.goalsAgainst) : "",
+  );
+  const isPast = matchDate ? new Date(matchDate).getTime() < new Date().getTime() : false;
 
   const opponentProvided = Boolean(selectedClub || (useCustomName && query.trim()));
   const canSubmit = Boolean(matchDate && (opponentProvided || (!requireOpponent && !query.trim())));
@@ -73,7 +109,22 @@ export default function ManualPreparationForm({
       : useCustomName
         ? { name: query.trim() }
         : null;
-    onSubmit(opponent, new Date(matchDate).toISOString());
+    const apiCompetition = competitionChoice.startsWith("api:")
+      ? competitions.find((c) => `api:${c.id}` === competitionChoice)
+      : null;
+    const competition: ManualMatchDetails["competition"] = apiCompetition
+      ? { leagueId: apiCompetition.id, name: apiCompetition.name, logo: apiCompetition.logo }
+      : competitionChoice === "friendly"
+        ? { leagueId: null, name: t("manualMatchFriendly"), logo: null }
+        : competitionChoice === "custom" && customCompetition.trim()
+          ? { leagueId: null, name: customCompetition.trim(), logo: null }
+          : null;
+    onSubmit(opponent, new Date(matchDate).toISOString(), {
+      competition,
+      isHome,
+      goalsFor: isPast && goalsFor !== "" ? Number(goalsFor) : null,
+      goalsAgainst: isPast && goalsAgainst !== "" ? Number(goalsAgainst) : null,
+    });
   }
 
   return (
@@ -145,6 +196,87 @@ export default function ManualPreparationForm({
             className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
           />
         </div>
+
+      </div>
+
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="min-w-[200px] flex-1">
+          <label className="mb-1 block text-xs text-muted">{t("columnCompetition")}</label>
+          <div className="flex gap-2">
+            <select
+              value={competitionChoice}
+              onChange={(e) => setCompetitionChoice(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+            >
+              <option value="">{t("manualMatchNoCompetition")}</option>
+              {competitions.map((c) => (
+                <option key={c.id} value={`api:${c.id}`}>
+                  {c.name}
+                </option>
+              ))}
+              <option value="friendly">{t("manualMatchFriendly")}</option>
+              <option value="custom">{t("manualMatchOtherCompetition")}</option>
+            </select>
+            {competitionChoice === "custom" && (
+              <input
+                type="text"
+                value={customCompetition}
+                onChange={(e) => setCustomCompetition(e.target.value)}
+                placeholder={t("manualMatchCompetitionPlaceholder")}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              />
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs text-muted">{t("columnVenue")}</label>
+          <div className="flex rounded-md border border-border bg-background p-0.5">
+            {([true, false] as const).map((home) => (
+              <button
+                key={String(home)}
+                type="button"
+                onClick={() => setIsHome(home)}
+                className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                  isHome === home ? "bg-surface text-foreground shadow-sm" : "text-muted"
+                }`}
+              >
+                {home ? t("homeLabel") : t("awayLabel")}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isPast && (
+          <div>
+            <label className="mb-1 block text-xs text-muted">{t("manualMatchScoreLabel")}</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min={0}
+                max={99}
+                inputMode="numeric"
+                value={goalsFor}
+                onChange={(e) => setGoalsFor(e.target.value)}
+                aria-label={t("liveStatsUs")}
+                placeholder={t("liveStatsUs")}
+                className="w-16 rounded-md border border-border bg-background px-2 py-2 text-center text-sm text-foreground outline-none focus:border-accent"
+              />
+              <span className="text-muted">–</span>
+              <input
+                type="number"
+                min={0}
+                max={99}
+                inputMode="numeric"
+                value={goalsAgainst}
+                onChange={(e) => setGoalsAgainst(e.target.value)}
+                aria-label={t("liveStatsThem")}
+                placeholder={t("liveStatsThem")}
+                className="w-16 rounded-md border border-border bg-background px-2 py-2 text-center text-sm text-foreground outline-none focus:border-accent"
+              />
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-2">
           <button

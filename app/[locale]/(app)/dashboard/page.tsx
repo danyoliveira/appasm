@@ -12,6 +12,8 @@ import {
   getTeamInfo,
   getTopScorers,
   getTopAssists,
+  getSquad,
+  getPlayerProfile,
 } from "@/lib/api-football/cache";
 import {
   getCurrentCompetitions,
@@ -43,8 +45,25 @@ import Countdown from "../Countdown";
 import NextFixturePrepareButton from "../NextFixturePrepareButton";
 import ClubHeaderAccent from "../ClubHeaderAccent";
 import FixtureHeroAccent from "../FixtureHeroAccent";
-import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "../club/playerShared";
+import {
+  isNonInjuryReason,
+  translateInjuryType,
+  shortenPlayerName,
+  orderSquadLikeGeneralTab,
+} from "../club/playerShared";
+import RecentNotesPanel from "../notes/RecentNotesPanel";
+import { getCurrentStintId } from "@/lib/coachingStints";
+import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
+import {
+  CLUB_NOTE_COLUMNS,
+  PLAYER_NOTE_COLUMNS,
+  clubNoteFromRow,
+  playerNoteFromRow,
+  type NoteItem,
+  type NotePlayer,
+} from "../notes/noteShared";
 import { matchResult } from "../club/fixtureHelpers";
+
 
 export default async function DashboardOverviewPage({
   params,
@@ -201,6 +220,53 @@ export default async function DashboardOverviewPage({
     }
   }
 
+  // Notes across the club and its players (coach-only, same as the notes
+  // themselves) — the dashboard panel searches/filters them client-side.
+  let dashboardNotes: NoteItem[] = [];
+  let notePlayers: NotePlayer[] = [];
+  const notePlayerInfo: Record<number, NotePlayer> = {};
+  if (isCoach && teamId) {
+    const stintId = await getCurrentStintId(supabase, teamId);
+    const [{ data: playerNoteRows }, { data: clubNoteRows }, apiSquad, manualRows] = await Promise.all([
+      supabase.from("player_notes").select(PLAYER_NOTE_COLUMNS).eq("team_id", teamId),
+      supabase.from("club_notes").select(CLUB_NOTE_COLUMNS).eq("team_id", teamId),
+      getSquad(teamId).catch(() => []),
+      getManualPlayers(supabase, teamId, stintId),
+    ]);
+    const squad = withManualPlayers(apiSquad, manualRows);
+    dashboardNotes = [
+      ...(playerNoteRows ?? []).map(playerNoteFromRow),
+      ...(clubNoteRows ?? []).map(clubNoteFromRow),
+    ];
+
+    // Same order as the squad on the club page (goalkeepers first).
+    notePlayers = orderSquadLikeGeneralTab(squad[0]?.players ?? [], new Map()).map((p) => ({
+      id: p.id,
+      name: shortenPlayerName(p.name),
+      photo: p.photo,
+    }));
+    notePlayers.forEach((p) => (notePlayerInfo[p.id] = p));
+
+    // Players who've since left the squad fall back to their cached profile.
+    const missingIds = [
+      ...new Set(
+        dashboardNotes
+          .map((n) => n.playerId)
+          .filter((id): id is number => id != null && !notePlayerInfo[id]),
+      ),
+    ];
+    await Promise.all(
+      missingIds.map(async (id) => {
+        const player = (await getPlayerProfile(id).catch(() => []))[0]?.player;
+        notePlayerInfo[id] = {
+          id,
+          name: player ? shortenPlayerName(player.name) : `#${id}`,
+          photo: player?.photo ?? null,
+        };
+      }),
+    );
+  }
+
   let peopleCount = 0;
   if (isCoach) {
     const { count } = await supabase
@@ -310,6 +376,16 @@ export default async function DashboardOverviewPage({
             </>
           )}
         </FixtureHeroAccent>
+      )}
+
+      {isCoach && teamId && (
+        <RecentNotesPanel
+          teamId={teamId}
+          notes={dashboardNotes}
+          players={notePlayers}
+          playerInfo={notePlayerInfo}
+          clubLogo={ourLogo}
+        />
       )}
 
       {/* Scouting content for that same match, split into its own cards

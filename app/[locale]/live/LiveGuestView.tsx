@@ -37,15 +37,19 @@ import {
   currentMatchMinute,
   eventIconsByName,
   randomLineups,
+  lineupPlayerId,
+  type LiveSquadPlayer,
   removeFromField,
   restoreToField,
   type CollectiveCounterKey,
   type GkCounterKey,
+  type GkOutcome,
   type LineupPlayer,
   type LiveEventType,
   type PossessionSide,
   type TeamLineup,
 } from "./liveStatsShared";
+import TeamCrest from "@/components/TeamCrest";
 
 const POLL_MS = 4000;
 const GUEST_NAME_KEY = "asm-live-guest-name";
@@ -122,9 +126,12 @@ function mergeStarting(fullPlayers: LineupPlayer[], updatedStarting: LineupPlaye
 export default function LiveGuestView({
   token,
   initialFeed,
+  ourSquad = [],
 }: {
   token: string;
   initialFeed: GuestLiveFeed;
+  // Our squad, to link lineup names to real players.
+  ourSquad?: LiveSquadPlayer[];
 }) {
   const t = useTranslations("dashboard");
   const [feed, setFeed] = useState(initialFeed);
@@ -229,6 +236,7 @@ export default function LiveGuestView({
   const ourSide = match.ourSide;
   const ourTeamName = ourSide === "home" ? match.homeName : match.awayName;
   const ourGkStats = ourSide === "home" ? feed.gkStats.home : feed.gkStats.away;
+  const ourGkIncomplete = ourSide === "home" ? feed.gkStats.homeIncomplete : feed.gkStats.awayIncomplete;
   const ourGkName = ourSide === "home" ? feed.gkStats.homeGkName : feed.gkStats.awayGkName;
   // Viewers have no wizard of their own — once the Member has started the
   // match, they're switched into the same read-only Modo Jogo board.
@@ -365,9 +373,14 @@ export default function LiveGuestView({
   const handleCollectiveDecrement = (side: "home" | "away", key: CollectiveCounterKey) =>
     refreshAfter(() => undoCollectiveStatByToken(token, key, side));
 
-  const handleSetGk = (name: string) => refreshAfter(() => setGkByToken(token, ourSide, name));
-  const handleGkIncrement = (key: GkCounterKey) => refreshAfter(() => addGkStatByToken(token, ourSide, key));
-  const handleGkDecrement = (key: GkCounterKey) => refreshAfter(() => undoGkStatByToken(token, ourSide, key));
+  const handleSetGk = (name: string) =>
+    refreshAfter(() =>
+      setGkByToken(token, ourSide, name, lineupPlayerId(currentTeamLineup(ourSide).players, name)),
+    );
+  const handleGkIncrement = (key: GkCounterKey, outcome: GkOutcome) =>
+    refreshAfter(() => addGkStatByToken(token, ourSide, key, outcome));
+  const handleGkDecrement = (key: GkCounterKey, outcome: GkOutcome) =>
+    refreshAfter(() => undoGkStatByToken(token, ourSide, key, outcome));
 
   function handleConfirmRestart() {
     refreshAfter(() => restartLiveSessionByToken(token));
@@ -392,6 +405,7 @@ export default function LiveGuestView({
             minute: currentMatchMinute(match),
             extraMinute: null,
             playerName: player.name,
+            playerId: side === ourSide ? (player.playerId ?? null) : null,
             notes: "",
           },
           guestName ?? "",
@@ -429,10 +443,16 @@ export default function LiveGuestView({
             minute: currentMatchMinute(match),
             extraMinute: null,
             playerName: inPlayer.name,
+            playerId: side === ourSide ? (inPlayer.playerId ?? null) : null,
             notes: `${t("liveStatsSubstituteOutShort")}: ${outPlayer.name}`,
           },
           guestName ?? "",
         );
+        // Our goalkeeper came off: whoever came on takes over in goal, so
+        // Modo GK keeps crediting the right keeper without re-picking.
+        if (side === ourSide && outPlayer.name === ourGkName) {
+          await setGkByToken(token, ourSide, inPlayer.name, inPlayer.playerId ?? null);
+        }
       } catch {
         setLinkExpired(true);
         return;
@@ -503,8 +523,7 @@ export default function LiveGuestView({
 
         <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
           <div className="flex flex-col items-center gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={match.homeLogo} alt="" className="h-12 w-12 object-contain" />
+            <TeamCrest logo={match.homeLogo} className="h-12 w-12" />
             <span className="max-w-[110px] truncate text-center text-sm font-medium">{match.homeName}</span>
           </div>
           <MatchClock
@@ -520,8 +539,7 @@ export default function LiveGuestView({
             onRestart={() => {}}
           />
           <div className="flex flex-col items-center gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={match.awayLogo} alt="" className="h-12 w-12 object-contain" />
+            <TeamCrest logo={match.awayLogo} className="h-12 w-12" />
             <span className="max-w-[110px] truncate text-center text-sm font-medium">{match.awayName}</span>
           </div>
         </div>
@@ -529,6 +547,7 @@ export default function LiveGuestView({
         <div className="mx-auto mt-6 max-w-3xl">
           <GkStatsPanel
             stats={ourGkStats}
+            incompleteStats={ourGkIncomplete}
             gkName={ourGkName}
             teamName={ourTeamName}
             players={currentTeamLineup(ourSide).players}
@@ -601,8 +620,7 @@ export default function LiveGuestView({
 
       <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
         <div className="flex flex-col items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={match.homeLogo} alt="" className="h-12 w-12 object-contain" />
+          <TeamCrest logo={match.homeLogo} className="h-12 w-12" />
           <span className="max-w-[110px] truncate text-center text-sm font-medium">
             {match.homeName}
           </span>
@@ -620,8 +638,7 @@ export default function LiveGuestView({
           onRestart={() => setShowRestartConfirm(true)}
         />
         <div className="flex flex-col items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={match.awayLogo} alt="" className="h-12 w-12 object-contain" />
+          <TeamCrest logo={match.awayLogo} className="h-12 w-12" />
           <span className="max-w-[110px] truncate text-center text-sm font-medium">
             {match.awayName}
           </span>
@@ -684,6 +701,7 @@ export default function LiveGuestView({
                   entries={feed.entries}
                   collectiveStats={feed.collectiveStats}
                   ourGkStats={ourGkStats}
+                  ourGkIncomplete={ourGkIncomplete}
                   ourGkName={ourGkName}
                   ourGkStatsByPlayer={ourSide === "home" ? feed.gkStats.homeByPlayer : feed.gkStats.awayByPlayer}
                   ourTeamName={ourTeamName}
@@ -755,6 +773,7 @@ export default function LiveGuestView({
               <div className="mt-4">
                 <GkStatsPanel
                   stats={ourGkStats}
+                  incompleteStats={ourGkIncomplete}
                   gkName={ourGkName}
                   teamName={ourTeamName}
                   players={currentTeamLineup(ourSide).players}
@@ -839,12 +858,14 @@ export default function LiveGuestView({
                   lineup={{ players: homeDraft }}
                   canEdit={canEdit}
                   onChange={setHomeDraft}
+                  squad={ourSide === "home" ? ourSquad : undefined}
                 />
                 <LineupEditor
                   teamName={match.awayName}
                   lineup={{ players: awayDraft }}
                   canEdit={canEdit}
                   onChange={setAwayDraft}
+                  squad={ourSide === "away" ? ourSquad : undefined}
                 />
               </div>
             )}

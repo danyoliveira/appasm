@@ -3,20 +3,20 @@
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
-type TabKey = "general" | "physical" | "stats" | "progression" | "notes";
+type TabKey = "general" | "physical" | "stats" | "notes" | "dossier";
 
 export default function ClubDetailTabs({
   generalContent,
   physicalContent,
   statsContent,
-  progressionContent,
   notesContent,
+  dossierContent,
 }: {
   generalContent: ReactNode;
   physicalContent: ReactNode;
   statsContent: ReactNode;
-  progressionContent: ReactNode;
   notesContent?: ReactNode;
+  dossierContent: ReactNode;
 }) {
   const t = useTranslations("dashboard");
   const [tab, setTab] = useState<TabKey>("general");
@@ -25,14 +25,14 @@ export default function ClubDetailTabs({
     { key: "general", label: t("clubTabGeneral") },
     { key: "physical", label: t("clubTabPhysical") },
     { key: "stats", label: t("clubTabStats") },
-    { key: "progression", label: t("clubTabProgression") },
     ...(notesContent ? ([{ key: "notes", label: t("clubTabNotes") }] as const) : []),
+    { key: "dossier", label: t("clubTabDossier") },
   ];
 
   function contentFor(key: TabKey) {
     if (key === "physical") return physicalContent;
     if (key === "stats") return statsContent;
-    if (key === "progression") return progressionContent;
+    if (key === "dossier") return dossierContent;
     if (key === "notes") return notesContent;
     return generalContent;
   }

@@ -30,7 +30,7 @@ function normalize(name: string): string {
 
 // Builds a lookup once per squad/list instead of re-normalizing the country
 // list for every player.
-export function buildFlagResolver(countries: Country[]) {
+export function buildFlagResolver(countries: Pick<Country, "name" | "flag">[]) {
   const flagByNormalizedName = new Map<string, string>();
   for (const country of countries) {
     if (country.flag) flagByNormalizedName.set(normalize(country.name), country.flag);
@@ -41,4 +41,21 @@ export function buildFlagResolver(countries: Country[]) {
     const aliasTarget = NATIONALITY_ALIASES[normalized];
     return flagByNormalizedName.get(aliasTarget ?? normalized) ?? null;
   };
+}
+
+// The /countries entry a nationality string refers to (e.g. a profile's
+// "Korea Republic" → "South-Korea"), or null.
+export function findCountryForNationality<C extends Pick<Country, "name">>(
+  countries: C[],
+  nationality: string | null | undefined,
+): C | null {
+  if (!nationality) return null;
+  const normalized = normalize(nationality);
+  const target = NATIONALITY_ALIASES[normalized] ?? normalized;
+  return countries.find((c) => normalize(c.name) === target) ?? null;
+}
+
+// "Costa-Rica" → "Costa Rica" for display.
+export function countryDisplayName(name: string) {
+  return name.replace(/-/g, " ");
 }

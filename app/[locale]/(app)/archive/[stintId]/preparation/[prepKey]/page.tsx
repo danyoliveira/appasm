@@ -13,6 +13,7 @@ import PreparationVideoList, {
 import TacticalSnapshotList, {
   type TacticalSnapshotRow,
 } from "../../../../preparations/TacticalSnapshotList";
+import TeamCrest from "@/components/TeamCrest";
 
 // Snapshots saved before the ball/markers/arrows toolbox stored a plain
 // player array in `positions`; newer ones store the full shape — same
@@ -171,8 +172,7 @@ export default async function ArchivedPreparationPage({
       {opponentName && (
         <div className="mt-4 flex items-center gap-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
           {opponentLogo && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={opponentLogo} alt="" className="h-12 w-12 object-contain" />
+            <TeamCrest logo={opponentLogo} className="h-12 w-12" />
           )}
           <div>
             <div className="text-lg font-semibold">{opponentName}</div>

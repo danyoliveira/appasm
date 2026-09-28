@@ -282,6 +282,16 @@ export function fetchPlayerProfile(playerId: number) {
   return callApiFootball<PlayerProfile[]>("/players/profiles", { player: playerId });
 }
 
+// Name search across every player API-Football knows (min. 3 characters).
+// The profile carries a few fields the by-id type above doesn't declare.
+export interface PlayerProfileSearchResult {
+  player: PlayerProfile["player"] & { number: number | null; position: string | null };
+}
+
+export function searchPlayerProfiles(query: string) {
+  return callApiFootball<PlayerProfileSearchResult[]>("/players/profiles", { search: query });
+}
+
 export interface PlayerSeasonStats {
   player: { id: number; name: string };
   statistics: {

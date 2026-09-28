@@ -3,6 +3,7 @@ import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentStintId } from "@/lib/coachingStints";
+import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
 import {
   getFixtureById,
   getTeamInfo,
@@ -19,6 +20,8 @@ import {
 } from "@/lib/api-football/teamStats";
 import type { Fixture, TeamStatistics, Injury } from "@/lib/api-football/client";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
+import { getCompetitionOptions } from "@/lib/competitionOptions";
+import type { ManualMatchDetails } from "../../actions";
 import EditManualPreparation from "../EditManualPreparation";
 import PreparationTabs from "../PreparationTabs";
 import BackLink from "../../BackLink";
@@ -34,6 +37,7 @@ import type { GameSubmoment, VideoCategory } from "../videoCategories";
 import LiveStatsPanel from "../LiveStatsPanel";
 import LiveMatchRecapSection from "../LiveMatchRecapSection";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
+import TeamCrest from "@/components/TeamCrest";
 
 interface PreparationMatch {
   // null for a custom opponent typed by hand — one that isn't in
@@ -88,12 +92,19 @@ export default async function PreparationDetailPage({
   const ourTeam = ourTeamInfo[0]?.team ?? null;
 
   let match: PreparationMatch | null = null;
+  // Manual games only — what the edit form prefills.
+  let manualDetails: ManualMatchDetails | undefined;
+
+  const manualCompetitionOptions =
+    isCoach && teamId && fixtureIdParam.startsWith("manual-") ? await getCompetitionOptions(teamId) : [];
 
   if (fixtureIdParam.startsWith("manual-")) {
     const manualId = fixtureIdParam.slice("manual-".length);
     const { data: manualRow } = await supabase
       .from("manual_preparations")
-      .select("opponent_team_id, opponent_name, opponent_logo, match_date")
+      .select(
+        "opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against",
+      )
       .eq("id", manualId)
       .maybeSingle();
 
@@ -112,7 +123,27 @@ export default async function PreparationDetailPage({
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (manualSession) {
+      manualDetails = {
+        competition: manualRow.competition_name
+          ? {
+              leagueId: manualRow.competition_league_id,
+              name: manualRow.competition_name,
+              logo: manualRow.competition_logo,
+            }
+          : null,
+        isHome: manualRow.is_home,
+        goalsFor: manualRow.goals_for,
+        goalsAgainst: manualRow.goals_against,
+      };
+
+      // A hand-entered final score wins; otherwise a finished Modo Jogo
+      // session's goal tally is the only source.
+      if (manualRow.goals_for != null && manualRow.goals_against != null) {
+        finished = true;
+        score = manualRow.is_home
+          ? { home: manualRow.goals_for, away: manualRow.goals_against }
+          : { home: manualRow.goals_against, away: manualRow.goals_for };
+      } else if (manualSession) {
         const { data: goalEntries } = await supabase
           .from("live_match_entries")
           .select("team_side")
@@ -135,9 +166,11 @@ export default async function PreparationDetailPage({
         finished,
         ourTeamName: ourTeam?.name ?? "",
         ourTeamLogo: ourTeam?.logo ?? "",
-        isHome: true,
+        isHome: manualRow.is_home,
         score,
-        competition: null,
+        competition: manualRow.competition_name
+          ? { name: manualRow.competition_name, logo: manualRow.competition_logo ?? "", round: "" }
+          : null,
         venue: null,
       };
     }
@@ -286,10 +319,11 @@ export default async function PreparationDetailPage({
   let tacticalSnapshots: TacticalSnapshotRow[] = [];
   if (match) {
     const currentStintId = teamId ? await getCurrentStintId(supabase, teamId) : null;
-    const [squadResult, ourSquadResult, { data: availabilityRows }, { data: tacticsRows }] =
+    const [squadResult, ourApiSquad, ourManualRows, { data: availabilityRows }, { data: tacticsRows }] =
       await Promise.all([
         opponentId != null ? getSquad(opponentId).catch(() => []) : Promise.resolve([]),
         teamId ? getSquad(teamId).catch(() => []) : Promise.resolve([]),
+        teamId ? getManualPlayers(supabase, teamId, currentStintId) : Promise.resolve([]),
         teamId
           ? supabase
               .from("player_availability")
@@ -313,6 +347,7 @@ export default async function PreparationDetailPage({
     const availabilityByPlayerId = new Map(
       (availabilityRows ?? []).map((row) => [row.player_id, row]),
     );
+    const ourSquadResult = withManualPlayers(ourApiSquad, ourManualRows);
     ourSquad = (ourSquadResult[0]?.players ?? [])
       .filter((p) => !availabilityByPlayerId.get(p.id)?.excluded)
       .map((p) => ({
@@ -696,8 +731,7 @@ export default async function PreparationDetailPage({
           <div className="mt-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
             {match.competition && (
               <div className="flex items-center justify-center gap-2 text-xs text-muted">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={match.competition.logo} alt="" className="h-4 w-4 object-contain" />
+                <TeamCrest logo={match.competition.logo} className="h-4 w-4" />
                 <span>
                   {match.competition.name}
                   {match.competition.round ? ` · ${match.competition.round}` : ""}
@@ -708,12 +742,7 @@ export default async function PreparationDetailPage({
             <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
               <div className="flex flex-col items-center gap-2">
                 {(match.isHome ? match.ourTeamLogo : match.opponentLogo) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={match.isHome ? match.ourTeamLogo : match.opponentLogo}
-                    alt=""
-                    className="h-12 w-12 object-contain"
-                  />
+                  <TeamCrest logo={match.isHome ? match.ourTeamLogo : match.opponentLogo} className="h-12 w-12" />
                 ) : (
                   <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/20 text-lg font-semibold text-accent">
                     {(match.isHome ? match.ourTeamName : match.opponentName).charAt(0).toUpperCase()}
@@ -738,12 +767,7 @@ export default async function PreparationDetailPage({
 
               <div className="flex flex-col items-center gap-2">
                 {(match.isHome ? match.opponentLogo : match.ourTeamLogo) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={match.isHome ? match.opponentLogo : match.ourTeamLogo}
-                    alt=""
-                    className="h-12 w-12 object-contain"
-                  />
+                  <TeamCrest logo={match.isHome ? match.opponentLogo : match.ourTeamLogo} className="h-12 w-12" />
                 ) : (
                   <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/20 text-lg font-semibold text-accent">
                     {(match.isHome ? match.opponentName : match.ourTeamName).charAt(0).toUpperCase()}
@@ -772,6 +796,8 @@ export default async function PreparationDetailPage({
                   id={fixtureIdParam.replace(/^manual-/, "")}
                   opponentName={match.opponentName}
                   matchDate={match.date}
+                  competitions={manualCompetitionOptions}
+                  details={manualDetails}
                 />
               </div>
             )}

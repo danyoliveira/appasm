@@ -25,7 +25,7 @@ import { getFixtureAppearances } from "@/lib/api-football/verifyParticipation";
 import { buildFlagResolver } from "@/lib/api-football/flags";
 import type { Injury, TeamStatistics, TeamLeague } from "@/lib/api-football/client";
 import { toCalendarRow } from "./fixtureHelpers";
-import { translateInjuryType } from "./playerShared";
+import { translateInjuryType, orderSquadLikeGeneralTab, shortenPlayerName } from "./playerShared";
 import ClubHeaderAccent from "../ClubHeaderAccent";
 import FixtureCalendar, { type CalendarRow } from "./FixtureCalendar";
 import RefreshButton from "./RefreshButton";
@@ -34,9 +34,22 @@ import SquadSection, {
   type PendingInjury,
   type PlayerSeasonStat,
   type DueReturnInjury,
+  type SquadStat,
 } from "./SquadSection";
 import ClubDetailTabs from "./ClubDetailTabs";
-import ClubNotesList, { type ClubNote } from "./ClubNotesList";
+import NotesList from "../notes/NotesList";
+import { CLUB_NOTE_COLUMNS, clubNoteFromRow, type NoteItem } from "../notes/noteShared";
+import TeamDossier, { type DossierFile, type DossierPlayer } from "./TeamDossier";
+import { CLUB_DOSSIER_CATEGORIES } from "./dossierShared";
+import { loadDossierFiles } from "@/lib/dossier";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
+import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
+import StatsSubTabs from "./StatsSubTabs";
+import LiveStatsExplorer from "./LiveStatsExplorer";
+import type { ManualPlayerInfo } from "./ManualPlayerDialog";
+import type { MergeSuggestionView } from "./MergeSuggestions";
+import { ageFromBirthDate, getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
+import { findMergeSuggestions } from "@/lib/playerMatching";
 import TeamStatsComparison, {
   HEADLINE_TEAM_STAT_FIELDS,
   HOME_TEAM_STAT_FIELDS,
@@ -111,14 +124,20 @@ export default async function ClubPage({
     }
   }
 
+  // Countries (cached, long TTL) — flags for the squad, and the nationality
+  // picker for hand-added players.
+  const countries = teamId ? await getCountries().catch(() => []) : [];
+  const countryOptions = countries
+    .filter((c) => c.flag && c.name !== "World")
+    .map((c) => ({ name: c.name, flag: c.flag, code: c.code }));
+  const resolveFlagUrl = buildFlagResolver(countries);
+
   if (teamId && !clubDataError && squad?.[0]?.players.length) {
     try {
       const squadPlayers = squad[0].players;
-      const [countries, profiles] = await Promise.all([
-        getCountries().catch(() => []),
-        Promise.all(squadPlayers.map((p) => getPlayerProfile(p.id).catch(() => []))),
-      ]);
-      const resolveFlagUrl = buildFlagResolver(countries);
+      const profiles = await Promise.all(
+        squadPlayers.map((p) => getPlayerProfile(p.id).catch(() => [])),
+      );
       squadPlayers.forEach((p, i) => {
         const flag = resolveFlagUrl(profiles[i][0]?.player.nationality);
         if (flag) flagUrlByPlayerId.set(p.id, flag);
@@ -126,6 +145,73 @@ export default async function ClubPage({
     } catch {
       // Bonus data — silently skip if unavailable.
     }
+  }
+
+  // Hand-added players join the API squad from here on, so every list below
+  // (squad, dossier picker, @mentions) sees them. The raw API list is kept
+  // for spotting "this manual player has now arrived from the API".
+  const apiSquadPlayers = squad?.[0]?.players ?? [];
+  const manualRows = teamId ? await getManualPlayers(supabase, teamId, currentStintId) : [];
+  if (teamId && !clubDataError) squad = withManualPlayers(squad ?? [], manualRows);
+  manualRows.forEach((row) => {
+    const flag = resolveFlagUrl(row.nationality);
+    if (flag && !flagUrlByPlayerId.has(row.id)) flagUrlByPlayerId.set(row.id, flag);
+  });
+
+  const manualPlayerInfos: ManualPlayerInfo[] = manualRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    position: row.position as ManualPlayerInfo["position"],
+    number: row.number,
+    birthDate: row.birth_date,
+    nationality: row.nationality,
+    photoUrl: row.photo_url,
+  }));
+
+  let mergeSuggestionViews: MergeSuggestionView[] = [];
+  const unlinkedManual = manualRows.filter((row) => row.id < 0);
+  if (isCoach && unlinkedManual.length && apiSquadPlayers.length) {
+    const { data: dismissalRows } = await supabase
+      .from("manual_player_merge_dismissals")
+      .select("manual_player_id, api_player_id")
+      .in(
+        "manual_player_id",
+        unlinkedManual.map((row) => row.id),
+      );
+    const dismissed = new Set(
+      (dismissalRows ?? []).map((d) => `${d.manual_player_id}:${d.api_player_id}`),
+    );
+    const apiById = new Map(apiSquadPlayers.map((p) => [p.id, p]));
+    mergeSuggestionViews = findMergeSuggestions(
+      unlinkedManual.map((row) => ({
+        id: row.id,
+        name: row.name,
+        position: row.position,
+        number: row.number,
+        age: ageFromBirthDate(row.birth_date),
+      })),
+      apiSquadPlayers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        position: p.position,
+        number: p.number,
+        age: p.age || null,
+      })),
+      dismissed,
+    ).map((suggestion) => {
+      const manual = unlinkedManual.find((row) => row.id === suggestion.manualId)!;
+      const api = apiById.get(suggestion.apiId)!;
+      return {
+        manual: {
+          id: manual.id,
+          name: manual.name,
+          photo: manual.photo_url,
+          position: manual.position,
+          number: manual.number,
+        },
+        api: { id: api.id, name: api.name, photo: api.photo, position: api.position, number: api.number },
+      };
+    });
   }
 
   if (teamId && !clubDataError) {
@@ -255,32 +341,25 @@ export default async function ClubPage({
     });
   }
 
-  // Hand-entered stats win over the API/verified ones wherever the coach
-  // has filled them in — same "internal beats external when present" rule
-  // as the player page's own comparison table.
+  // Hand-entered ("internal") stats are kept apart from the API/verified
+  // ("external") ones — the squad section lets the coach pick which to show
+  // (external by default; players created from scratch always use internal).
+  const internalStatsById = new Map<number, SquadStat>();
   if (teamId && currentStintId && squad?.[0]?.players.length) {
-    const { data: manualRows } = await supabase
+    const { data: manualStatRows } = await supabase
       .from("player_manual_stats")
       .select("player_id, appearances, minutes, goals, assists, saves, conceded")
       .eq("team_id", teamId)
       .eq("stint_id", currentStintId);
 
-    manualRows?.forEach((row) => {
-      const existing = playerStatsById.get(row.player_id) ?? {
-        appearances: 0,
-        minutes: 0,
-        goals: 0,
-        assists: 0,
-        saves: 0,
-        conceded: 0,
-      };
-      playerStatsById.set(row.player_id, {
-        appearances: row.appearances ?? existing.appearances,
-        minutes: row.minutes ?? existing.minutes,
-        goals: row.goals ?? existing.goals,
-        assists: row.assists ?? existing.assists,
-        saves: row.saves ?? existing.saves,
-        conceded: row.conceded ?? existing.conceded,
+    manualStatRows?.forEach((row) => {
+      internalStatsById.set(row.player_id, {
+        appearances: row.appearances,
+        minutes: row.minutes,
+        goals: row.goals,
+        assists: row.assists,
+        saves: row.saves,
+        conceded: row.conceded,
       });
     });
   }
@@ -294,14 +373,13 @@ export default async function ClubPage({
 
   // Club-level notes (not about a specific player) — coach-only, same as
   // player notes.
-  let clubNotes: ClubNote[] = [];
+  let clubNotes: NoteItem[] = [];
   if (isCoach && teamId) {
     const { data: notesData } = await supabase
       .from("club_notes")
-      .select("id, content, created_at, updated_at")
-      .eq("team_id", teamId)
-      .order("created_at", { ascending: true });
-    clubNotes = notesData ?? [];
+      .select(CLUB_NOTE_COLUMNS)
+      .eq("team_id", teamId);
+    clubNotes = (notesData ?? []).map(clubNoteFromRow);
   }
 
   const availabilityByPlayerId = new Map<number, AvailabilityInfo>();
@@ -474,15 +552,74 @@ export default async function ClubPage({
     lastUpdatedAt = cacheRow?.fetched_at ?? null;
   }
 
+  // Games created from scratch join the calendar (only the calendar — the
+  // season streaks/biggest-result figures above stay API-only). Same
+  // competition filter as the API fixtures when one is selected.
+  let calendarPast = pastCalendarRows;
+  let calendarFuture = futureCalendarRows;
+  if (teamId) {
+    let manualQuery = supabase
+      .from("manual_preparations")
+      .select(
+        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against",
+      )
+      .eq("team_id", teamId);
+    if (selectedCompetitionId) manualQuery = manualQuery.eq("competition_league_id", selectedCompetitionId);
+    const { data: manualGameRows } = await manualQuery;
+
+    if (manualGameRows?.length) {
+      const opponents = await Promise.all(manualGameRows.map(resolveManualOpponent));
+      const now = new Date().getTime();
+      const manualCalendarRows: CalendarRow[] = manualGameRows.map((row, i) => {
+        const hasScore = row.goals_for != null && row.goals_against != null;
+        return {
+          id: 0,
+          manualKey: `manual-${row.id}`,
+          date: row.match_date,
+          opponent: { id: opponents[i].id, name: opponents[i].name, logo: opponents[i].logo },
+          competition: row.competition_name
+            ? { name: row.competition_name, logo: row.competition_logo ?? "" }
+            : null,
+          isHome: row.is_home,
+          result: hasScore
+            ? row.goals_for! > row.goals_against!
+              ? "W"
+              : row.goals_for! < row.goals_against!
+                ? "L"
+                : "D"
+            : null,
+          goalsFor: row.goals_for,
+          goalsAgainst: row.goals_against,
+          finished: hasScore || new Date(row.match_date).getTime() < now,
+        };
+      });
+      const byDateDesc = (a: CalendarRow, b: CalendarRow) => b.date.localeCompare(a.date);
+      calendarPast = [
+        ...pastCalendarRows,
+        ...manualCalendarRows.filter((r) => new Date(r.date).getTime() < now),
+      ].sort(byDateDesc);
+      calendarFuture = [
+        ...futureCalendarRows,
+        ...manualCalendarRows.filter((r) => new Date(r.date).getTime() >= now),
+      ].sort((a, b) => a.date.localeCompare(b.date));
+    }
+  }
+
   const generalContent = (
     <div className="space-y-10">
       <section>
-        <h2 className="text-lg font-semibold">{t("fixtureCalendarTitle")}</h2>
         <FixtureCalendar
-          past={pastCalendarRows}
-          future={futureCalendarRows}
+          title={t("fixtureCalendarTitle")}
+          past={calendarPast}
+          future={calendarFuture}
           locale={locale}
           logoUrl={teamInfo?.[0]?.team.logo ?? null}
+          canAddGames={isCoach}
+          competitions={allCompetitions.map((c) => ({
+            id: c.league.id,
+            name: c.league.name,
+            logo: c.league.logo,
+          }))}
           labels={{
             dateTime: t("columnDateTime"),
             opponent: t("columnOpponent"),
@@ -516,8 +653,12 @@ export default async function ClubPage({
             injuriesByPlayerId={injuriesByPlayerId}
             dueReturnByPlayerId={dueReturnByPlayerId}
             statsByPlayerId={playerStatsById}
+            internalStatsByPlayerId={internalStatsById}
             flagUrlByPlayerId={flagUrlByPlayerId}
             isCoach={isCoach}
+            manualPlayers={manualPlayerInfos}
+            mergeSuggestions={mergeSuggestionViews}
+            countries={countryOptions}
           />
         </div>
         <div className="mt-4 flex items-center justify-between gap-3 text-xs text-muted">
@@ -544,13 +685,39 @@ export default async function ClubPage({
     </div>
   );
 
-  const progressionContent = (
-    <div className="rounded-2xl border border-dashed border-border bg-surface p-6 text-center">
-      <p className="text-sm text-muted">{t("clubProgressionComingSoon")}</p>
-    </div>
-  );
+  const dossierFiles: DossierFile[] =
+    teamId && currentStintId
+      ? await loadDossierFiles(supabase, {
+          teamId,
+          stintId: currentStintId,
+          categories: CLUB_DOSSIER_CATEGORIES,
+        })
+      : [];
 
-  const statsContent = teamId ? (
+  const dossierPlayers: DossierPlayer[] = orderSquadLikeGeneralTab(
+    (squad?.[0]?.players ?? []).filter((p) => !availabilityByPlayerId.get(p.id)?.excluded),
+    playerStatsById,
+  ).map((p) => ({ id: p.id, name: shortenPlayerName(p.name), photo: p.photo }));
+
+  const dossierContent = teamId ? (
+    <TeamDossier
+      teamId={teamId}
+      files={dossierFiles}
+      players={dossierPlayers}
+      isCoach={isCoach}
+    />
+  ) : null;
+
+  // Finished ASM Live Mode games of this stint — the "Live Mode" sub-tab.
+  let liveGames: LiveGameStats[] = [];
+  if (teamId) {
+    const { data: stintRow } = currentStintId
+      ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
+      : { data: null };
+    liveGames = await loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
+  }
+
+  const generalStatsContent = teamId ? (
     <div className="space-y-8">
       <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
         <TeamStatsComparison
@@ -627,8 +794,26 @@ export default async function ClubPage({
     </div>
   ) : null;
 
+  const statsContent = teamId ? (
+    <StatsSubTabs
+      generalContent={generalStatsContent}
+      liveContent={<LiveStatsExplorer games={liveGames} isCoach={isCoach} />}
+    />
+  ) : null;
+
   const notesContent =
-    isCoach && teamId ? <ClubNotesList teamId={teamId} notes={clubNotes} /> : null;
+    isCoach && teamId ? (
+      <NotesList
+        kind="club"
+        teamId={teamId}
+        notes={clubNotes}
+        mentionPlayers={dossierPlayers}
+        title={t("clubNotesTitle")}
+        emptyText={t("noClubNotesFound")}
+        placeholder={t("clubNotesPlaceholder")}
+        addLabel={t("addClubNoteButton")}
+      />
+    ) : null;
 
   return (
     <div>
@@ -690,8 +875,8 @@ export default async function ClubPage({
             generalContent={generalContent}
             physicalContent={physicalContent}
             statsContent={statsContent}
-            progressionContent={progressionContent}
             notesContent={notesContent}
+            dossierContent={dossierContent}
           />
         </>
       )}

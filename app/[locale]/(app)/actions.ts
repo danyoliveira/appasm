@@ -8,11 +8,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   ApiFootballError,
   searchTeams,
+  searchPlayerProfiles,
   type TeamSearchResult,
   type ApiFootballReason,
 } from "@/lib/api-football/client";
 import { getTeamsByCountry, getSquad } from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
+import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
 import type { GameSubmoment, VideoCategory } from "./preparations/videoCategories";
 
 export type ClubsResult = {
@@ -54,9 +56,35 @@ export async function searchOpponentClubs(query: string): Promise<ClubsResult> {
 // Opponent is either a real API-Football club (opponentTeamId) or, when the
 // coach couldn't find the club in that search at all, a plain typed name —
 // exactly one of the two is ever passed.
+// Competition, venue and (optional) final score of a game created from
+// scratch — what its calendar row needs.
+export interface ManualMatchDetails {
+  competition: { leagueId: number | null; name: string; logo: string | null } | null;
+  isHome: boolean;
+  goalsFor: number | null;
+  goalsAgainst: number | null;
+}
+
+function manualMatchDetailsColumns(details: ManualMatchDetails) {
+  const goal = (n: number | null) => (n != null && Number.isInteger(n) && n >= 0 && n < 100 ? n : null);
+  const goalsFor = goal(details.goalsFor);
+  const goalsAgainst = goal(details.goalsAgainst);
+  const bothGoals = goalsFor != null && goalsAgainst != null;
+  return {
+    competition_league_id: details.competition?.leagueId ?? null,
+    competition_name: details.competition?.name.trim() || null,
+    competition_logo: details.competition?.logo ?? null,
+    is_home: details.isHome,
+    // A score is either complete or absent.
+    goals_for: bothGoals ? goalsFor : null,
+    goals_against: bothGoals ? goalsAgainst : null,
+  };
+}
+
 export async function createManualPreparation(
   opponent: { teamId: number } | { name: string },
   matchDateIso: string,
+  details?: ManualMatchDetails,
 ) {
   const supabase = await createClient();
   const {
@@ -80,6 +108,7 @@ export async function createManualPreparation(
       opponent_name: "name" in opponent ? opponent.name : null,
       match_date: matchDateIso,
       created_by: user.id,
+      ...(details ? manualMatchDetailsColumns(details) : {}),
     })
     .select("id")
     .single();
@@ -96,6 +125,7 @@ export async function updateManualPreparation(
   id: string,
   opponent: { teamId: number } | { name: string } | null,
   matchDateIso: string,
+  details?: ManualMatchDetails,
 ) {
   const supabase = await createClient();
   const {
@@ -103,8 +133,9 @@ export async function updateManualPreparation(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  const update: { match_date: string; opponent_team_id?: number | null; opponent_name?: string | null } = {
+  const update: Record<string, unknown> = {
     match_date: matchDateIso,
+    ...(details ? manualMatchDetailsColumns(details) : {}),
   };
   if (opponent) {
     update.opponent_team_id = "teamId" in opponent ? opponent.teamId : null;
@@ -418,8 +449,11 @@ export async function updateClub(teamId: number) {
       // API-Football squad moves on with real transfers, so this is the
       // only place that will ever show "the squad I actually had there".
       if (closedStint) {
-        const squad = await getSquad(previousTeamId).catch(() => []);
-        const players = squad[0]?.players ?? [];
+        const [squad, manualRows] = await Promise.all([
+          getSquad(previousTeamId).catch(() => []),
+          getManualPlayers(supabase, previousTeamId, closedStint.id),
+        ]);
+        const players = withManualPlayers(squad, manualRows)[0]?.players ?? [];
         if (players.length > 0) {
           await supabase.from("archived_squad_players").insert(
             players.map((p) => ({
@@ -588,60 +622,353 @@ export async function setPlayerAvailability(
   if (error) throw new Error(error.message);
 }
 
-export async function addPlayerNote(teamId: number, playerId: number, content: string) {
-  const { supabase } = await requireCoach();
+// Player notes and club notes share one set of actions — same shape, just
+// a different table (club notes additionally carry @mentions).
+const NOTE_TABLE = { player: "player_notes", club: "club_notes" } as const;
+type NoteKindArg = keyof typeof NOTE_TABLE;
 
-  const { error } = await supabase
-    .from("player_notes")
-    .insert({ team_id: teamId, player_id: playerId, content });
+// Mirrors MAX_PINNED_NOTES in notes/noteShared.ts ("use server" files can
+// only export async functions, so it can't be imported from here).
+const MAX_PINNED_NOTES = 3;
+
+export type NoteActionResult = { error?: "pinLimit" };
+
+function cleanRemindAt(remindAt: string | null) {
+  return remindAt && /^\d{4}-\d{2}-\d{2}$/.test(remindAt) ? remindAt : null;
+}
+
+function cleanMentions(ids: number[]) {
+  return [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))];
+}
+
+async function pinnedNotesCount(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  kind: NoteKindArg,
+  teamId: number,
+  playerId: number | null,
+) {
+  // Player notes follow the player across clubs (see the player page), so
+  // their pin limit is per player; club notes are per club.
+  let query = supabase
+    .from(NOTE_TABLE[kind])
+    .select("id", { count: "exact", head: true })
+    .not("pinned_at", "is", null);
+  query =
+    kind === "player" && playerId != null
+      ? query.eq("player_id", playerId)
+      : query.eq("team_id", teamId);
+  const { count } = await query;
+  return count ?? 0;
+}
+
+export interface NewNoteInput {
+  kind: NoteKindArg;
+  teamId: number;
+  playerId: number | null;
+  content: string;
+  mentionedPlayerIds: number[];
+  remindAt: string | null;
+  pinned: boolean;
+}
+
+export async function addNote(input: NewNoteInput): Promise<NoteActionResult> {
+  const { supabase } = await requireCoach();
+  const content = input.content.trim();
+  if (!content) throw new Error("Empty note");
+  if (input.kind === "player" && input.playerId == null) throw new Error("Missing player");
+
+  let pinned = input.pinned;
+  let result: NoteActionResult = {};
+  if (
+    pinned &&
+    (await pinnedNotesCount(supabase, input.kind, input.teamId, input.playerId)) >= MAX_PINNED_NOTES
+  ) {
+    // Still save the note — just not pinned — and let the UI say why.
+    pinned = false;
+    result = { error: "pinLimit" };
+  }
+
+  const common = {
+    team_id: input.teamId,
+    content,
+    remind_at: cleanRemindAt(input.remindAt),
+    pinned_at: pinned ? new Date().toISOString() : null,
+  };
+  const { error } =
+    input.kind === "player"
+      ? await supabase.from("player_notes").insert({ ...common, player_id: input.playerId })
+      : await supabase
+          .from("club_notes")
+          .insert({ ...common, mentioned_player_ids: cleanMentions(input.mentionedPlayerIds) });
+
+  if (error) throw new Error(error.message);
+  return result;
+}
+
+export async function updateNote(
+  kind: NoteKindArg,
+  noteId: string,
+  input: { content: string; mentionedPlayerIds: number[]; remindAt: string | null },
+) {
+  const { supabase } = await requireCoach();
+  const content = input.content.trim();
+  if (!content) throw new Error("Empty note");
+
+  const update = {
+    content,
+    remind_at: cleanRemindAt(input.remindAt),
+    updated_at: new Date().toISOString(),
+    ...(kind === "club" ? { mentioned_player_ids: cleanMentions(input.mentionedPlayerIds) } : {}),
+  };
+  const { error } = await supabase.from(NOTE_TABLE[kind]).update(update).eq("id", noteId);
 
   if (error) throw new Error(error.message);
 }
 
-export async function updatePlayerNote(noteId: string, content: string) {
+// Pinning/reminders don't touch updated_at — they aren't an edit of the
+// note's text.
+export async function setNotePinned(
+  kind: NoteKindArg,
+  noteId: string,
+  pinned: boolean,
+): Promise<NoteActionResult> {
+  const { supabase } = await requireCoach();
+
+  if (pinned) {
+    const { data: row, error: readError } = await supabase
+      .from(NOTE_TABLE[kind])
+      .select(kind === "player" ? "team_id, player_id" : "team_id")
+      .eq("id", noteId)
+      .maybeSingle<{ team_id: number; player_id?: number }>();
+    if (readError) throw new Error(readError.message);
+    if (!row) return {};
+    const count = await pinnedNotesCount(supabase, kind, row.team_id, row.player_id ?? null);
+    if (count >= MAX_PINNED_NOTES) return { error: "pinLimit" };
+  }
+
+  const { error } = await supabase
+    .from(NOTE_TABLE[kind])
+    .update({ pinned_at: pinned ? new Date().toISOString() : null })
+    .eq("id", noteId);
+
+  if (error) throw new Error(error.message);
+  return {};
+}
+
+export async function setNoteReminder(kind: NoteKindArg, noteId: string, remindAt: string | null) {
   const { supabase } = await requireCoach();
 
   const { error } = await supabase
-    .from("player_notes")
-    .update({ content, updated_at: new Date().toISOString() })
+    .from(NOTE_TABLE[kind])
+    .update({ remind_at: cleanRemindAt(remindAt) })
     .eq("id", noteId);
 
   if (error) throw new Error(error.message);
 }
 
-export async function deletePlayerNote(noteId: string) {
+export async function deleteNote(kind: NoteKindArg, noteId: string) {
   const { supabase } = await requireCoach();
 
-  const { error } = await supabase.from("player_notes").delete().eq("id", noteId);
+  const { error } = await supabase.from(NOTE_TABLE[kind]).delete().eq("id", noteId);
 
   if (error) throw new Error(error.message);
 }
 
-export async function addClubNote(teamId: number, content: string) {
+// --- Hand-added squad players ----------------------------------------------
+
+export interface ApiPlayerSearchResult {
+  id: number;
+  name: string;
+  photo: string | null;
+  age: number | null;
+  nationality: string | null;
+  birthDate: string | null;
+  position: string | null;
+  number: number | null;
+}
+
+export async function searchApiPlayers(
+  query: string,
+): Promise<{ results: ApiPlayerSearchResult[]; error?: ApiFootballReason }> {
+  await requireCoach();
+  const q = query.trim();
+  if (q.length < 3) return { results: [] };
+  try {
+    const rows = await searchPlayerProfiles(q);
+    return {
+      results: rows.slice(0, 20).map(({ player }) => ({
+        id: player.id,
+        name: player.name,
+        photo: player.photo || null,
+        age: player.age,
+        nationality: player.nationality,
+        birthDate: player.birth?.date ?? null,
+        position: player.position ?? null,
+        number: player.number ?? null,
+      })),
+    };
+  } catch (err) {
+    return { results: [], error: err instanceof ApiFootballError ? err.reason : "unknown" };
+  }
+}
+
+export interface ManualPlayerInput {
+  name: string;
+  position: "Goalkeeper" | "Defender" | "Midfielder" | "Attacker";
+  number: number | null;
+  birthDate: string | null;
+  nationality: string | null;
+  photoUrl: string | null;
+}
+
+const POSITIONS = ["Goalkeeper", "Defender", "Midfielder", "Attacker"] as const;
+
+function cleanManualPlayer(input: ManualPlayerInput) {
+  const name = input.name.trim();
+  if (!name) throw new Error("Missing name");
+  if (!POSITIONS.includes(input.position)) throw new Error("Invalid position");
+  return {
+    name,
+    position: input.position,
+    number:
+      input.number != null && Number.isInteger(input.number) && input.number >= 0 && input.number < 1000
+        ? input.number
+        : null,
+    birth_date: input.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(input.birthDate) ? input.birthDate : null,
+    nationality: input.nationality?.trim() || null,
+    photo_url: input.photoUrl || null,
+  };
+}
+
+// `apiPlayerId` set = picked from an API search, so the player keeps their
+// real API id (no merge ever needed); otherwise the table hands out a
+// negative id.
+export async function addManualPlayer(
+  teamId: number,
+  input: ManualPlayerInput,
+  apiPlayerId: number | null = null,
+) {
   const { supabase } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
 
-  const { error } = await supabase.from("club_notes").insert({ team_id: teamId, content });
-
+  const row = {
+    ...cleanManualPlayer(input),
+    team_id: teamId,
+    stint_id: stintId,
+    ...(apiPlayerId != null && apiPlayerId > 0 ? { id: apiPlayerId } : {}),
+  };
+  const { error } = await supabase.from("manual_squad_players").insert(row);
   if (error) throw new Error(error.message);
 }
 
-export async function updateClubNote(noteId: string, content: string) {
+export async function updateManualPlayer(playerId: number, input: ManualPlayerInput) {
   const { supabase } = await requireCoach();
 
   const { error } = await supabase
-    .from("club_notes")
-    .update({ content, updated_at: new Date().toISOString() })
-    .eq("id", noteId);
-
+    .from("manual_squad_players")
+    .update(cleanManualPlayer(input))
+    .eq("id", playerId);
   if (error) throw new Error(error.message);
 }
 
-export async function deleteClubNote(noteId: string) {
+export async function deleteManualPlayer(playerId: number) {
   const { supabase } = await requireCoach();
 
-  const { error } = await supabase.from("club_notes").delete().eq("id", noteId);
-
+  const { error } = await supabase.from("manual_squad_players").delete().eq("id", playerId);
   if (error) throw new Error(error.message);
+}
+
+export async function mergeManualPlayer(manualPlayerId: number, apiPlayerId: number) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase.rpc("merge_manual_player", {
+    p_manual_id: manualPlayerId,
+    p_api_id: apiPlayerId,
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
+}
+
+export async function dismissMergeSuggestion(manualPlayerId: number, apiPlayerId: number) {
+  const { supabase } = await requireCoach();
+
+  const { error } = await supabase
+    .from("manual_player_merge_dismissals")
+    .insert({ manual_player_id: manualPlayerId, api_player_id: apiPlayerId });
+  if (error) throw new Error(error.message);
+}
+
+export type DossierCategory =
+  | "monthly_plan"
+  | "individual_eval"
+  | "collective_eval"
+  | "training_unit"
+  // Player dossier only.
+  | "individual_plan"
+  | "medical_report"
+  | "player_other";
+
+// Categories whose files belong to one player (the rest are club-wide).
+const PLAYER_DOSSIER_CATEGORIES: DossierCategory[] = [
+  "individual_eval",
+  "individual_plan",
+  "medical_report",
+  "player_other",
+];
+
+export interface DossierFileInput {
+  category: DossierCategory;
+  variant: "projected" | "real" | null;
+  // "YYYY-MM" — stored as the first day of that month.
+  period: string | null;
+  title: string;
+  storagePath: string;
+  fileSize: number;
+  // Only for individual_eval.
+  player: { id: number; name: string } | null;
+}
+
+// The PDF itself is uploaded straight from the browser to the private
+// "team-dossier" bucket; this only records it once the upload succeeded.
+export async function addDossierFile(teamId: number, input: DossierFileInput) {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error } = await supabase.from("team_dossier_files").insert({
+    team_id: teamId,
+    stint_id: stintId,
+    category: input.category,
+    variant: input.category === "monthly_plan" ? (input.variant ?? "projected") : null,
+    period: input.period ? `${input.period}-01` : null,
+    title: input.title,
+    storage_path: input.storagePath,
+    file_size: input.fileSize,
+    player_id: PLAYER_DOSSIER_CATEGORIES.includes(input.category) ? (input.player?.id ?? null) : null,
+    player_name: PLAYER_DOSSIER_CATEGORIES.includes(input.category) ? (input.player?.name ?? null) : null,
+    uploaded_by: coachId,
+  });
+
+  if (error) {
+    await supabase.storage.from("team-dossier").remove([input.storagePath]);
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteDossierFile(fileId: string) {
+  const { supabase } = await requireCoach();
+
+  const { data: row, error: readError } = await supabase
+    .from("team_dossier_files")
+    .select("storage_path")
+    .eq("id", fileId)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (!row) return;
+
+  const { error } = await supabase.from("team_dossier_files").delete().eq("id", fileId);
+  if (error) throw new Error(error.message);
+
+  await supabase.storage.from("team-dossier").remove([row.storage_path]);
 }
 
 export async function setPlayerExcluded(

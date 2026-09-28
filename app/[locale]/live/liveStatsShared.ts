@@ -15,11 +15,14 @@ export interface LiveEntryInput {
   minute: number | null;
   extraMinute: number | null;
   playerName: string;
+  // Our own squad player this event is about, when the lineup links it.
+  playerId?: number | null;
   notes: string;
 }
 
 export interface LiveEntryRow {
   id: string;
+  playerId: number | null;
   eventType: LiveEventType | null;
   teamSide: "home" | "away" | null;
   minute: number | null;
@@ -32,9 +35,46 @@ export interface LiveEntryRow {
 
 export const STARTING_XI_SIZE = 11;
 
+// Our squad as offered in the lineup editor (goalkeepers first).
+export interface LiveSquadPlayer {
+  id: number;
+  name: string;
+  number: number | null;
+  photo: string | null;
+  position: string;
+}
+
+// The linked squad player id of whoever is listed under this name.
+export function lineupPlayerId(players: LineupPlayer[], name: string | null | undefined): number | null {
+  if (!name) return null;
+  return players.find((p) => p.name === name)?.playerId ?? null;
+}
+
+// "Preencher com o plantel": a goalkeeper + the next ten as the starting XI
+// (in squad order), everyone else on the bench. The coach then adjusts.
+export function lineupFromSquad(squad: LiveSquadPlayer[]): LineupPlayer[] {
+  const goalkeepers = squad.filter((p) => p.position === "Goalkeeper");
+  const outfield = squad.filter((p) => p.position !== "Goalkeeper");
+  const starters = [...goalkeepers.slice(0, 1), ...outfield.slice(0, STARTING_XI_SIZE - Math.min(1, goalkeepers.length))];
+  const starterIds = new Set(starters.map((p) => p.id));
+  const bench = squad.filter((p) => !starterIds.has(p.id));
+  const toLineupPlayer = (p: LiveSquadPlayer, starting: boolean): LineupPlayer => ({
+    number: p.number,
+    name: p.name,
+    playerId: p.id,
+    starting,
+    x: null,
+    y: null,
+  });
+  return [...starters.map((p) => toLineupPlayer(p, true)), ...bench.map((p) => toLineupPlayer(p, false))];
+}
+
 export interface LineupPlayer {
   number: number | null;
   name: string;
+  // The real squad player (our own team only; negative = hand-added). Absent
+  // or null for the opponent, free-text names, and lineups from before this.
+  playerId?: number | null;
   starting: boolean;
   // Only ever set for starting players, once placed on the formation pitch.
   x: number | null;
@@ -344,14 +384,38 @@ export type GkCounterKey = (typeof GK_COUNTER_KEYS)[number];
 
 export type GkStatsSide = Record<GkCounterKey, number>;
 
+// Each goalkeeper action is recorded as completed or not (stored in the
+// row's stat_value). Rows from before this split have no value and count
+// as completed — that's what a plain tap meant then.
+export const GK_OUTCOMES = ["complete", "incomplete"] as const;
+export type GkOutcome = (typeof GK_OUTCOMES)[number];
+
+export function gkOutcomeOf(statValue: string | null | undefined): GkOutcome {
+  return statValue === "incomplete" ? "incomplete" : "complete";
+}
+
+// % of an action's attempts that were completed, or null with none yet.
+export function gkEfficiency(complete: number, incomplete: number): number | null {
+  const total = complete + incomplete;
+  return total > 0 ? Math.round((complete / total) * 100) : null;
+}
+
 export interface GkStatsByPlayer {
   name: string;
+  // Linked squad player, when the taps carried one.
+  playerId: number | null;
+  // Completed actions.
   stats: GkStatsSide;
+  incomplete: GkStatsSide;
 }
 
 export interface GkStats {
+  // Completed actions per side…
   home: GkStatsSide;
   away: GkStatsSide;
+  // …and the ones that weren't.
+  homeIncomplete: GkStatsSide;
+  awayIncomplete: GkStatsSide;
   homeGkName: string | null;
   awayGkName: string | null;
   // Every goalkeeper credited with at least one stat this match, oldest
@@ -373,12 +437,19 @@ export function emptyGkStatsSide(): GkStatsSide {
 // addGkStatByToken), independent of who's selected now. Order of first
 // appearance, oldest first.
 function gkStatsByPlayer(
-  rows: { stat_key: string | null; team_side: string | null; player_name: string | null; created_at: string }[],
+  rows: {
+    stat_key: string | null;
+    stat_value?: string | null;
+    player_id?: number | null;
+    team_side: string | null;
+    player_name: string | null;
+    created_at: string;
+  }[],
   side: "home" | "away",
 ): GkStatsByPlayer[] {
   const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
   const order: string[] = [];
-  const totals = new Map<string, GkStatsSide>();
+  const totals = new Map<string, { complete: GkStatsSide; incomplete: GkStatsSide; playerId: number | null }>();
 
   const sorted = rows
     .slice()
@@ -389,17 +460,35 @@ function gkStatsByPlayer(
       continue;
     }
     if (!totals.has(row.player_name)) {
-      totals.set(row.player_name, emptyGkStatsSide());
+      totals.set(row.player_name, {
+        complete: emptyGkStatsSide(),
+        incomplete: emptyGkStatsSide(),
+        playerId: row.player_id ?? null,
+      });
       order.push(row.player_name);
     }
-    totals.get(row.player_name)![row.stat_key as GkCounterKey] += 1;
+    const entry = totals.get(row.player_name)!;
+    entry[gkOutcomeOf(row.stat_value)][row.stat_key as GkCounterKey] += 1;
+    if (entry.playerId == null && row.player_id != null) entry.playerId = row.player_id;
   }
 
-  return order.map((name) => ({ name, stats: totals.get(name)! }));
+  return order.map((name) => ({
+    name,
+    playerId: totals.get(name)!.playerId,
+    stats: totals.get(name)!.complete,
+    incomplete: totals.get(name)!.incomplete,
+  }));
 }
 
 export function computeGkStats(
-  rows: { stat_key: string | null; team_side: string | null; player_name: string | null; created_at: string }[],
+  rows: {
+    stat_key: string | null;
+    stat_value?: string | null;
+    player_id?: number | null;
+    team_side: string | null;
+    player_name: string | null;
+    created_at: string;
+  }[],
 ): GkStats {
   const selectionRows = rows
     .filter((r) => r.stat_key === "gk_selection")
@@ -415,13 +504,17 @@ export function computeGkStats(
 
   const home = emptyGkStatsSide();
   const away = emptyGkStatsSide();
+  const homeIncomplete = emptyGkStatsSide();
+  const awayIncomplete = emptyGkStatsSide();
   const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
   for (const row of rows) {
     if (!row.stat_key || !counterKeySet.includes(row.stat_key)) continue;
+    const key = row.stat_key as GkCounterKey;
+    const incomplete = gkOutcomeOf(row.stat_value) === "incomplete";
     if (row.team_side === "home" && row.player_name && row.player_name === homeGkName) {
-      home[row.stat_key as GkCounterKey] += 1;
+      (incomplete ? homeIncomplete : home)[key] += 1;
     } else if (row.team_side === "away" && row.player_name && row.player_name === awayGkName) {
-      away[row.stat_key as GkCounterKey] += 1;
+      (incomplete ? awayIncomplete : away)[key] += 1;
     }
   }
 
@@ -435,6 +528,8 @@ export function computeGkStats(
   return {
     home,
     away,
+    homeIncomplete,
+    awayIncomplete,
     homeGkName,
     awayGkName,
     homeByPlayer: gkStatsByPlayer(rows, "home"),
@@ -478,6 +573,7 @@ export interface LiveMatchInfo {
 // same mapping.
 export function mapLiveEntryRow(row: {
   id: string;
+  player_id?: number | null;
   event_type: string | null;
   team_side: string | null;
   minute: number | null;
@@ -489,6 +585,7 @@ export function mapLiveEntryRow(row: {
 }): LiveEntryRow {
   return {
     id: row.id,
+    playerId: row.player_id ?? null,
     eventType: row.event_type as LiveEventType | null,
     teamSide: row.team_side as "home" | "away" | null,
     minute: row.minute,

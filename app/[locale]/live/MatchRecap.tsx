@@ -34,6 +34,7 @@ export default function MatchRecap({
   entries,
   collectiveStats,
   ourGkStats,
+  ourGkIncomplete,
   ourGkName,
   ourGkStatsByPlayer,
   ourTeamName,
@@ -50,6 +51,7 @@ export default function MatchRecap({
   entries: LiveEntryRow[];
   collectiveStats: CollectiveStats;
   ourGkStats: GkStatsSide;
+  ourGkIncomplete: GkStatsSide;
   ourGkName: string | null;
   // Every one of our own goalkeepers credited with a stat this match — Modo
   // GK only ever tracks our own team, so this is the "did we use more than
@@ -135,6 +137,7 @@ export default function MatchRecap({
 
           <GkStatsPanel
             stats={ourGkStats}
+            incompleteStats={ourGkIncomplete}
             gkName={ourGkName}
             teamName={ourTeamName}
             players={ourPlayers}

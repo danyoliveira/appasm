@@ -18,6 +18,8 @@ import type { SquadPlayer } from "@/lib/api-football/client";
 import {
   translatePosition,
   shortenPlayerName,
+  POSITION_ORDER,
+  compareSquadDefault,
   StatusControl,
   InjuryConfirmBanner,
   type AvailabilityInfo,
@@ -25,6 +27,10 @@ import {
   type PlayerSeasonStat,
 } from "./playerShared";
 import InjuryDetailsModal, { InjuryReturnBanner } from "./InjuryTracking";
+import ManualPlayerDialog, { type ManualPlayerInfo } from "./ManualPlayerDialog";
+import MergeSuggestions, { type MergeSuggestionView } from "./MergeSuggestions";
+import Icon from "@/components/Icon";
+import type { ComboboxCountry } from "@/components/CountryCombobox";
 
 export interface DueReturnInjury {
   injuryId: string;
@@ -32,6 +38,12 @@ export interface DueReturnInjury {
 }
 
 export type { AvailabilityInfo, PendingInjury, PlayerSeasonStat };
+
+// A squad row's numbers — internal (hand-entered) ones can be partially
+// filled in, so each value may be missing.
+export type SquadStat = { [K in keyof PlayerSeasonStat]: number | null };
+
+type StatSource = "external" | "internal";
 
 type SortKey =
   | "name"
@@ -48,17 +60,10 @@ type SortState = { key: SortKey | null; dir: "asc" | "desc" };
 
 const TEXT_SORT_KEYS: SortKey[] = ["name", "position"];
 
-// Tactical order (defence → midfield → attack) rather than alphabetical.
-const POSITION_ORDER: Record<string, number> = {
-  Defender: 0,
-  Midfielder: 1,
-  Attacker: 2,
-};
-
 function sortValue(
   player: SquadPlayer,
   key: SortKey,
-  stats: PlayerSeasonStat | undefined,
+  stats: SquadStat | undefined,
 ): string | number {
   switch (key) {
     case "name":
@@ -80,34 +85,16 @@ function sortValue(
   }
 }
 
-// Default order (before any header is clicked): outfield players go
-// position (tactical order) → minutes (most first) → name; goalkeepers
-// just go minutes (most first) → name.
-function defaultCompare(
-  a: SquadPlayer,
-  b: SquadPlayer,
-  statsByPlayerId: Map<number, PlayerSeasonStat>,
-  isGoalkeeperTable: boolean,
-): number {
-  if (!isGoalkeeperTable) {
-    const posDiff =
-      (POSITION_ORDER[a.position] ?? 99) - (POSITION_ORDER[b.position] ?? 99);
-    if (posDiff !== 0) return posDiff;
-  }
-  const minutesDiff =
-    (statsByPlayerId.get(b.id)?.minutes ?? 0) - (statsByPlayerId.get(a.id)?.minutes ?? 0);
-  if (minutesDiff !== 0) return minutesDiff;
-  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-}
-
 function sortPlayers(
   list: SquadPlayer[],
   sort: SortState,
-  statsByPlayerId: Map<number, PlayerSeasonStat>,
+  statsByPlayerId: Map<number, SquadStat>,
   isGoalkeeperTable: boolean,
 ): SquadPlayer[] {
   if (sort.key === null) {
-    return [...list].sort((a, b) => defaultCompare(a, b, statsByPlayerId, isGoalkeeperTable));
+    return [...list].sort((a, b) =>
+      compareSquadDefault(a, b, statsByPlayerId, isGoalkeeperTable),
+    );
   }
   const sorted = [...list].sort((a, b) => {
     const va = sortValue(a, sort.key as SortKey, statsByPlayerId.get(a.id));
@@ -163,6 +150,13 @@ function useSortState() {
 
 type ViewMode = "cards" | "table";
 
+// One look for every toggle group in the toolbar.
+const segmentedClass = "flex rounded-lg border border-border bg-background p-0.5";
+const segmentClass = (active: boolean) =>
+  `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+    active ? "bg-surface text-foreground shadow-sm" : "text-muted hover:text-foreground"
+  }`;
+
 export default function SquadSection({
   teamId,
   logoUrl,
@@ -170,9 +164,13 @@ export default function SquadSection({
   availabilityByPlayerId,
   injuriesByPlayerId,
   dueReturnByPlayerId,
-  statsByPlayerId,
+  statsByPlayerId: externalStatsByPlayerId,
+  internalStatsByPlayerId = new Map(),
   flagUrlByPlayerId,
   isCoach,
+  manualPlayers = [],
+  mergeSuggestions = [],
+  countries = [],
 }: {
   teamId: number;
   logoUrl?: string | null;
@@ -180,9 +178,16 @@ export default function SquadSection({
   availabilityByPlayerId: Map<number, AvailabilityInfo>;
   injuriesByPlayerId: Map<number, PendingInjury>;
   dueReturnByPlayerId: Map<number, DueReturnInjury>;
+  // API / fixture-verified numbers ("externa").
   statsByPlayerId: Map<number, PlayerSeasonStat>;
+  // Coach-entered numbers ("interna").
+  internalStatsByPlayerId?: Map<number, SquadStat>;
   flagUrlByPlayerId: Map<number, string | null>;
   isCoach: boolean;
+  // Hand-added players (they're also in `players`) — badge + edit.
+  manualPlayers?: ManualPlayerInfo[];
+  mergeSuggestions?: MergeSuggestionView[];
+  countries?: ComboboxCountry[];
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
@@ -196,6 +201,58 @@ export default function SquadSection({
     | null
   >(null);
   const [nameFilter, setNameFilter] = useState("");
+  // External (API) is the more reliable default; players created from
+  // scratch have no external data, so they always show their internal one.
+  const [statSource, setStatSource] = useState<StatSource>("external");
+  const statsByPlayerId = useMemo(() => {
+    const map = new Map<number, SquadStat>();
+    for (const player of players) {
+      const useInternal = statSource === "internal" || player.id < 0;
+      const stats = useInternal
+        ? internalStatsByPlayerId.get(player.id)
+        : externalStatsByPlayerId.get(player.id);
+      if (stats) map.set(player.id, stats);
+    }
+    return map;
+  }, [players, statSource, internalStatsByPlayerId, externalStatsByPlayerId]);
+  const [manualDialog, setManualDialog] = useState<{ editing: ManualPlayerInfo | null } | null>(null);
+  const manualById = useMemo(() => new Map(manualPlayers.map((m) => [m.id, m])), [manualPlayers]);
+
+  // Cards have room for a "Manual" badge; in the (narrow) table the name
+  // itself is tinted instead and the edit pencil only shows on row hover,
+  // so the name keeps its space.
+  function renderManualTag(player: SquadPlayer, compact = false) {
+    const manual = manualById.get(player.id);
+    if (!manual) return null;
+    return (
+      <span className="inline-flex shrink-0 items-center gap-0.5">
+        {!compact && (
+          <span
+            className="rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400"
+            title={t("manualPlayerBadgeTitle")}
+          >
+            {t("manualPlayerBadge")}
+          </span>
+        )}
+        {isCoach && (
+          <button
+            type="button"
+            onClick={() => setManualDialog({ editing: manual })}
+            title={t("editButton")}
+            aria-label={t("editButton")}
+            className={`flex h-5 w-5 items-center justify-center rounded text-muted hover:text-foreground ${
+              compact ? "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100" : ""
+            }`}
+          >
+            <Icon name="pencil" className="h-3 w-3" />
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  const manualNameClass = (player: SquadPlayer) =>
+    manualById.has(player.id) ? "text-sky-700 dark:text-sky-400" : "";
   const [positionFilter, setPositionFilter] = useState<string | null>(null);
   const [showExcludedRaw, setShowExcluded] = useState(false);
   const [view, setView] = useState<ViewMode>("table");
@@ -224,6 +281,13 @@ export default function SquadSection({
   const distinctPositions = useMemo(
     () => Array.from(new Set(players.map((p) => p.position))),
     [players],
+  );
+
+  // Goalkeepers first, then the tactical order — same as the lists below.
+  const orderedPositions = [...distinctPositions].sort(
+    (a, b) =>
+      (a === "Goalkeeper" ? -1 : (POSITION_ORDER[a] ?? 99)) -
+      (b === "Goalkeeper" ? -1 : (POSITION_ORDER[b] ?? 99)),
   );
 
   const excludedCount = useMemo(
@@ -405,12 +469,15 @@ export default function SquadSection({
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <Link
-              href={`/club/player/${player.id}`}
-              className="block truncate text-sm font-semibold hover:text-accent hover:underline"
-            >
-              {shortenPlayerName(player.name)}
-            </Link>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Link
+                href={`/club/player/${player.id}`}
+                className="block truncate text-sm font-semibold hover:text-accent hover:underline"
+              >
+                {shortenPlayerName(player.name)}
+              </Link>
+              {renderManualTag(player)}
+            </div>
             <span className="mt-1 block w-fit rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
               {translatePosition(player.position, t)}
             </span>
@@ -420,20 +487,20 @@ export default function SquadSection({
         {stats && (
           <div className="grid grid-cols-4 gap-1 rounded-lg bg-background p-2 text-center">
             <div>
-              <div className="text-sm font-semibold">{stats.appearances}</div>
+              <div className="text-sm font-semibold">{stats.appearances ?? "-"}</div>
               <div className="text-[9px] uppercase tracking-wide text-muted">
                 {t("playerStatAppearances")}
               </div>
             </div>
             <div>
-              <div className="text-sm font-semibold">{stats.minutes}</div>
+              <div className="text-sm font-semibold">{stats.minutes ?? "-"}</div>
               <div className="text-[9px] uppercase tracking-wide text-muted">
                 {t("playerStatMinutes")}
               </div>
             </div>
             <div>
               <div className="text-sm font-semibold">
-                {isGoalkeeper ? stats.saves : stats.goals}
+                {(isGoalkeeper ? stats.saves : stats.goals) ?? "-"}
               </div>
               <div className="text-[9px] uppercase tracking-wide text-muted">
                 {isGoalkeeper ? t("playerStatSaves") : t("playerStatGoals")}
@@ -441,7 +508,7 @@ export default function SquadSection({
             </div>
             <div>
               <div className="text-sm font-semibold">
-                {isGoalkeeper ? stats.conceded : stats.assists}
+                {(isGoalkeeper ? stats.conceded : stats.assists) ?? "-"}
               </div>
               <div className="text-[9px] uppercase tracking-wide text-muted">
                 {isGoalkeeper ? t("playerStatConceded") : t("playerStatAssists")}
@@ -527,7 +594,7 @@ export default function SquadSection({
                 return (
                   <tr
                     key={player.id}
-                    className="odd:bg-surface even:bg-foreground/[0.03] transition-colors hover:bg-accent/5"
+                    className="group odd:bg-surface even:bg-foreground/[0.03] transition-colors hover:bg-accent/5"
                   >
                     <td className="px-2 py-2">
                       <div className="flex items-center gap-1.5">
@@ -547,10 +614,12 @@ export default function SquadSection({
                         </div>
                         <Link
                           href={`/club/player/${player.id}`}
-                          className="truncate font-medium hover:text-accent hover:underline"
+                          title={manualById.has(player.id) ? t("manualPlayerBadgeTitle") : undefined}
+                          className={`truncate font-medium hover:text-accent hover:underline ${manualNameClass(player)}`}
                         >
                           {shortenPlayerName(player.name)}
                         </Link>
+                        {renderManualTag(player, true)}
                       </div>
                     </td>
                     <td className="px-1 py-2">
@@ -571,10 +640,10 @@ export default function SquadSection({
                       {stats?.minutes ?? "-"}
                     </td>
                     <td className="px-2 py-2 text-center">
-                      {stats ? (isGoalkeeperTable ? stats.saves : stats.goals) : "-"}
+                      {(stats ? (isGoalkeeperTable ? stats.saves : stats.goals) : null) ?? "-"}
                     </td>
                     <td className="px-2 py-2 text-center">
-                      {stats ? (isGoalkeeperTable ? stats.conceded : stats.assists) : "-"}
+                      {(stats ? (isGoalkeeperTable ? stats.conceded : stats.assists) : null) ?? "-"}
                     </td>
                     <td className="px-2 py-2">{renderStatusCell(player)}</td>
                     {isCoach && (
@@ -602,84 +671,107 @@ export default function SquadSection({
 
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <input
-          type="text"
-          value={nameFilter}
-          onChange={(e) => setNameFilter(e.target.value)}
-          placeholder={t("squadFilterPlaceholder")}
-          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent sm:max-w-xs"
-        />
+      {isCoach && <MergeSuggestions suggestions={mergeSuggestions} />}
 
-        <div className="flex shrink-0 rounded-full border border-border p-0.5">
-          <button
-            type="button"
-            onClick={() => setView("cards")}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              view === "cards" ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"
-            }`}
-          >
-            {t("squadViewCards")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("table")}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              view === "table" ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"
-            }`}
-          >
-            {t("squadViewTable")}
-          </button>
+      <div className="mb-5 rounded-2xl border border-border bg-surface p-3 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+              <Icon name="search" />
+            </span>
+            <input
+              type="search"
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              placeholder={t("squadFilterPlaceholder")}
+              className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground outline-none transition-colors focus:border-accent"
+            />
+          </div>
+          {isCoach && (
+            <button
+              type="button"
+              onClick={() => setManualDialog({ editing: null })}
+              className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-accent-foreground shadow-sm transition-opacity hover:opacity-90"
+            >
+              <Icon name="plus" />
+              {t("manualPlayerAddButton")}
+            </button>
+          )}
         </div>
-      </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setPositionFilter(null)}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            positionFilter === null
-              ? "border-accent bg-accent/10 text-accent"
-              : "border-border text-muted hover:text-foreground"
-          }`}
-        >
-          {t("allPositions")}
-        </button>
-        {distinctPositions.map((pos) => (
-          <button
-            key={pos}
-            type="button"
-            onClick={() => setPositionFilter(pos)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-              positionFilter === pos
-                ? "border-accent bg-accent/10 text-accent"
-                : "border-border text-muted hover:text-foreground"
-            }`}
-          >
-            {translatePosition(pos, t)}
-          </button>
-        ))}
-        {isCoach && (excludedCount > 0 || showExcluded) && (
-          <button
-            type="button"
-            onClick={() => {
-              // The badge always shows the full excluded count, ignoring
-              // the name/position filters — carrying one of those over
-              // when switching views made the list look like it was
-              // missing players that the count promised were there.
-              setPositionFilter(null);
-              setNameFilter("");
-              setShowExcluded((v) => !v);
-            }}
-            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-              showExcluded
-                ? "border-red-500 bg-red-500/10 text-red-500"
-                : "border-border text-muted hover:text-foreground"
-            }`}
-          >
-            {t("excludedPlayersFilter", { count: excludedCount })}
-          </button>
-        )}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className={segmentedClass}>
+              {[null, ...orderedPositions].map((pos) => (
+                <button
+                  key={pos ?? "all"}
+                  type="button"
+                  onClick={() => setPositionFilter(pos)}
+                  aria-pressed={positionFilter === pos}
+                  className={segmentClass(positionFilter === pos)}
+                >
+                  {pos ? translatePosition(pos, t) : t("allPositions")}
+                </button>
+              ))}
+            </div>
+            {isCoach && (excludedCount > 0 || showExcluded) && (
+              <button
+                type="button"
+                onClick={() => {
+                  // The badge always shows the full excluded count, ignoring
+                  // the name/position filters — carrying one of those over
+                  // when switching views made the list look like it was
+                  // missing players that the count promised were there.
+                  setPositionFilter(null);
+                  setNameFilter("");
+                  setShowExcluded((v) => !v);
+                }}
+                aria-pressed={showExcluded}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  showExcluded
+                    ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
+                    : "border-border text-muted hover:text-foreground"
+                }`}
+              >
+                {t("excludedPlayersFilter", { count: excludedCount })}
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className={segmentedClass} title={t("squadStatSourceHint")}>
+              <span className="self-center px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                {t("squadStatSourceLabel")}
+              </span>
+              {(["external", "internal"] as const).map((source) => (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => setStatSource(source)}
+                  aria-pressed={statSource === source}
+                  className={segmentClass(statSource === source)}
+                >
+                  {source === "external" ? t("squadStatSourceExternal") : t("squadStatSourceInternal")}
+                </button>
+              ))}
+            </div>
+            <div className={segmentedClass}>
+              {(["cards", "table"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setView(mode)}
+                  aria-pressed={view === mode}
+                  aria-label={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
+                  title={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
+                  className={`${segmentClass(view === mode)} flex items-center`}
+                >
+                  <Icon name={mode === "cards" ? "grid" : "list"} className="h-3.5 w-3.5" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {filteredPlayers.length === 0 ? (
@@ -726,6 +818,16 @@ export default function SquadSection({
             </div>
           )}
         </div>
+      )}
+
+      {manualDialog && (
+        <ManualPlayerDialog
+          teamId={teamId}
+          editing={manualDialog.editing}
+          squadPlayers={players}
+          countries={countries}
+          onClose={() => setManualDialog(null)}
+        />
       )}
 
       {injuryModal && (

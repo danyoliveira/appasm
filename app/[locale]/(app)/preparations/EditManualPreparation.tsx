@@ -3,8 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
-import { updateManualPreparation } from "../actions";
-import ManualPreparationForm, { type ManualOpponentSelection } from "./ManualPreparationForm";
+import { updateManualPreparation, type ManualMatchDetails } from "../actions";
+import ManualPreparationForm, {
+  type CompetitionOption,
+  type ManualOpponentSelection,
+} from "./ManualPreparationForm";
 
 // A stored `match_date` is UTC — <input type="datetime-local"> needs
 // "YYYY-MM-DDTHH:mm" in the viewer's own local time, or the prefilled value
@@ -19,19 +22,23 @@ export default function EditManualPreparation({
   id,
   opponentName,
   matchDate,
+  competitions = [],
+  details,
 }: {
   id: string;
   opponentName: string;
   matchDate: string;
+  competitions?: CompetitionOption[];
+  details?: ManualMatchDetails;
 }) {
   const t = useTranslations("dashboard");
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, startSaving] = useTransition();
 
-  function handleSubmit(opponent: ManualOpponentSelection, matchDateIso: string) {
+  function handleSubmit(opponent: ManualOpponentSelection, matchDateIso: string, next: ManualMatchDetails) {
     startSaving(async () => {
-      await updateManualPreparation(id, opponent, matchDateIso);
+      await updateManualPreparation(id, opponent, matchDateIso, next);
       setIsOpen(false);
       router.refresh();
     });
@@ -59,6 +66,8 @@ export default function EditManualPreparation({
         isSaving={isSaving}
         onSubmit={handleSubmit}
         onCancel={() => setIsOpen(false)}
+        competitions={competitions}
+        initialDetails={details}
       />
     </div>
   );

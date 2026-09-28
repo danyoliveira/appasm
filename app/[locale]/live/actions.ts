@@ -4,7 +4,9 @@ import { getTranslations } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveLiveMatchTeams } from "@/lib/liveStats";
-import { getFixtureById, getFixtureLineups, getFixtureStatistics } from "@/lib/api-football/cache";
+import { getFixtureById, getFixtureLineups, getFixtureStatistics, getSquad } from "@/lib/api-football/cache";
+import { MANUAL_PLAYER_COLUMNS, withManualPlayers, type ManualSquadPlayerRow } from "@/lib/manualPlayers";
+import { orderSquadLikeGeneralTab } from "../(app)/club/playerShared";
 import {
   buildFixtureStatSections,
   type FixtureStatSections,
@@ -17,6 +19,8 @@ import {
   type CollectiveCounterKey,
   type CollectiveStats,
   type GkCounterKey,
+  type GkOutcome,
+  type LiveSquadPlayer,
   type GkStats,
   type LineupPlayer,
   type LiveEntryInput,
@@ -108,7 +112,7 @@ export async function getLiveFeedByToken(
   const { data: entriesData } = await admin
     .from("live_match_entries")
     .select(
-      "id, kind, event_type, team_side, stat_key, stat_value, minute, extra_minute, player_name, notes, created_at, created_by_label",
+      "id, kind, event_type, team_side, stat_key, stat_value, minute, extra_minute, player_name, player_id, notes, created_at, created_by_label",
     )
     .eq("session_id", session.id)
     .order("created_at", { ascending: false });
@@ -146,6 +150,49 @@ export async function getLiveFeedByToken(
   };
 }
 
+// Our squad for the lineup editor — loaded once with the page (not on every
+// feed poll). Same list as the club's squad: API players + hand-added ones
+// of the current stint, excluded players left out, goalkeepers first.
+export async function getLiveSquadByToken(token: string): Promise<LiveSquadPlayer[]> {
+  const admin = createAdminClient();
+  const { data: session } = await admin
+    .from("live_match_sessions")
+    .select("team_id")
+    .or(`member_token.eq.${token},viewer_token.eq.${token},gk_token.eq.${token}`)
+    .maybeSingle();
+  if (!session) return [];
+  const teamId = session.team_id as number;
+
+  const { data: stint } = await admin
+    .from("coaching_stints")
+    .select("id")
+    .eq("team_id", teamId)
+    .is("ended_at", null)
+    .maybeSingle();
+
+  const [apiSquad, { data: manualRows }, { data: availability }] = await Promise.all([
+    getSquad(teamId).catch(() => []),
+    admin
+      .from("manual_squad_players")
+      .select(MANUAL_PLAYER_COLUMNS)
+      .eq("team_id", teamId)
+      .is("merged_into_player_id", null)
+      .eq("stint_id", stint?.id ?? ""),
+    admin
+      .from("player_availability")
+      .select("player_id, excluded")
+      .eq("team_id", teamId)
+      .eq("stint_id", stint?.id ?? ""),
+  ]);
+
+  const excluded = new Set((availability ?? []).filter((a) => a.excluded).map((a) => a.player_id));
+  const squad = withManualPlayers(apiSquad, (manualRows ?? []) as ManualSquadPlayerRow[]);
+  return orderSquadLikeGeneralTab(
+    (squad[0]?.players ?? []).filter((p) => !excluded.has(p.id)),
+    new Map(),
+  ).map((p) => ({ id: p.id, name: p.name, number: p.number, photo: p.photo || null, position: p.position }));
+}
+
 export async function addLiveEntryByToken(token: string, input: LiveEntryInput, authorLabel: string) {
   const sessionId = await requireSessionIdByMemberToken(token);
   const admin = createAdminClient();
@@ -158,6 +205,7 @@ export async function addLiveEntryByToken(token: string, input: LiveEntryInput, 
     minute: input.minute,
     extra_minute: input.extraMinute,
     player_name: input.playerName.trim() || null,
+    player_id: input.playerId ?? null,
     notes: input.notes.trim() || null,
     created_by_label: authorLabel.trim() || null,
   });
@@ -245,7 +293,12 @@ export async function setPossessionByToken(token: string, side: PossessionSide) 
 // Marks who's in goal for a side right now — logged the same way as a
 // possession change (a "state changed to X" row), so computeGkStats can
 // tell which player each GK counter tap below belongs to.
-export async function setGkByToken(token: string, side: "home" | "away", playerName: string) {
+export async function setGkByToken(
+  token: string,
+  side: "home" | "away",
+  playerName: string,
+  playerId: number | null = null,
+) {
   const sessionId = await requireSessionIdByMemberOrGkToken(token);
   const admin = createAdminClient();
 
@@ -255,6 +308,7 @@ export async function setGkByToken(token: string, side: "home" | "away", playerN
     stat_key: "gk_selection",
     team_side: side,
     player_name: playerName,
+    player_id: playerId,
   });
 
   if (error) throw new Error(error.message);
@@ -264,14 +318,14 @@ export async function setGkByToken(token: string, side: "home" | "away", playerN
 // shared by addGkStatByToken/undoGkStatByToken so a tap always lands on
 // the right player even if the client's own copy of the selection is
 // slightly stale (e.g. two coaches on the bench with two phones).
-async function currentGkName(
+async function currentGk(
   admin: ReturnType<typeof createAdminClient>,
   sessionId: string,
   side: "home" | "away",
-): Promise<string | null> {
+): Promise<{ name: string; playerId: number | null } | null> {
   const { data } = await admin
     .from("live_match_entries")
-    .select("player_name")
+    .select("player_name, player_id")
     .eq("session_id", sessionId)
     .eq("kind", "stat")
     .eq("stat_key", "gk_selection")
@@ -279,33 +333,47 @@ async function currentGkName(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return data?.player_name ?? null;
+  return data?.player_name ? { name: data.player_name, playerId: data.player_id ?? null } : null;
 }
 
-export async function addGkStatByToken(token: string, side: "home" | "away", statKey: GkCounterKey) {
+export async function addGkStatByToken(
+  token: string,
+  side: "home" | "away",
+  statKey: GkCounterKey,
+  outcome: GkOutcome = "complete",
+) {
   const sessionId = await requireSessionIdByMemberOrGkToken(token);
   const admin = createAdminClient();
 
-  const gkName = await currentGkName(admin, sessionId, side);
-  if (!gkName) return;
+  const gk = await currentGk(admin, sessionId, side);
+  if (!gk) return;
+  const gkName = gk.name;
 
   const { error } = await admin.from("live_match_entries").insert({
     session_id: sessionId,
     kind: "stat",
     stat_key: statKey,
+    stat_value: outcome === "incomplete" ? "incomplete" : "complete",
     team_side: side,
     player_name: gkName,
+    player_id: gk.playerId,
   });
 
   if (error) throw new Error(error.message);
 }
 
-export async function undoGkStatByToken(token: string, side: "home" | "away", statKey: GkCounterKey) {
+export async function undoGkStatByToken(
+  token: string,
+  side: "home" | "away",
+  statKey: GkCounterKey,
+  outcome: GkOutcome = "complete",
+) {
   const sessionId = await requireSessionIdByMemberOrGkToken(token);
   const admin = createAdminClient();
 
-  const gkName = await currentGkName(admin, sessionId, side);
-  if (!gkName) return;
+  const gk = await currentGk(admin, sessionId, side);
+  if (!gk) return;
+  const gkName = gk.name;
 
   const { data: last } = await admin
     .from("live_match_entries")
@@ -315,6 +383,9 @@ export async function undoGkStatByToken(token: string, side: "home" | "away", st
     .eq("stat_key", statKey)
     .eq("team_side", side)
     .eq("player_name", gkName)
+    // "complete" also matches rows from before the complete/incomplete
+    // split (no stat_value), which count as completed.
+    .or(outcome === "incomplete" ? "stat_value.eq.incomplete" : "stat_value.eq.complete,stat_value.is.null")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

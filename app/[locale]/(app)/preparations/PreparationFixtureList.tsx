@@ -5,6 +5,7 @@ import { useRouter } from "@/i18n/navigation";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { getLogoColor } from "@/lib/logoColor";
 import { deleteManualPreparation } from "../actions";
+import TeamCrest from "@/components/TeamCrest";
 
 // Same violet used elsewhere in this app for "custom, not from the API"
 // things (the tactical board's generic marker) — reused here so a manual
@@ -193,8 +194,7 @@ export default function PreparationFixtureList({
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       {row.opponentLogo ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={row.opponentLogo} alt="" className="h-5 w-5 object-contain" />
+                        <TeamCrest logo={row.opponentLogo} className="h-5 w-5" />
                       ) : (
                         <span
                           className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold"

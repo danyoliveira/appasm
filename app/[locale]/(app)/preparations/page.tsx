@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getTeamSeasonFixtures, getTeamInfo } from "@/lib/api-football/cache";
 import { getCurrentCompetitions } from "@/lib/api-football/teamStats";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
+import { getCompetitionOptions } from "@/lib/competitionOptions";
 import AddManualPreparation from "./AddManualPreparation";
 import PreparationFixtureList, {
   type PreparationFixtureRow,
@@ -107,7 +108,9 @@ export default async function PreparationListPage({
   if (teamId) {
     const { data: manualRows } = await supabase
       .from("manual_preparations")
-      .select("id, opponent_team_id, opponent_name, opponent_logo, match_date")
+      .select(
+        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_name, competition_logo, is_home",
+      )
       .eq("team_id", teamId)
       .order("match_date", { ascending: true });
 
@@ -119,9 +122,9 @@ export default async function PreparationListPage({
         date: row.match_date,
         opponentName: opponents[i].name,
         opponentLogo: opponents[i].logo,
-        competitionName: null,
-        competitionLogo: null,
-        isHome: true,
+        competitionName: row.competition_name,
+        competitionLogo: row.competition_logo,
+        isHome: row.is_home,
         isPrepared: true,
         isManual: true,
       }));
@@ -136,12 +139,14 @@ export default async function PreparationListPage({
     }
   }
 
+  const competitionOptions = isCoach && teamId ? await getCompetitionOptions(teamId) : [];
+
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("navPreparation")}</h1>
       <p className="mt-2 text-sm text-muted">{t("preparationPickFixtureSubtitle")}</p>
 
-      {isCoach && <AddManualPreparation />}
+      {isCoach && <AddManualPreparation competitions={competitionOptions} />}
 
       <PreparationFixtureList
         past={pastFixtureRows}

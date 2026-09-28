@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useLayoutEffect, useSyncExternalStore } from "react";
 
 const THEME_CHANGE_EVENT = "asm-theme-change";
 
@@ -30,6 +30,25 @@ export default function ThemeToggle({
   toDarkLabel: string;
 }) {
   const isDark = useSyncExternalStore(subscribeToTheme, getIsDark, getServerIsDark);
+
+  // React owns <html>'s className (the font variables) and resets it when
+  // the root layout re-renders — a locale switch, or Strict Mode's dev
+  // remount — wiping the "dark" class the head script set. Re-apply the
+  // stored choice before paint whenever that happens.
+  useLayoutEffect(() => {
+    try {
+      const stored = localStorage.getItem("theme");
+      const wantDark = stored
+        ? stored === "dark"
+        : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (document.documentElement.classList.contains("dark") !== wantDark) {
+        document.documentElement.classList.toggle("dark", wantDark);
+        window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
+      }
+    } catch {
+      // localStorage unavailable (private mode) — keep whatever is set.
+    }
+  });
 
   function toggle() {
     const next = !isDark;

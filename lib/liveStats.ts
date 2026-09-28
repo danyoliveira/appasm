@@ -31,20 +31,22 @@ export async function resolveLiveMatchTeams(
     const manualId = preparationKey.slice("manual-".length);
     const { data: manualRow } = await admin
       .from("manual_preparations")
-      .select("opponent_team_id, opponent_name, opponent_logo")
+      .select("opponent_team_id, opponent_name, opponent_logo, is_home")
       .eq("id", manualId)
       .maybeSingle();
     if (!manualRow) return null;
 
     const opponent = await resolveManualOpponent(manualRow);
+    const ours = { name: our.name, logo: our.logo };
+    const theirs = { name: opponent.name, logo: opponent.logo };
+    const [home, away] = manualRow.is_home ? [ours, theirs] : [theirs, ours];
 
-    // Manual preparations don't record home/away — default to us at home.
     return {
-      homeName: our.name,
-      homeLogo: our.logo,
-      awayName: opponent.name,
-      awayLogo: opponent.logo,
-      ourSide: "home",
+      homeName: home.name,
+      homeLogo: home.logo,
+      awayName: away.name,
+      awayLogo: away.logo,
+      ourSide: manualRow.is_home ? "home" : "away",
     };
   }
 
