@@ -5,27 +5,33 @@ import { useRouter } from "@/i18n/navigation";
 import { removeDemoLiveGames, simulateLiveGames } from "./liveDemoActions";
 import { useLocale, useTranslations } from "next-intl";
 import Icon from "@/components/Icon";
+import type { CollectiveCounterKey } from "../../live/liveStatsShared";
 import {
-  COLLECTIVE_COUNTER_KEYS,
-  type CollectiveCounterKey,
-} from "../../live/liveStatsShared";
+  displayCollectiveFields,
+  displayGkGroups,
+  fieldLabel,
+  type LiveStatConfig,
+} from "../../live/liveStatConfig";
+import { Link } from "@/i18n/navigation";
 import type { LiveGameStats } from "@/lib/liveMatchHistory";
 import type { GkStatsByPlayer } from "../../live/liveStatsShared";
 import { GkComparisonTable, GkKeeperBreakdown, gkTotalsOf } from "./gkLiveViews";
 
 type StatKey = "possession" | CollectiveCounterKey;
 
-const STAT_KEYS: StatKey[] = ["possession", ...COLLECTIVE_COUNTER_KEYS];
+// A value of one side (missing = 0).
+const v = (g: LiveGameStats, side: "us" | "them", key: StatKey) => g[side][key] ?? 0;
 
-const STAT_LABEL_KEYS: Record<StatKey, string> = {
-  possession: "collectivePossessionLabel",
-  offensive_transition: "collectiveStatOffensiveTransitions",
-  tackle: "collectiveStatTackles",
-  interception: "collectiveStatInterceptions",
-  recovery_own_half: "collectiveStatRecoveryOwnHalf",
-  recovery_opp_half: "collectiveStatRecoveryOppHalf",
-  progressive_pass: "collectiveStatProgressivePasses",
-};
+// Whether a game had this field at all (fields are configurable and each
+// game keeps the set it kicked off with) — a game without it shows "—",
+// not 0, and doesn't count in averages.
+function gameHas(g: LiveGameStats, key: StatKey) {
+  return (
+    key === "possession" ||
+    g.statConfig.collective.some((f) => f.key === key && f.active) ||
+    v(g, "us", key) + v(g, "them", key) > 0
+  );
+}
 
 const MAX_SELECTED = 3;
 
@@ -55,9 +61,10 @@ const segmentClass = (active: boolean) =>
     active ? "bg-surface text-foreground shadow-sm" : "text-muted hover:text-foreground"
   }`;
 
-function average(games: LiveGameStats[], side: "us" | "them", key: StatKey) {
+function average(allGames: LiveGameStats[], side: "us" | "them", key: StatKey) {
+  const games = allGames.filter((g) => gameHas(g, key));
   if (!games.length) return null;
-  return games.reduce((sum, g) => sum + g[side][key], 0) / games.length;
+  return games.reduce((sum, g) => sum + v(g, side, key), 0) / games.length;
 }
 
 function formatValue(key: StatKey, value: number | null) {
@@ -69,9 +76,12 @@ function formatValue(key: StatKey, value: number | null) {
 export default function LiveStatsExplorer({
   games,
   isCoach,
+  statConfig,
 }: {
   games: LiveGameStats[];
   isCoach: boolean;
+  // The club's current fields — what's listed, in which order and name.
+  statConfig: LiveStatConfig;
 }) {
   const t = useTranslations("dashboard");
   const locale = useLocale();
@@ -104,6 +114,13 @@ export default function LiveStatsExplorer({
 
   const demoControls = isCoach ? (
     <div className="flex flex-wrap items-center gap-2">
+      <Link
+        href="/club/live-config"
+        className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent hover:text-accent"
+      >
+        <span aria-hidden>⚙</span>
+        {t("liveConfigOpenButton")}
+      </Link>
       <button
         type="button"
         disabled={isPending}
@@ -134,7 +151,18 @@ export default function LiveStatsExplorer({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
-  const [trendStat, setTrendStat] = useState<StatKey>("recovery_opp_half");
+  // Possession, then the club's counters plus any older one these games used.
+  const collectiveFields = displayCollectiveFields(
+    statConfig,
+    games.map((g) => g.statConfig),
+  );
+  const STAT_KEYS: StatKey[] = ["possession", ...collectiveFields.map((f) => f.key)];
+  const gkGroups = displayGkGroups(
+    statConfig,
+    games.map((g) => g.statConfig),
+  );
+  const [trendStatChoice, setTrendStat] = useState<StatKey>("recovery_opp_half");
+  const trendStat = STAT_KEYS.includes(trendStatChoice) ? trendStatChoice : (STAT_KEYS[1] ?? "possession");
 
   const competitions = useMemo(
     () => [...new Set(games.map((g) => g.competition?.name).filter((n): n is string => !!n))].sort(),
@@ -170,7 +198,10 @@ export default function LiveStatsExplorer({
 
   const dayLabel = (iso: string) =>
     new Date(iso).toLocaleDateString(locale, { day: "2-digit", month: "short" });
-  const label = (key: StatKey) => t(STAT_LABEL_KEYS[key]);
+  const label = (key: StatKey) =>
+    key === "possession"
+      ? t("collectivePossessionLabel")
+      : fieldLabel(collectiveFields.find((f) => f.key === key) ?? { key, label: null }, t);
 
   if (!games.length) {
     return (
@@ -229,6 +260,7 @@ export default function LiveStatsExplorer({
             key={keeper.name}
             keeper={keeper.name}
             totals={{ complete: keeper.stats, incomplete: keeper.incomplete }}
+            groups={gkGroups}
           />
         ))}
       </div>
@@ -250,9 +282,9 @@ export default function LiveStatsExplorer({
           </span>
         </div>
         <div className="space-y-3">
-          {STAT_KEYS.map((key) => {
-            const us = game.us[key];
-            const them = game.them[key];
+          {STAT_KEYS.filter((key) => gameHas(game, key)).map((key) => {
+            const us = v(game, "us", key);
+            const them = v(game, "them", key);
             const total = us + them;
             const usShare = total > 0 ? (us / total) * 100 : 50;
             const avg = average(filtered, "us", key);
@@ -311,13 +343,21 @@ export default function LiveStatsExplorer({
           </thead>
           <tbody className="divide-y divide-border">
             {STAT_KEYS.map((key) => {
-              const best = Math.max(...selectedGames.map((g) => g.us[key]));
-              const bestCount = selectedGames.filter((g) => g.us[key] === best).length;
+              const withField = selectedGames.filter((g) => gameHas(g, key));
+              const best = Math.max(...withField.map((g) => v(g, "us", key)));
+              const bestCount = withField.filter((g) => v(g, "us", key) === best).length;
               return (
                 <tr key={key}>
                   <td className="py-2 pr-2 text-xs text-muted">{label(key)}</td>
                   {selectedGames.map((g) => {
-                    const isBest = g.us[key] === best && bestCount < selectedGames.length;
+                    const isBest = gameHas(g, key) && v(g, "us", key) === best && bestCount < withField.length;
+                    if (!gameHas(g, key)) {
+                      return (
+                        <td key={g.sessionId} className="py-2 pl-2 text-xs text-muted">
+                          —
+                        </td>
+                      );
+                    }
                     return (
                       <td key={g.sessionId} className="py-2 pl-2">
                         <span
@@ -327,9 +367,9 @@ export default function LiveStatsExplorer({
                         >
                           <span className={`font-semibold ${isBest ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
                             {isBest && "▲ "}
-                            {formatValue(key, g.us[key])}
+                            {formatValue(key, v(g, "us", key))}
                           </span>
-                          <span className="text-xs text-muted">/ {formatValue(key, g.them[key])}</span>
+                          <span className="text-xs text-muted">/ {formatValue(key, v(g, "them", key))}</span>
                         </span>
                       </td>
                     );
@@ -359,13 +399,14 @@ export default function LiveStatsExplorer({
             key: g.sessionId,
             totals: totals[i],
             header: (
-              <span className="flex items-center gap-1.5">
-                <span className={`h-2 w-2 rounded-full ${SLOT[i].fill}`} />
-                ✓ / ✗ · %
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT[i].fill}`} />
+                <span className="truncate">{g.opponent.name}</span>
               </span>
             ),
           }))}
           averageTotals={filtered.map((g) => gkTotalsOf(g.gk))}
+          groups={gkGroups}
         />
       </div>
     );
@@ -602,7 +643,7 @@ export default function LiveStatsExplorer({
 // value and the opponent's, with a crosshair + tooltip on hover. Selected
 // games get a larger marker so the chart and list read as one.
 function TrendChart({
-  games,
+  games: allGames,
   statKey,
   selected,
   usLabel,
@@ -619,6 +660,7 @@ function TrendChart({
   onSelect: (id: string) => void;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const games = allGames.filter((g) => gameHas(g, statKey));
   if (games.length < 2) {
     return <p className="py-6 text-center text-xs text-muted">—</p>;
   }
@@ -626,7 +668,7 @@ function TrendChart({
   const W = 600;
   const H = 200;
   const pad = { l: 32, r: 12, t: 12, b: 26 };
-  const values = games.flatMap((g) => [g.us[statKey], g.them[statKey]]);
+  const values = games.flatMap((g) => [v(g, "us", statKey), v(g, "them", statKey)]);
   const rawMax = Math.max(1, ...values);
   const step = rawMax <= 5 ? 1 : rawMax <= 20 ? 5 : rawMax <= 50 ? 10 : 25;
   const max = Math.ceil(rawMax / step) * step;
@@ -636,7 +678,7 @@ function TrendChart({
   const x = (i: number) => pad.l + (i * (W - pad.l - pad.r)) / (games.length - 1);
   const y = (v: number) => pad.t + (1 - v / max) * (H - pad.t - pad.b);
   const path = (side: "us" | "them") =>
-    games.map((g, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(g[side][statKey]).toFixed(1)}`).join(" ");
+    games.map((g, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v(g, side, statKey)).toFixed(1)}`).join(" ");
   const labelEvery = Math.ceil(games.length / 8);
   const unit = statKey === "possession" ? "%" : "";
   const hovered = hover != null ? games[hover] : null;
@@ -680,10 +722,10 @@ function TrendChart({
           const r = isSel || hover === i ? 5.5 : 4;
           return (
             <g key={g.sessionId}>
-              <circle cx={x(i)} cy={y(g.them[statKey])} r={r} strokeWidth={2} className={`${THEM.svgFill} stroke-surface`} />
-              <circle cx={x(i)} cy={y(g.us[statKey])} r={r} strokeWidth={2} className={`${US.svgFill} stroke-surface`} />
+              <circle cx={x(i)} cy={y(v(g, "them", statKey))} r={r} strokeWidth={2} className={`${THEM.svgFill} stroke-surface`} />
+              <circle cx={x(i)} cy={y(v(g, "us", statKey))} r={r} strokeWidth={2} className={`${US.svgFill} stroke-surface`} />
               {isSel && (
-                <circle cx={x(i)} cy={y(g.us[statKey])} r={9} fill="none" strokeWidth={1.5} className="stroke-foreground/40" />
+                <circle cx={x(i)} cy={y(v(g, "us", statKey))} r={9} fill="none" strokeWidth={1.5} className="stroke-foreground/40" />
               )}
             </g>
           );
@@ -715,11 +757,11 @@ function TrendChart({
           <div className="text-muted">{dayLabel(hovered.date)}</div>
           <div className="mt-1 flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${US.fill}`} />
-            {usLabel}: <span className="font-semibold">{formatValue(statKey, hovered.us[statKey])}</span>
+            {usLabel}: <span className="font-semibold">{formatValue(statKey, v(hovered, "us", statKey))}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${THEM.fill}`} />
-            {themLabel}: <span className="font-semibold">{formatValue(statKey, hovered.them[statKey])}</span>
+            {themLabel}: <span className="font-semibold">{formatValue(statKey, v(hovered, "them", statKey))}</span>
           </div>
         </div>
       )}

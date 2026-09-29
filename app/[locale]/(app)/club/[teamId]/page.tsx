@@ -230,6 +230,7 @@ export default async function ClubDetailPage({
         <div className="mt-4">
           <ClubHeaderAccent
             logoUrl={teamInfo[0].team.logo}
+            eyebrow={teamInfo[0].team.country}
             stats={
               teamStats
                 ? [
@@ -247,7 +248,7 @@ export default async function ClubDetailPage({
                 : undefined
             }
           >
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
               {teamInfo[0].team.name}
             </h1>
           </ClubHeaderAccent>

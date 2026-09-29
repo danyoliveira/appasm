@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
-import { getLogoColor } from "@/lib/logoColor";
+import { getVividLogoColor } from "@/lib/logoColor";
 import Icon from "@/components/Icon";
 import { createManualPreparation } from "../actions";
 import ManualPreparationForm, { type CompetitionOption } from "../preparations/ManualPreparationForm";
@@ -22,6 +22,8 @@ export interface CalendarRow {
   // Set for games created from scratch — their preparation key
   // ("manual-<uuid>"); links go to the preparation instead of a fixture page.
   manualKey?: string;
+  // The game's preparation was finished (Concluída).
+  preparationFinished?: boolean;
 }
 
 const PAGE_SIZE = 5;
@@ -89,7 +91,7 @@ export default function FixtureCalendar({
   useEffect(() => {
     if (!logoUrl) return;
     let cancelled = false;
-    getLogoColor(logoUrl).then((c) => {
+    getVividLogoColor(logoUrl).then((c) => {
       if (!cancelled) setClubColor(c);
     });
     return () => {
@@ -220,7 +222,7 @@ export default function FixtureCalendar({
   function renderRow(row: CalendarRow) {
     const style = row.result ? RESULT_STYLE[row.result] : null;
     const opponentHref = row.opponent.id != null ? `/club/${row.opponent.id}` : null;
-    const matchHref = !row.manualKey && row.finished ? `/club/fixture/${row.id}` : null;
+    const matchHref = row.finished ? `/club/fixture/${row.manualKey ?? row.id}` : null;
 
     const opponent = (
       <>
@@ -263,6 +265,15 @@ export default function FixtureCalendar({
               <span className="flex min-w-0 items-center gap-2">{opponent}</span>
             )}
             {renderVenuePill(row.isHome)}
+            {row.preparationFinished && (
+              <span
+                title={t("preparationFinishedBadge")}
+                aria-label={t("preparationFinishedBadge")}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-green-600/15 text-[9px] font-bold text-green-700 dark:text-green-400"
+              >
+                ✓
+              </span>
+            )}
             {row.manualKey && (
               <span
                 className="shrink-0 rounded-full bg-sky-500/10 px-1.5 py-px text-[10px] font-medium text-sky-700 dark:text-sky-400"
@@ -335,7 +346,7 @@ export default function FixtureCalendar({
                     <span className="block truncate text-lg font-semibold">{next.opponent.name}</span>
                   )}
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-                    <span className="capitalize">
+                    <span className="first-letter:uppercase">
                       {new Date(next.date).toLocaleDateString(locale, {
                         weekday: "long",
                         day: "numeric",
@@ -370,14 +381,10 @@ export default function FixtureCalendar({
                     RESULT_STYLE[row.result!].badge
                   }`;
                   const title = `${row.opponent.name} ${row.goalsFor}–${row.goalsAgainst}`;
-                  return row.manualKey ? (
-                    <span key={row.manualKey} title={title} className={badgeClass}>
-                      {resultShort(row.result!)}
-                    </span>
-                  ) : (
+                  return (
                     <Link
-                      key={row.id}
-                      href={`/club/fixture/${row.id}`}
+                      key={row.manualKey ?? row.id}
+                      href={`/club/fixture/${row.manualKey ?? row.id}`}
                       title={title}
                       className={`${badgeClass} transition-transform hover:-translate-y-0.5`}
                     >

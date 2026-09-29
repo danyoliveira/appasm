@@ -29,9 +29,10 @@ export async function refreshSession(
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  return user;
+  // getClaims validates the session token locally (signing keys are
+  // cached) instead of asking the Auth server on every single request like
+  // getUser did — this runs before every page, so it was a round trip each
+  // time. It still refreshes an expired session (cookies written above).
+  const { data } = await supabase.auth.getClaims();
+  return data?.claims?.sub ? { id: data.claims.sub } : null;
 }

@@ -20,6 +20,8 @@ function formatClock(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+const SECOND_HALF_START_MS = 45 * 60_000;
+
 export default function MatchClock({
   startedAt,
   halftimeAt,
@@ -86,10 +88,14 @@ export default function MatchClock({
     phase === "ended" && endedAt
       ? new Date(endedAt).getTime()
       : (now ?? new Date(startedAt!).getTime());
+  // The second half always restarts the clock at 45:00, however much
+  // stoppage time the first half had or however long the break was.
   const elapsedMs =
     phase === "halftime" && halftimeAt && startedAt
       ? new Date(halftimeAt).getTime() - new Date(startedAt).getTime()
-      : referenceMs - new Date(startedAt!).getTime();
+      : secondHalfAt
+        ? SECOND_HALF_START_MS + Math.max(0, referenceMs - new Date(secondHalfAt).getTime())
+        : referenceMs - new Date(startedAt!).getTime();
 
   const phaseLabelKey: Record<Exclude<Phase, "pre">, string> = {
     "first-half": "liveStatsPhaseFirstHalf",

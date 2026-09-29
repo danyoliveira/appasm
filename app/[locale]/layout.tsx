@@ -11,6 +11,7 @@ import Container from "@/components/Container";
 import Logo from "@/components/Logo";
 import ThemeToggle from "@/components/ThemeToggle";
 import InlineScript from "@/components/InlineScript";
+import NavigationProgress from "@/components/NavigationProgress";
 import LocaleSwitcher from "@/components/LocaleSwitcher";
 import CompetitionSwitcher from "./CompetitionSwitcher";
 import CompetitionInfoButton from "./CompetitionInfoButton";
@@ -111,14 +112,17 @@ export default async function LocaleLayout({
       </head>
       <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
         <NextIntlClientProvider>
+          <NavigationProgress />
           <header className="border-b border-border">
-            <Container className="flex items-center justify-between py-4">
+            <Container className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 sm:py-4">
               <Link href="/">
                 <Logo />
               </Link>
-              <div className="flex items-center gap-4">
+              {/* On phones: logo + language + theme on the first row, the
+                  competition filter on its own row below (it's the widest). */}
+              <div className="contents sm:flex sm:min-w-0 sm:items-center sm:gap-4">
                 {competitionSwitcher && (
-                  <div className="flex items-center gap-2">
+                  <div className="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">
                     <CompetitionSwitcher
                       key={competitionSwitcher.selected}
                       competitions={competitionSwitcher.competitions}
@@ -136,7 +140,9 @@ export default async function LocaleLayout({
                     />
                   </div>
                 )}
-                <LocaleSwitcher label={t("languageLabel")} />
+                <div className="ml-auto sm:ml-0">
+                  <LocaleSwitcher label={t("languageLabel")} />
+                </div>
                 <ThemeToggle
                   toLightLabel={t("themeToggleToLight")}
                   toDarkLabel={t("themeToggleToDark")}

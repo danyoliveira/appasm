@@ -23,6 +23,7 @@ export default function TacticalAnalysisSection({
   teamColors,
   customPlayers,
   onCustomPlayersChange,
+  readOnly = false,
 }: {
   preparationKey: string;
   opponentSquad: OpponentSquadOption[];
@@ -35,6 +36,8 @@ export default function TacticalAnalysisSection({
   teamColors: TeamColors;
   customPlayers: BenchOption[];
   onCustomPlayersChange: Dispatch<SetStateAction<BenchOption[]>>;
+  // Finished preparation: only the saved analyses, no board to draw on.
+  readOnly?: boolean;
 }) {
   const t = useTranslations("dashboard");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,6 +49,7 @@ export default function TacticalAnalysisSection({
 
   return (
     <>
+      {!readOnly && (
       <TacticalBoard
         preparationKey={preparationKey}
         opponentSquad={opponentSquad}
@@ -61,8 +65,9 @@ export default function TacticalAnalysisSection({
         customPlayers={customPlayers}
         onCustomPlayersChange={onCustomPlayersChange}
       />
+      )}
 
-      <h4 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-muted">
+      <h4 className={`mb-2 ${readOnly ? "" : "mt-6"} text-xs font-semibold uppercase tracking-wide text-muted`}>
         {t("tacticalSavedTitle")}
       </h4>
       <TacticalSnapshotList

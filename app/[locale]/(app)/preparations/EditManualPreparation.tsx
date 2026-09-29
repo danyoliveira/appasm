@@ -35,10 +35,17 @@ export default function EditManualPreparation({
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, startSaving] = useTransition();
+  const [saveFailed, setSaveFailed] = useState(false);
 
   function handleSubmit(opponent: ManualOpponentSelection, matchDateIso: string, next: ManualMatchDetails) {
+    setSaveFailed(false);
     startSaving(async () => {
-      await updateManualPreparation(id, opponent, matchDateIso, next);
+      try {
+        await updateManualPreparation(id, opponent, matchDateIso, next);
+      } catch {
+        setSaveFailed(true);
+        return;
+      }
       setIsOpen(false);
       router.refresh();
     });
@@ -69,6 +76,7 @@ export default function EditManualPreparation({
         competitions={competitions}
         initialDetails={details}
       />
+      {saveFailed && <p className="mt-2 text-xs text-red-500">{t("manualPreparationSaveError")}</p>}
     </div>
   );
 }

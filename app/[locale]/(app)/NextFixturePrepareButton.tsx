@@ -1,5 +1,6 @@
 "use client";
 
+import { announceNavigation } from "@/components/NavigationProgress";
 import { useState } from "react";
 import { useRouter } from "@/i18n/navigation";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -25,6 +26,7 @@ export default function NextFixturePrepareButton({
 
   function handleClick() {
     if (isPrepared) {
+      announceNavigation();
       router.push(`/preparations/${fixtureId}`);
     } else {
       setConfirmOpen(true);
@@ -32,6 +34,7 @@ export default function NextFixturePrepareButton({
   }
 
   function handleConfirm() {
+    announceNavigation();
     router.push(`/preparations/${fixtureId}`);
     setConfirmOpen(false);
   }

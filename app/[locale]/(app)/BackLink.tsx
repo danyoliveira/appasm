@@ -1,5 +1,6 @@
 "use client";
 
+import { announceNavigation } from "@/components/NavigationProgress";
 import { useRouter } from "@/i18n/navigation";
 
 // Every "back" link in the dashboard used to point at one fixed page (e.g.
@@ -14,6 +15,7 @@ export default function BackLink({ href, label }: { href: string; label: string 
     <button
       type="button"
       onClick={() => {
+        announceNavigation();
         if (window.history.length > 1) router.back();
         else router.push(href);
       }}

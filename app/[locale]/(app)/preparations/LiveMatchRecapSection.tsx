@@ -53,6 +53,7 @@ export default function LiveMatchRecapSection({
       homePlayers={recap.homeLineup.players}
       awayPlayers={recap.awayLineup.players}
       ourPlayers={recap.ourSide === "home" ? recap.homeLineup.players : recap.awayLineup.players}
+      statConfig={recap.statConfig}
       entries={recap.entries}
       collectiveStats={recap.collectiveStats}
       ourGkStats={recap.ourSide === "home" ? recap.gkStats.home : recap.gkStats.away}

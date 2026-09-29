@@ -63,20 +63,29 @@ function draftFor(fields: TeamStatFieldDef[], values: TeamManualStatsInput): Rec
 // Same rule as the player's comparison table: the hand-entered number is
 // the source of truth, so the color lands on the external (API) figure —
 // green once it agrees with the internal one, amber while it doesn't.
+const LIVE_DOT = "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500";
+
 function ComparisonRow({
   label,
   external,
   internalValue,
+  liveValue,
+  liveTitle,
   isEditing,
   onChange,
 }: {
   label: string;
   external: number | null;
   internalValue: string;
+  // From ASM Live Mode — the internal value whenever none was typed in.
+  liveValue: number | null;
+  liveTitle: string;
   isEditing: boolean;
   onChange: (value: string) => void;
 }) {
-  const internalNum = internalValue.trim() ? Number(internalValue.trim()) : null;
+  const manualNum = internalValue.trim() ? Number(internalValue.trim()) : null;
+  const fromLive = manualNum == null && liveValue != null;
+  const internalNum = manualNum ?? liveValue;
   const isMatch = external != null && internalNum != null && external === internalNum;
   const isMismatch = external != null && internalNum != null && external !== internalNum;
 
@@ -85,7 +94,7 @@ function ComparisonRow({
       <span className="text-muted">{label}</span>
       <span
         className={`text-right font-semibold ${
-          isMatch ? "text-green-600" : isMismatch ? "text-yellow-600" : ""
+          isMatch ? "text-green-600 dark:text-green-400" : isMismatch ? "text-amber-600 dark:text-amber-400" : ""
         }`}
       >
         {external ?? "-"}
@@ -95,10 +104,18 @@ function ComparisonRow({
           type="number"
           value={internalValue}
           onChange={(e) => onChange(e.target.value)}
-          className="w-14 justify-self-end rounded-md border border-border bg-background px-1.5 py-0.5 text-right text-sm text-foreground outline-none focus:border-accent"
+          placeholder={liveValue != null ? String(liveValue) : undefined}
+          title={liveValue != null ? liveTitle : undefined}
+          className="w-14 justify-self-end rounded-md border border-border bg-background px-1.5 py-0.5 text-right text-sm text-foreground outline-none placeholder:text-sky-600/60 focus:border-accent"
         />
       ) : (
-        <span className="text-right font-semibold">{internalNum ?? "-"}</span>
+        <span
+          className="flex items-center justify-end gap-1.5 font-semibold tabular-nums"
+          title={fromLive ? liveTitle : undefined}
+        >
+          {fromLive && <span aria-hidden className={LIVE_DOT} />}
+          {internalNum ?? "-"}
+        </span>
       )}
     </div>
   );
@@ -110,6 +127,7 @@ export default function TeamStatsComparison({
   fields,
   externalValues,
   internalValues,
+  liveValues = {},
   title,
 }: {
   teamId: number;
@@ -120,6 +138,8 @@ export default function TeamStatsComparison({
   // fields. Saving sends the whole thing back with only this card's fields
   // overridden, so editing "Casa" can't wipe out "Penalidades" and so on.
   internalValues: TeamManualStatsInput;
+  // Recorded in ASM Live Mode (penalties aren't, so they're never here).
+  liveValues?: Partial<TeamManualStatsInput>;
   title: string;
 }) {
   const t = useTranslations("dashboard");
@@ -199,11 +219,20 @@ export default function TeamStatsComparison({
             label={t(field.labelKey)}
             external={externalValues[field.key]}
             internalValue={draft[field.key]}
+            liveValue={liveValues[field.key] ?? null}
+            liveTitle={t("statsLiveValueHint")}
             isEditing={isEditing}
             onChange={(value) => handleFieldChange(field.key, value)}
           />
         ))}
       </div>
+
+      {!isEditing && fields.some((f) => !draft[f.key]?.trim() && liveValues[f.key] != null) && (
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted">
+          <span aria-hidden className={LIVE_DOT} />
+          {t("statsLegendLive")}
+        </p>
+      )}
     </div>
   );
 }

@@ -14,6 +14,8 @@ import TeamDossier from "../../TeamDossier";
 import { PLAYER_DOSSIER_CATEGORIES } from "../../dossierShared";
 import { loadDossierFiles } from "@/lib/dossier";
 import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
+import { aggregateLivePlayerTotals } from "@/lib/livePlayerStats";
+import { loadTeamStatConfig } from "@/lib/liveStatConfigServer";
 import { nameSimilarity } from "@/lib/playerMatching";
 import GkLiveExplorer from "./GkLiveExplorer";
 import {
@@ -41,9 +43,13 @@ import PreparationVideoList, {
   type PreparationVideoRow,
 } from "../../../preparations/PreparationVideoList";
 import BackLink from "../../../BackLink";
+import TeamCrest from "@/components/TeamCrest";
 
 interface PlayerMatch {
   fixture: Fixture;
+  // The team the player played for in it — ours, or their own club when
+  // they aren't ours (opponent/result are relative to this team).
+  teamId: number;
   minutes: number;
   rating: string | null;
   goals: number;
@@ -56,7 +62,7 @@ interface PlayerMatch {
 }
 import type { PlayerStatus, PlayerManualStatsInput } from "../../../actions";
 import { translatePosition, translateInjuryType, shortenPlayerName } from "../../playerShared";
-import { matchResult, FixtureTeamsRow } from "../../fixtureHelpers";
+import { matchResult } from "../../fixtureHelpers";
 import { HeaderStatusChip, PendingInjuryBanner, InjuryReturnPrompt } from "./PlayerHeaderStatus";
 import PlayerHero from "./PlayerHero";
 import NotesList from "../../../notes/NotesList";
@@ -82,21 +88,40 @@ function StatRow({
   verified?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between py-2 text-sm">
-      <span className="text-muted">
-        {label}
-        {verified && <span className="ml-1 text-green-600">✓</span>}
+    <div className="flex items-center justify-between gap-3 py-2 text-sm">
+      <span className="truncate text-muted">{label}</span>
+      <span className="flex items-center gap-1 font-semibold tabular-nums">
+        {value}
+        {verified && <span className="text-[10px] text-green-600">✓</span>}
       </span>
-      <span className="font-semibold">{value}</span>
+    </div>
+  );
+}
+
+// "x of y" stats (dribbles, duels): the count plus a thin success bar.
+function RatioRow({ label, success, total }: { label: string; success: number; total: number }) {
+  const pct = total > 0 ? Math.round((success / total) * 100) : null;
+  return (
+    <div className="py-2 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-muted">{label}</span>
+        <span className="font-semibold tabular-nums">
+          {success}/{total}
+          {pct != null && <span className="ml-1.5 text-[11px] font-normal text-muted">{pct}%</span>}
+        </span>
+      </div>
+      <div className="mt-1 h-1 overflow-hidden rounded-full bg-border">
+        <div className="h-full rounded-full bg-accent" style={{ width: `${pct ?? 0}%` }} />
+      </div>
     </div>
   );
 }
 
 function StatGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mt-4 first:mt-0">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
-      <div className="mt-1 divide-y divide-border">{children}</div>
+    <div className="rounded-xl border border-border bg-background">
+      <h3 className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
+      <div className="divide-y divide-border px-4 pb-1.5">{children}</div>
     </div>
   );
 }
@@ -111,12 +136,12 @@ function HeadlineStat({
   verified?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-background p-3 text-center">
-      <div className="text-xl font-bold">
+    <div className="rounded-xl border border-border bg-background px-3 py-3.5 text-center">
+      <div className="flex items-center justify-center gap-1 text-2xl font-bold tabular-nums">
         {value}
-        {verified && <span className="ml-1 text-sm text-green-600">✓</span>}
+        {verified && <span className="text-xs text-green-600">✓</span>}
       </div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-muted">{label}</div>
+      <div className="mt-0.5 truncate text-[10px] uppercase tracking-wide text-muted">{label}</div>
     </div>
   );
 }
@@ -253,7 +278,7 @@ export default async function PlayerDetailPage({
       playedFixtures.forEach((fx, i) => {
         const appearance = appearancesPerFixture[i].get(playerId);
         if (appearance) {
-          playerMatches.push({ fixture: fx, ...appearance });
+          playerMatches.push({ fixture: fx, teamId: matchTeamId, ...appearance });
         }
       });
       playerMatches.sort(
@@ -725,7 +750,7 @@ export default async function PlayerDetailPage({
   // alongside PlayerManualStatsForm (our own squad).
   const externalStatsContent = (
     <>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <HeadlineStat
           label={t("playerStatAppearances")}
           value={totals.appearances}
@@ -748,6 +773,7 @@ export default async function PlayerDetailPage({
         />
       </div>
 
+      <div className="mt-4 space-y-3">
       <StatGroup title={t("statGroupGeneral")}>
         <StatRow label={t("statLineups")} value={totals.lineups} verified={hasVerifiedTotals} />
         <StatRow
@@ -762,18 +788,12 @@ export default async function PlayerDetailPage({
           <StatGroup title={t("statGroupAttack")}>
             <StatRow label={t("statShots")} value={totals.shotsTotal} />
             <StatRow label={t("statShotsOn")} value={totals.shotsOn} />
-            <StatRow
-              label={t("statDribbles")}
-              value={`${totals.dribbleSuccess}/${totals.dribbleAttempts}`}
-            />
+            <RatioRow label={t("statDribbles")} success={totals.dribbleSuccess} total={totals.dribbleAttempts} />
           </StatGroup>
           <StatGroup title={t("statGroupDefense")}>
             <StatRow label={t("statTackles")} value={totals.tackles} />
             <StatRow label={t("statInterceptions")} value={totals.interceptions} />
-            <StatRow
-              label={t("statDuelsWon")}
-              value={`${totals.duelsWon}/${totals.duelsTotal}`}
-            />
+            <RatioRow label={t("statDuelsWon")} success={totals.duelsWon} total={totals.duelsTotal} />
           </StatGroup>
         </>
       )}
@@ -789,12 +809,36 @@ export default async function PlayerDetailPage({
         <StatRow label={t("statYellowCards")} value={totals.yellow} verified={hasVerifiedTotals} />
         <StatRow label={t("statRedCards")} value={totals.red} verified={hasVerifiedTotals} />
       </StatGroup>
+      </div>
 
       <p className="mt-4 border-t border-border pt-3 text-xs text-muted">
         <span className="text-green-600">✓</span> {t("verifiedStatsLegend")}
       </p>
     </>
   );
+
+  // ASM Live Mode games of the current stint — they fill the internal stats
+  // the coach hasn't typed in, and feed the goalkeeper's Live Mode tab.
+  let allLiveGames: LiveGameStats[] = [];
+  if (squadPlayer) {
+    const { data: stintRow } = currentStintId
+      ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
+      : { data: null };
+    allLiveGames = await loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
+  }
+  const liveTotals = aggregateLivePlayerTotals(allLiveGames).get(playerId);
+  const liveValues = liveTotals
+    ? {
+        appearances: liveTotals.appearances,
+        lineups: liveTotals.lineups,
+        minutes: liveTotals.minutes,
+        goals: liveTotals.goals,
+        assists: liveTotals.assists,
+        yellowCards: liveTotals.yellowCards,
+        redCards: liveTotals.redCards,
+        ...(isGoalkeeper ? { conceded: liveTotals.conceded } : {}),
+      }
+    : undefined;
 
   const overviewContent = (
     <div className="space-y-8">
@@ -816,6 +860,7 @@ export default async function PlayerDetailPage({
                   isGoalkeeper={isGoalkeeper}
                   externalValues={externalValues}
                   initialInternalValues={manualStats}
+                  liveValues={liveValues}
                   title={t("seasonStatsTitle")}
                 />
               ) : (
@@ -828,58 +873,109 @@ export default async function PlayerDetailPage({
           )}
 
         <div className="js-matches-card flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <h2 className="text-lg font-semibold">⚽ {t("playerMatchesTitle")}</h2>
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            {t("playerMatchesTitle")}
+            {displayedMatches.length > 0 && (
+              <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium tabular-nums text-muted ring-1 ring-border">
+                {displayedMatches.length}
+              </span>
+            )}
+          </h2>
           {displayedMatches.length === 0 ? (
             <p className="mt-3 text-sm text-muted">{t("noRecentResults")}</p>
           ) : (
             <MatchesScrollList statsCardId="player-season-stats-card">
               {displayedMatches.map((pm) => {
                 const fx = pm.fixture;
-                const result = matchResult(fx, teamId);
+                const result = matchResult(fx, pm.teamId);
+                const weAreHome = fx.teams.home.id === pm.teamId;
+                const opp = weAreHome ? fx.teams.away : fx.teams.home;
+                const ours = weAreHome ? fx.goals.home : fx.goals.away;
+                const theirs = weAreHome ? fx.goals.away : fx.goals.home;
+                const date = new Date(fx.fixture.date);
+                const rating = pm.rating ? Number(pm.rating) : null;
+                const ratingTone =
+                  rating == null
+                    ? ""
+                    : rating >= 7.5
+                      ? "bg-green-600/10 text-green-700 dark:text-green-400"
+                      : rating >= 6.5
+                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        : "bg-red-500/10 text-red-600 dark:text-red-400";
                 return (
-                  <div
+                  <Link
                     key={fx.fixture.id}
-                    className="rounded-lg border border-border bg-background p-3 text-sm"
+                    href={`/club/fixture/${fx.fixture.id}`}
+                    className="group relative flex items-center gap-3 rounded-xl border border-border bg-background py-2.5 pl-4 pr-3 transition-colors hover:border-accent/50"
                   >
-                    <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                      <Link href={`/club/fixture/${fx.fixture.id}`} className="hover:text-accent">
-                        {new Date(fx.fixture.date).toLocaleDateString(locale)}
-                      </Link>
-                      {result && (
-                        <span
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                            result === "W"
-                              ? "bg-green-600"
-                              : result === "L"
-                                ? "bg-red-500"
-                                : "bg-muted"
-                          }`}
-                        >
-                          {result}
+                    {result && (
+                      <span
+                        aria-hidden
+                        className={`absolute inset-y-2 left-0 w-1 rounded-full ${
+                          result === "W" ? "bg-green-600" : result === "L" ? "bg-red-500" : "bg-muted"
+                        }`}
+                      />
+                    )}
+                    <div className="w-10 shrink-0 text-center" title={fx.league.name}>
+                      <div className="text-base font-bold leading-none tabular-nums">{date.getDate()}</div>
+                      <div className="mt-0.5 text-[10px] uppercase text-muted">
+                        {date.toLocaleDateString(locale, { month: "short" }).replace(".", "")}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <TeamCrest logo={opp.logo} className="h-5 w-5" />
+                        <span className="truncate text-sm font-medium group-hover:text-accent">{opp.name}</span>
+                        <span className="shrink-0 text-[10px] text-muted">
+                          {weAreHome ? t("homeLabel") : t("awayLabel")}
                         </span>
-                      )}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px]">
+                        {fx.league.logo && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={fx.league.logo} alt="" title={fx.league.name} className="mr-0.5 h-3.5 w-3.5 object-contain" />
+                        )}
+                        {/* 0 minutes = on the bench the whole game, whatever the
+                            source says about starting. */}
+                        {pm.minutes > 0 ? (
+                          <>
+                            <span className="rounded-md bg-surface px-1.5 py-0.5 font-medium tabular-nums ring-1 ring-border">
+                              {pm.minutes}&apos;
+                            </span>
+                            <span className="rounded-md bg-surface px-1.5 py-0.5 text-muted ring-1 ring-border">
+                              {pm.started ? t("statLineups") : t("liveStatsAddSubButton")}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="rounded-md bg-surface px-1.5 py-0.5 text-muted ring-1 ring-border">
+                            {t("playerMatchUnusedSub")}
+                          </span>
+                        )}
+                        {rating != null && (
+                          <span className={`rounded-md px-1.5 py-0.5 font-semibold tabular-nums ${ratingTone}`}>
+                            ★ {rating.toFixed(1)}
+                          </span>
+                        )}
+                        {pm.goals > 0 && <span className="rounded-md bg-surface px-1.5 py-0.5 ring-1 ring-border">⚽ {pm.goals}</span>}
+                        {pm.assists > 0 && <span className="rounded-md bg-surface px-1.5 py-0.5 ring-1 ring-border">🅰️ {pm.assists}</span>}
+                        {pm.yellow > 0 && <span className="rounded-md bg-surface px-1.5 py-0.5 ring-1 ring-border">🟨 {pm.yellow}</span>}
+                        {pm.red > 0 && <span className="rounded-md bg-surface px-1.5 py-0.5 ring-1 ring-border">🟥 {pm.red}</span>}
+                      </div>
                     </div>
-                    <FixtureTeamsRow
-                      home={fx.teams.home}
-                      away={fx.teams.away}
-                      center={
-                        <Link
-                          href={`/club/fixture/${fx.fixture.id}`}
-                          className="font-semibold hover:text-accent"
-                        >
-                          {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                        </Link>
-                      }
-                    />
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      <span>{pm.minutes}&apos;</span>
-                      {pm.rating && <span>⭐ {Number(pm.rating).toFixed(1)}</span>}
-                      {pm.goals > 0 && <span>⚽ {pm.goals}</span>}
-                      {pm.assists > 0 && <span>🅰️ {pm.assists}</span>}
-                      {pm.yellow > 0 && <span>🟨 {pm.yellow}</span>}
-                      {pm.red > 0 && <span>🟥 {pm.red}</span>}
-                    </div>
-                  </div>
+
+                    <span
+                      className={`shrink-0 rounded-lg px-2 py-1 text-sm font-bold tabular-nums ${
+                        result === "W"
+                          ? "bg-green-600 text-white"
+                          : result === "L"
+                            ? "bg-red-500 text-white"
+                            : "bg-border text-foreground"
+                      }`}
+                    >
+                      {ours ?? "-"}-{theirs ?? "-"}
+                    </span>
+                  </Link>
                 );
               })}
             </MatchesScrollList>
@@ -1108,11 +1204,7 @@ export default async function PlayerDetailPage({
   // entries from before lineups were linked fall back to a close name match.
   let gkLiveGames: LiveGameStats[] = [];
   if (squadPlayer && isGoalkeeper) {
-    const { data: stintRow } = currentStintId
-      ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
-      : { data: null };
-    const allGames = await loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
-    gkLiveGames = allGames.flatMap((game) => {
+    gkLiveGames = allLiveGames.flatMap((game) => {
       const mine = game.gk.filter(
         (keeper) =>
           keeper.playerId === playerId ||
@@ -1121,7 +1213,8 @@ export default async function PlayerDetailPage({
       return mine.length ? [{ ...game, gk: mine }] : [];
     });
   }
-  const liveContent = squadPlayer && isGoalkeeper ? <GkLiveExplorer games={gkLiveGames} /> : null;
+  const gkStatConfig = squadPlayer && isGoalkeeper ? await loadTeamStatConfig(supabase, teamId) : null;
+  const liveContent = squadPlayer && isGoalkeeper ? <GkLiveExplorer games={gkLiveGames} statConfig={gkStatConfig!} /> : null;
 
   const dossierContent =
     squadPlayer && currentStintId ? (

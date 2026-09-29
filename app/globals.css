@@ -54,6 +54,13 @@ body {
   color: var(--foreground);
 }
 
+/* Crests and competition logos (every one is an object-contain image;
+   player photos are object-cover) — dark ones (black/navy on transparent)
+   would vanish on the dark background, so they get a faint light outline. */
+.dark img.object-contain {
+  filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.55));
+}
+
 ::selection {
   background: var(--accent);
   color: var(--accent-foreground);

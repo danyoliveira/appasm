@@ -3,6 +3,7 @@ import type { Locale } from "@/i18n/routing";
 import { Link } from "@/i18n/navigation";
 import { eventIcon, eventTooltipLine, playerEvents } from "./eventUtils";
 import { shortenPlayerName } from "../../playerShared";
+import TeamCrest from "@/components/TeamCrest";
 
 function parseGrid(grid: string | null): [number, number] | null {
   if (!grid) return null;
@@ -17,12 +18,14 @@ function TeamPlayers({
   events,
   locale,
   assistLabel,
+  isLinkable,
 }: {
   lineup: FixtureLineup;
   side: "home" | "away";
   events: FixtureEvent[];
   locale: Locale;
   assistLabel: string;
+  isLinkable: (playerId: number) => boolean;
 }) {
   const rows = new Map<number, FixtureLineup["startXI"]>();
   lineup.startXI.forEach((p) => {
@@ -57,13 +60,8 @@ function TeamPlayers({
                   : 20 + lineT * 26;
             const isGK = p.player.pos === "G";
             const evts = playerEvents(p.player.id, events);
-            return (
-              <Link
-                key={p.player.id}
-                href={`/club/player/${p.player.id}`}
-                className="group absolute z-0 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center hover:z-50"
-                style={{ left: `${horizontalPct}%`, top: `${verticalPct}%` }}
-              >
+            const content = (
+              <>
                 <div className="relative">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold shadow ring-2 ${
@@ -95,7 +93,21 @@ function TeamPlayers({
                     ))}
                   </div>
                 )}
+              </>
+            );
+            const className =
+              "group absolute z-0 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center hover:z-50";
+            const style = { left: `${horizontalPct}%`, top: `${verticalPct}%` };
+            // Players without a page of their own (e.g. an ASM Live Mode
+            // opponent typed by name) aren't links.
+            return isLinkable(p.player.id) ? (
+              <Link key={p.player.id} href={`/club/player/${p.player.id}`} className={className} style={style}>
+                {content}
               </Link>
+            ) : (
+              <div key={p.player.id} className={className} style={style}>
+                {content}
+              </div>
             );
           }),
       )}
@@ -151,19 +163,32 @@ function PenaltyArea({ position }: { position: "top" | "bottom" }) {
   );
 }
 
-function TeamLabel({ lineup, align }: { lineup: FixtureLineup; align: "left" | "right" }) {
-  return (
-    <Link
-      href={`/club/${lineup.team.id}`}
-      className={`flex items-center gap-2 hover:text-accent ${align === "right" ? "flex-row-reverse text-right" : ""}`}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={lineup.team.logo} alt="" className="h-6 w-6 shrink-0 object-contain" />
+function TeamLabel({ lineup, align, side }: { lineup: FixtureLineup; align: "left" | "right"; side: "home" | "away" }) {
+  const className = `flex items-center gap-2 ${align === "right" ? "flex-row-reverse text-right" : ""}`;
+  const content = (
+    <>
+      {/* Same look as this team's tokens on the pitch (home white at the
+          bottom, away dark at the top), so it's clear which is which. */}
+      <span
+        aria-hidden
+        className={`h-3.5 w-3.5 shrink-0 rounded-full ring-2 ${
+          side === "home" ? "bg-white ring-black/20" : "bg-slate-900 ring-white/40"
+        }`}
+      />
+      <TeamCrest logo={lineup.team.logo} className="h-6 w-6" />
       <div className="min-w-0">
         <p className="truncate text-xs font-semibold">{lineup.team.name}</p>
         <p className="text-[11px] text-muted">{lineup.formation}</p>
       </div>
+    </>
+  );
+  // A club outside API-Football (typed by hand) has no page to open.
+  return lineup.team.id > 0 ? (
+    <Link href={`/club/${lineup.team.id}`} className={`${className} hover:text-accent`}>
+      {content}
     </Link>
+  ) : (
+    <div className={className}>{content}</div>
   );
 }
 
@@ -173,20 +198,26 @@ export default function PitchDiagram({
   events = [],
   locale,
   assistLabel,
+  linkablePlayerIds,
 }: {
   home: FixtureLineup | undefined;
   away: FixtureLineup | undefined;
   events?: FixtureEvent[];
   locale: Locale;
   assistLabel: string;
+  // Only these players get a link to their page; omitted = every player
+  // (API-Football lineups, where every id is a real player).
+  linkablePlayerIds?: number[];
 }) {
   if (!home || !away) return null;
+  const linkable = linkablePlayerIds ? new Set(linkablePlayerIds) : null;
+  const isLinkable = (id: number) => !linkable || linkable.has(id);
 
   return (
     <div>
       <div className="flex items-center justify-between gap-2 px-1">
-        <TeamLabel lineup={home} align="left" />
-        <TeamLabel lineup={away} align="right" />
+        <TeamLabel lineup={home} align="left" side="home" />
+        <TeamLabel lineup={away} align="right" side="away" />
       </div>
 
       <div className="relative mx-auto mt-3 aspect-[3/4.4] w-full max-w-lg">
@@ -209,8 +240,8 @@ export default function PitchDiagram({
           </div>
         </div>
         <div className="absolute inset-3">
-          <TeamPlayers lineup={home} side="home" events={events} locale={locale} assistLabel={assistLabel} />
-          <TeamPlayers lineup={away} side="away" events={events} locale={locale} assistLabel={assistLabel} />
+          <TeamPlayers lineup={home} side="home" events={events} locale={locale} assistLabel={assistLabel} isLinkable={isLinkable} />
+          <TeamPlayers lineup={away} side="away" events={events} locale={locale} assistLabel={assistLabel} isLinkable={isLinkable} />
         </div>
       </div>
     </div>

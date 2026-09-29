@@ -12,9 +12,10 @@ import {
   type TeamSearchResult,
   type ApiFootballReason,
 } from "@/lib/api-football/client";
-import { getTeamsByCountry, getSquad } from "@/lib/api-football/cache";
+import { getTeamsByCountry, getSquad, forgetCachedTeamData } from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
 import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
+import { parseLiveStatConfig, type LiveStatConfig } from "../live/liveStatConfig";
 import type { GameSubmoment, VideoCategory } from "./preparations/videoCategories";
 
 export type ClubsResult = {
@@ -142,8 +143,112 @@ export async function updateManualPreparation(
     update.opponent_name = "name" in opponent ? opponent.name : null;
   }
 
-  const { error } = await supabase.from("manual_preparations").update(update).eq("id", id);
+  // .select() so a row RLS filtered out shows up as an error instead of a
+  // silent "saved" that changed nothing.
+  const { data, error } = await supabase.from("manual_preparations").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error("Manual preparation not updated");
+  revalidatePath("/", "layout");
+}
+
+// Saves the club's ASM Live Mode fields (Configurar campos). Games already
+// kicked off keep the fields they started with; the next ones use these.
+export async function saveLiveStatConfig(config: LiveStatConfig) {
+  const { supabase, coachId } = await requireCoach();
+  const { data: coachProfile } = await supabase
+    .from("profiles")
+    .select("api_football_team_id")
+    .eq("role", "coach")
+    .maybeSingle();
+  const teamId = coachProfile?.api_football_team_id;
+  if (!teamId) throw new Error("No club selected yet");
+
+  const parsed = parseLiveStatConfig(config);
+  if (!parsed) throw new Error("Invalid config");
+  // Every key only once (a field lives in one place).
+  const keys = [...parsed.collective.map((f) => f.key), ...parsed.gkGroups.flatMap((g) => g.fields.map((f) => f.key))];
+  if (new Set(keys).size !== keys.length) throw new Error("Duplicate field");
+
+  const { error } = await supabase.from("live_stat_configs").upsert(
+    { team_id: teamId, config: parsed, updated_at: new Date().toISOString(), updated_by: coachId },
+    { onConflict: "team_id" },
+  );
+  if (error) throw new Error(error.message);
+  revalidatePath("/", "layout");
+}
+
+// Finishes (Concluída — read-only from then on) or reopens a preparation.
+// Finishing also closes the game's ASM Live Mode session if it was left
+// running, and — for a manual game still without a score — carries over
+// the score logged there, same as full time does.
+export async function setPreparationFinished(preparationKey: string, finished: boolean) {
+  const { supabase, coachId } = await requireCoach();
+  const finishedAt = finished ? new Date().toISOString() : null;
+  const finishedBy = finished ? coachId : null;
+
+  if (finished) {
+    await supabase
+      .from("live_match_sessions")
+      .update({ ended_at: finishedAt })
+      .eq("preparation_key", preparationKey)
+      .not("started_at", "is", null)
+      .is("ended_at", null);
+  }
+
+  if (preparationKey.startsWith("manual-")) {
+    const manualId = preparationKey.slice("manual-".length);
+    const update: Record<string, unknown> = { finished_at: finishedAt, finished_by: finishedBy };
+
+    if (finished) {
+      const [{ data: manualRow }, { data: session }] = await Promise.all([
+        supabase.from("manual_preparations").select("is_home, goals_for, goals_against").eq("id", manualId).maybeSingle(),
+        supabase
+          .from("live_match_sessions")
+          .select("id")
+          .eq("preparation_key", preparationKey)
+          .not("ended_at", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      if (manualRow && session && manualRow.goals_for == null && manualRow.goals_against == null) {
+        const { data: goals } = await supabase
+          .from("live_match_entries")
+          .select("team_side")
+          .eq("session_id", session.id)
+          .eq("kind", "event")
+          .eq("event_type", "goal");
+        const home = (goals ?? []).filter((g) => g.team_side === "home").length;
+        const away = (goals ?? []).filter((g) => g.team_side === "away").length;
+        update.goals_for = manualRow.is_home ? home : away;
+        update.goals_against = manualRow.is_home ? away : home;
+      }
+    }
+
+    const { data, error } = await supabase.from("manual_preparations").update(update).eq("id", manualId).select("id");
+    if (error) throw new Error(error.message);
+    if (!data?.length) throw new Error("Preparation not updated");
+  } else {
+    const { data: coachProfile } = await supabase
+      .from("profiles")
+      .select("api_football_team_id")
+      .eq("role", "coach")
+      .maybeSingle();
+    const teamId = coachProfile?.api_football_team_id;
+    if (!teamId) throw new Error("No club selected yet");
+
+    const { error } = await supabase.from("fixture_preparations").upsert(
+      {
+        team_id: teamId,
+        fixture_id: Number(preparationKey),
+        finished_at: finishedAt,
+        finished_by: finishedBy,
+      },
+      { onConflict: "team_id,fixture_id" },
+    );
+    if (error) throw new Error(error.message);
+  }
+
   revalidatePath("/", "layout");
 }
 
@@ -406,6 +511,7 @@ export async function refreshClubData(teamId: number) {
   const admin = createAdminClient();
   const { error } = await admin.from("api_football_cache").delete().eq("team_id", teamId);
   if (error) throw new Error(error.message);
+  forgetCachedTeamData(teamId);
 
   revalidatePath("/", "layout");
 }

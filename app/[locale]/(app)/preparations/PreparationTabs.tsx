@@ -51,6 +51,7 @@ export default function PreparationTabs({
   opponentName,
   liveSession,
   finished = false,
+  locked = false,
   ourLogo,
   opponentLogo,
   ourTeamName,
@@ -68,6 +69,9 @@ export default function PreparationTabs({
   opponentName: string;
   liveSession?: { startedAt: string | null; endedAt: string | null } | null;
   finished?: boolean;
+  // Finished preparation: no Modo Foco and no "Em Jogo" tab — it's a record
+  // to read now, not a match to run.
+  locked?: boolean;
   ourLogo?: string;
   opponentLogo?: string;
   ourTeamName: string;
@@ -81,7 +85,10 @@ export default function PreparationTabs({
   // Opens straight on whichever phase the match is actually in right now
   // (pre/in/post) instead of always "Informação Geral" — same signal the
   // tab's own color highlight uses, computed once at mount/refresh.
-  const [tab, setTab] = useState<TabKey>(() => currentPhase(matchDate, liveSession ?? null, finished));
+  const [tab, setTab] = useState<TabKey>(() => {
+    const phase = currentPhase(matchDate, liveSession ?? null, finished);
+    return locked && phase === "in" ? "post" : phase;
+  });
   const [isFocusMode, setIsFocusMode] = useState(false);
   // Which phase the match is actually in right now — independent of which
   // tab the coach happens to be looking at, so e.g. the "Em Jogo" tab can
@@ -92,12 +99,12 @@ export default function PreparationTabs({
   const phaseColor = useVividLogoColor(ourLogo);
   const teamColors = useTeamColors(ourLogo, opponentLogo);
 
-  const tabs: { key: TabKey; label: string }[] = [
+  const tabs = ([
     { key: "general", label: t("generalInfoTitle") },
     { key: "pre", label: t("preparationTabPreGame") },
     { key: "in", label: t("preparationTabInGame") },
     { key: "post", label: t("preparationTabPostGame") },
-  ];
+  ] as { key: TabKey; label: string }[]).filter((tabDef) => !(locked && tabDef.key === "in"));
 
   const comingSoon = (
     <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
@@ -187,13 +194,15 @@ export default function PreparationTabs({
               teamColors={teamColors}
             />
           )}
-          <button
-            type="button"
-            onClick={() => setIsFocusMode(true)}
-            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
-          >
-            {t("focusModeButton")}
-          </button>
+          {!locked && (
+            <button
+              type="button"
+              onClick={() => setIsFocusMode(true)}
+              className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+            >
+              {t("focusModeButton")}
+            </button>
+          )}
         </div>
       </div>
 

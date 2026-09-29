@@ -15,6 +15,7 @@ export default function LiveFormationTeam({
   substitutes,
   onPlayerClick,
   eventIcons,
+  saving = false,
 }: {
   teamName: string;
   players: LineupPlayer[];
@@ -26,6 +27,8 @@ export default function LiveFormationTeam({
   // substitutes list below, and a player subbed off keeps whatever they
   // logged while they were still on.
   eventIcons?: Record<string, string[]>;
+  // A drag is still being stored — blocks the next one until it is.
+  saving?: boolean;
 }) {
   const t = useTranslations("dashboard");
   const namedSubs = substitutes?.filter((p) => p.name.trim()) ?? [];
@@ -33,14 +36,24 @@ export default function LiveFormationTeam({
   return (
     <div className="rounded-2xl border border-border bg-background p-4">
       <h4 className="text-sm font-semibold">{teamName}</h4>
-      <div className="mt-3">
+      <div className="relative mt-3">
         {canEdit && onChange ? (
-          <LiveFormationPitch
-            players={players}
-            onChange={onChange}
-            onPlayerClick={onPlayerClick}
-            eventIcons={eventIcons}
-          />
+          <>
+            <LiveFormationPitch
+              players={players}
+              onChange={onChange}
+              onPlayerClick={onPlayerClick}
+              eventIcons={eventIcons}
+            />
+            {saving && (
+              <div className="absolute inset-0 flex items-start justify-center rounded-lg bg-black/10 pt-3">
+                <span className="flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  {t("savingClub")}
+                </span>
+              </div>
+            )}
+          </>
         ) : (
           <StaticTacticalPitch
             size="lg"

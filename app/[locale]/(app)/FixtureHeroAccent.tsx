@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getLogoColor, resolveOpponentColor } from "@/lib/logoColor";
+import { getVividLogoColor, resolveOpponentColor } from "@/lib/logoColor";
 
 // Same crest-color extractor used across the club pages, applied to both
 // sides at once — a faint side-to-side wash (home color fading in from the
@@ -23,7 +23,7 @@ export default function FixtureHeroAccent({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getLogoColor(homeLogo), getLogoColor(awayLogo)]).then(([h, a]) => {
+    Promise.all([getVividLogoColor(homeLogo), getVividLogoColor(awayLogo)]).then(([h, a]) => {
       if (!cancelled) {
         setHomeColor(h);
         setAwayColor(a);

@@ -1,3 +1,5 @@
+import { DEFAULT_LIVE_STAT_CONFIG, isCollectiveKey, isGkKey } from "./liveStatConfig";
+
 export const LIVE_EVENT_TYPES = ["goal", "assist", "yellow_card", "red_card", "substitution"] as const;
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 
@@ -189,8 +191,9 @@ export function currentMatchMinute(match: {
   const ended = match.endedAt ? new Date(match.endedAt).getTime() : null;
 
   let elapsedMs: number;
-  if (secondHalf != null && halftime != null) {
-    elapsedMs = halftime - started + ((ended ?? Date.now()) - secondHalf);
+  if (secondHalf != null) {
+    // The second half starts at 45', regardless of first-half stoppage time.
+    elapsedMs = 45 * 60000 + ((ended ?? Date.now()) - secondHalf);
   } else if (halftime != null) {
     elapsedMs = halftime - started;
   } else {
@@ -265,17 +268,17 @@ export function restoreToField(players: LineupPlayer[], playerName: string): Lin
 // (unlike goals/cards/subs above). Stored as `kind: "stat"` rows on the same
 // live_match_entries table (stat_key/stat_value already exist on it for
 // exactly this), so no schema change was needed to add this.
-export const COLLECTIVE_COUNTER_KEYS = [
-  "offensive_transition",
-  "tackle",
-  "interception",
-  "recovery_own_half",
-  "recovery_opp_half",
-  "progressive_pass",
-] as const;
-export type CollectiveCounterKey = (typeof COLLECTIVE_COUNTER_KEYS)[number];
+//
+// Which counters a club uses is configurable (liveStatConfig.ts) — counting
+// takes every collective key it finds; the built-in keys below are just the
+// default set (and what the demo generator uses).
+export const COLLECTIVE_COUNTER_KEYS = DEFAULT_LIVE_STAT_CONFIG.collective.map((f) => f.key);
+export type CollectiveCounterKey = string;
 
-export type CollectiveStatsSide = Record<CollectiveCounterKey, number>;
+// Counts per field key; a field with no taps may be missing — read with statOf.
+export type CollectiveStatsSide = Record<string, number>;
+
+export const statOf = (side: Record<string, number> | null | undefined, key: string): number => side?.[key] ?? 0;
 
 export type PossessionSide = "home" | "away" | "neutral";
 
@@ -294,14 +297,7 @@ export interface CollectiveStats {
 }
 
 export function emptyCollectiveStatsSide(): CollectiveStatsSide {
-  return {
-    offensive_transition: 0,
-    tackle: 0,
-    interception: 0,
-    recovery_own_half: 0,
-    recovery_opp_half: 0,
-    progressive_pass: 0,
-  };
+  return {};
 }
 
 // Raw `kind: "stat"` rows -> aggregated totals. Counters are just a tally of
@@ -318,9 +314,9 @@ export function computeCollectiveStats(
 
   for (const row of rows) {
     if (row.team_side !== "home" && row.team_side !== "away") continue;
-    if (!(COLLECTIVE_COUNTER_KEYS as readonly string[]).includes(row.stat_key ?? "")) continue;
+    if (!isCollectiveKey(row.stat_key)) continue;
     const bucket = row.team_side === "home" ? home : away;
-    bucket[row.stat_key as CollectiveCounterKey] += 1;
+    bucket[row.stat_key] = (bucket[row.stat_key] ?? 0) + 1;
   }
 
   const possessionRows = rows
@@ -349,9 +345,8 @@ export function computeCollectiveStats(
   // gets the same unfiltered set, so this has to filter down to collective-
   // only stat_keys itself, or a GK tap would falsely flag this tab (and any
   // future stat category would too) as having new activity.
-  const collectiveKeySet: readonly string[] = COLLECTIVE_COUNTER_KEYS;
   const lastStatAt = rows
-    .filter((r) => r.stat_key === "possession" || (r.stat_key && collectiveKeySet.includes(r.stat_key)))
+    .filter((r) => r.stat_key === "possession" || isCollectiveKey(r.stat_key))
     .reduce<string | null>((latest, r) => {
       if (!latest) return r.created_at;
       return new Date(r.created_at).getTime() > new Date(latest).getTime() ? r.created_at : latest;
@@ -365,24 +360,14 @@ export function computeCollectiveStats(
 // player_name carries who) rather than the whole team. Switching the
 // selected keeper doesn't lose the old one's tally — it's still in the
 // rows, just not what's being summed until they're picked again.
-export const GK_COUNTER_KEYS = [
-  "gk_reposicao",
-  "gk_reposicao_mao",
-  "gk_bloqueio_medio",
-  "gk_bloqueio_alto",
-  "gk_bloqueio_baixo",
-  "gk_defesa_lateral_baixa",
-  "gk_pontape_baliza",
-  "gk_saida_fora_area",
-  "gk_comunicacao",
-  "gk_saida_1x1",
-  "gk_cruzamento_soco_desvio",
-  "gk_cruzamentos",
-  "gk_jogo_pes",
-] as const;
-export type GkCounterKey = (typeof GK_COUNTER_KEYS)[number];
+//
+// The actions (and their groups) are configurable too — counting takes
+// every "gk_" key; the built-in keys below are the default set.
+export const GK_COUNTER_KEYS = DEFAULT_LIVE_STAT_CONFIG.gkGroups.flatMap((g) => g.fields.map((f) => f.key));
+export type GkCounterKey = string;
 
-export type GkStatsSide = Record<GkCounterKey, number>;
+// Counts per action key; missing = 0 (read with statOf).
+export type GkStatsSide = Record<string, number>;
 
 // Each goalkeeper action is recorded as completed or not (stored in the
 // row's stat_value). Rows from before this split have no value and count
@@ -429,7 +414,7 @@ export interface GkStats {
 }
 
 export function emptyGkStatsSide(): GkStatsSide {
-  return Object.fromEntries(GK_COUNTER_KEYS.map((key) => [key, 0])) as GkStatsSide;
+  return {};
 }
 
 // Groups every stat row by whichever goalkeeper was selected at the moment
@@ -447,7 +432,6 @@ function gkStatsByPlayer(
   }[],
   side: "home" | "away",
 ): GkStatsByPlayer[] {
-  const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
   const order: string[] = [];
   const totals = new Map<string, { complete: GkStatsSide; incomplete: GkStatsSide; playerId: number | null }>();
 
@@ -456,7 +440,7 @@ function gkStatsByPlayer(
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
   for (const row of sorted) {
-    if (row.team_side !== side || !row.stat_key || !row.player_name || !counterKeySet.includes(row.stat_key)) {
+    if (row.team_side !== side || !row.player_name || !isGkKey(row.stat_key)) {
       continue;
     }
     if (!totals.has(row.player_name)) {
@@ -468,7 +452,8 @@ function gkStatsByPlayer(
       order.push(row.player_name);
     }
     const entry = totals.get(row.player_name)!;
-    entry[gkOutcomeOf(row.stat_value)][row.stat_key as GkCounterKey] += 1;
+    const bucket = entry[gkOutcomeOf(row.stat_value)];
+    bucket[row.stat_key] = (bucket[row.stat_key] ?? 0) + 1;
     if (entry.playerId == null && row.player_id != null) entry.playerId = row.player_id;
   }
 
@@ -506,20 +491,20 @@ export function computeGkStats(
   const away = emptyGkStatsSide();
   const homeIncomplete = emptyGkStatsSide();
   const awayIncomplete = emptyGkStatsSide();
-  const counterKeySet: readonly string[] = GK_COUNTER_KEYS;
   for (const row of rows) {
-    if (!row.stat_key || !counterKeySet.includes(row.stat_key)) continue;
-    const key = row.stat_key as GkCounterKey;
+    if (!isGkKey(row.stat_key)) continue;
+    const key = row.stat_key;
     const incomplete = gkOutcomeOf(row.stat_value) === "incomplete";
+    const bump = (side: GkStatsSide) => (side[key] = (side[key] ?? 0) + 1);
     if (row.team_side === "home" && row.player_name && row.player_name === homeGkName) {
-      (incomplete ? homeIncomplete : home)[key] += 1;
+      bump(incomplete ? homeIncomplete : home);
     } else if (row.team_side === "away" && row.player_name && row.player_name === awayGkName) {
-      (incomplete ? awayIncomplete : away)[key] += 1;
+      bump(incomplete ? awayIncomplete : away);
     }
   }
 
   const lastStatAt = rows
-    .filter((r) => r.stat_key === "gk_selection" || (r.stat_key && counterKeySet.includes(r.stat_key)))
+    .filter((r) => r.stat_key === "gk_selection" || isGkKey(r.stat_key))
     .reduce<string | null>((latest, r) => {
       if (!latest) return r.created_at;
       return new Date(r.created_at).getTime() > new Date(latest).getTime() ? r.created_at : latest;

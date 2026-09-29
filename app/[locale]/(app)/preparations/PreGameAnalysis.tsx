@@ -21,6 +21,7 @@ export default function PreGameAnalysis({
   ourLogo,
   opponentLogo,
   isCoach,
+  readOnly = false,
   sideBySide,
   tacticalRows,
   videoRows,
@@ -31,6 +32,8 @@ export default function PreGameAnalysis({
   ourLogo?: string;
   opponentLogo?: string;
   isCoach: boolean;
+  // Finished preparation — hides the tactical board.
+  readOnly?: boolean;
   sideBySide?: boolean;
   tacticalRows: TacticalSnapshotRow[];
   videoRows: PreparationVideoRow[];
@@ -95,6 +98,7 @@ export default function PreGameAnalysis({
             teamColors={teamColors}
             customPlayers={customPlayers}
             onCustomPlayersChange={setCustomPlayers}
+            readOnly={readOnly}
           />
         </div>
       </details>

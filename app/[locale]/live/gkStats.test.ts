@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeGkStats, gkEfficiency } from "./liveStatsShared";
+import { computeGkStats, gkEfficiency, statOf } from "./liveStatsShared";
 
 const row = (stat_key: string, stat_value: string | null, created_at: string, player_name = "Trubin") => ({
   stat_key,
@@ -23,7 +23,7 @@ describe("computeGkStats complete/incomplete", () => {
     const stats = computeGkStats(rows);
     expect(stats.home.gk_reposicao).toBe(2);
     expect(stats.homeIncomplete.gk_reposicao).toBe(1);
-    expect(stats.home.gk_saida_1x1).toBe(0);
+    expect(statOf(stats.home, "gk_saida_1x1")).toBe(0);
     expect(stats.homeIncomplete.gk_saida_1x1).toBe(1);
   });
 

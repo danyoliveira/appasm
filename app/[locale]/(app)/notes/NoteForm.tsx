@@ -27,6 +27,7 @@ export default function NoteForm({
   placeholder,
   submitLabel,
   pending,
+  submitDisabled = false,
   autoFocus = false,
   onSubmit,
   onCancel,
@@ -38,6 +39,8 @@ export default function NoteForm({
   placeholder?: string;
   submitLabel: string;
   pending: boolean;
+  // Blocks only saving (e.g. no player picked yet) — Cancel stays usable.
+  submitDisabled?: boolean;
   autoFocus?: boolean;
   onSubmit: (result: NoteFormResult) => void | Promise<void>;
   onCancel?: () => void;
@@ -48,7 +51,7 @@ export default function NoteForm({
   const [showReminder, setShowReminder] = useState(initialRemindAt != null);
   const [pinned, setPinned] = useState(false);
 
-  const canSubmit = !pending && value.text.trim().length > 0;
+  const canSubmit = !pending && !submitDisabled && value.text.trim().length > 0;
 
   async function submit() {
     if (!canSubmit) return;

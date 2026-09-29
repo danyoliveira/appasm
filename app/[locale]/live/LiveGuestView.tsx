@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import {
   getLiveFeedByToken,
@@ -189,13 +189,23 @@ export default function LiveGuestView({
   );
   const [notesDraft, setNotesDraft] = useState(initialFeed.match.benchNotes ?? "");
   const [isSavingStep, startSavingStep] = useTransition();
+  // Pitch drags save in the background. A poll that was already in flight
+  // (or started) while one was saving can bring back the old positions and
+  // snap the players back — so those results are dropped, and the pitch
+  // shows a short "a guardar" state that blocks the next drag until the
+  // previous one is stored.
+  const [savingFormationSide, setSavingFormationSide] = useState<"home" | "away" | null>(null);
+  const pendingFormationSaves = useRef(0);
+  const formationWriteSeq = useRef(0);
 
   // Shared by polling and every write action below — null means the token
   // stopped resolving to a session, so this is also where "the link died"
   // gets detected and surfaced, instead of the screen just going stale.
   async function refetchOrExpire(): Promise<boolean> {
+    const seq = formationWriteSeq.current;
     const next = await getLiveFeedByToken(token, connectionId);
     if (next) {
+      if (pendingFormationSaves.current > 0 || seq !== formationWriteSeq.current) return true;
       setFeed(next);
       return true;
     }
@@ -472,6 +482,24 @@ export default function LiveGuestView({
         const current = currentTeamLineup(side);
         await saveTeamLineup(side, { players: restoreToField(current.players, entry.playerName) });
       }
+      // Undo a substitution: the player who came on goes back to the bench
+      // and the one who went off returns to the same spot — only while that
+      // still makes sense (the sub hasn't since been subbed off / sent off).
+      if (entry?.eventType === "substitution" && entry.teamSide && entry.playerName) {
+        const side = entry.teamSide;
+        const inName = entry.playerName;
+        const outName = entry.notes?.includes(": ") ? entry.notes.slice(entry.notes.indexOf(": ") + 2).trim() : "";
+        const current = currentTeamLineup(side);
+        const inPlayer = current.players.find((p) => p.name === inName);
+        const outPlayer = current.players.find((p) => p.name === outName);
+        if (inPlayer?.starting && outPlayer && !outPlayer.starting) {
+          await saveTeamLineup(side, { players: applySubstitution(current.players, inName, outName) });
+          // The keeper change it triggered is undone too.
+          if (side === ourSide && ourGkName === inName) {
+            await setGkByToken(token, ourSide, outName, outPlayer.playerId ?? null);
+          }
+        }
+      }
     });
   }
 
@@ -494,10 +522,17 @@ export default function LiveGuestView({
         [key]: merged,
       },
     }));
+    formationWriteSeq.current += 1;
+    pendingFormationSaves.current += 1;
+    setSavingFormationSide(side);
     try {
       await saveTeamLineup(side, merged);
     } catch {
       setLinkExpired(true);
+    } finally {
+      pendingFormationSaves.current -= 1;
+      formationWriteSeq.current += 1;
+      if (pendingFormationSaves.current === 0) setSavingFormationSide(null);
     }
   }
 
@@ -556,6 +591,7 @@ export default function LiveGuestView({
             onSelectGk={handleSetGk}
             onIncrement={handleGkIncrement}
             onDecrement={handleGkDecrement}
+            statConfig={feed.statConfig}
           />
         </div>
       </div>
@@ -705,6 +741,7 @@ export default function LiveGuestView({
                   ourGkName={ourGkName}
                   ourGkStatsByPlayer={ourSide === "home" ? feed.gkStats.homeByPlayer : feed.gkStats.awayByPlayer}
                   ourTeamName={ourTeamName}
+                  statConfig={feed.statConfig}
                 />
               </div>
             ) : matchModeTab === "game" ? (
@@ -716,6 +753,7 @@ export default function LiveGuestView({
                     substitutes={currentTeamLineup("home").players.filter((p) => !p.starting)}
                     canEdit={canEdit}
                     onChange={canEdit ? (players) => handleMatchModeFormationChange("home", players) : undefined}
+                    saving={savingFormationSide === "home"}
                     onPlayerClick={
                       canEdit
                         ? (player) => {
@@ -732,6 +770,7 @@ export default function LiveGuestView({
                     substitutes={currentTeamLineup("away").players.filter((p) => !p.starting)}
                     canEdit={canEdit}
                     onChange={canEdit ? (players) => handleMatchModeFormationChange("away", players) : undefined}
+                    saving={savingFormationSide === "away"}
                     onPlayerClick={
                       canEdit
                         ? (player) => {
@@ -767,6 +806,7 @@ export default function LiveGuestView({
                   onSetPossession={canEdit ? handleSetPossession : undefined}
                   onIncrement={canEdit ? handleCollectiveIncrement : undefined}
                   onDecrement={canEdit ? handleCollectiveDecrement : undefined}
+                  statConfig={feed.statConfig}
                 />
               </div>
             ) : (
@@ -782,6 +822,7 @@ export default function LiveGuestView({
                   onSelectGk={canEdit ? handleSetGk : undefined}
                   onIncrement={canEdit ? handleGkIncrement : undefined}
                   onDecrement={canEdit ? handleGkDecrement : undefined}
+                  statConfig={feed.statConfig}
                 />
               </div>
             )}

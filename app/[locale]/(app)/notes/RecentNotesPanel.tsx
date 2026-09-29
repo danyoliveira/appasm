@@ -24,17 +24,23 @@ import {
 } from "./noteShared";
 
 type Filter = "all" | "club" | "player" | "pinned" | "reminders";
+type Sort = "recent" | "oldest" | "reminder";
 
 const VISIBLE_COUNT = 6;
 const REMINDER_WINDOW_DAYS = 7;
 
+// Two uses: on the dashboard a short summary (reminders + the latest few,
+// with a link to the full page); on the Notas page every note, with search,
+// filters, a player filter and sorting.
 export default function RecentNotesPanel({
+  variant = "dashboard",
   teamId,
   notes,
   players,
   playerInfo,
   clubLogo,
 }: {
+  variant?: "dashboard" | "page";
   teamId: number;
   notes: NoteItem[];
   // Current squad (squad order) — quick-add picker and @mentions.
@@ -51,6 +57,9 @@ export default function RecentNotesPanel({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState(false);
+  const [sort, setSort] = useState<Sort>("recent");
+  const [playerFilter, setPlayerFilter] = useState<number | null>(null);
+  const isPage = variant === "page";
   const [notice, setNotice] = useState<string | null>(null);
 
   // Popup: the note being shown and the list it's browsed within.
@@ -76,18 +85,53 @@ export default function RecentNotesPanel({
 
   // --- Search + filters ---------------------------------------------------
   const q = normalize(query.trim());
-  const listNotes = sortNotes(
-    notes.filter((n) => {
-      if (filter === "club" && n.kind !== "club") return false;
-      if (filter === "player" && n.kind !== "player") return false;
-      if (filter === "pinned" && !n.pinnedAt) return false;
-      if (filter === "reminders" && !n.remindAt) return false;
-      if (!q) return true;
-      return normalize(`${noteContentToPlain(n.content)} ${nameOf(n)}`).includes(q);
-    }),
-  );
-  const showAll = expanded || q !== "" || filter !== "all";
+  const filtered = notes.filter((n) => {
+    if (filter === "club" && n.kind !== "club") return false;
+    if (filter === "player" && n.kind !== "player") return false;
+    if (filter === "pinned" && !n.pinnedAt) return false;
+    if (filter === "reminders" && !n.remindAt) return false;
+    // A player filter also matches club notes that @mention them.
+    if (
+      playerFilter != null &&
+      n.playerId !== playerFilter &&
+      !n.content.includes(`](${playerFilter})`)
+    )
+      return false;
+    if (!q) return true;
+    return normalize(`${noteContentToPlain(n.content)} ${nameOf(n)}`).includes(q);
+  });
+  const listNotes =
+    sort === "oldest"
+      ? [...filtered].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      : sort === "reminder"
+        ? [...filtered].sort((a, b) =>
+            a.remindAt && b.remindAt
+              ? a.remindAt.localeCompare(b.remindAt)
+              : a.remindAt
+                ? -1
+                : b.remindAt
+                  ? 1
+                  : b.createdAt.localeCompare(a.createdAt),
+          )
+        : sortNotes(filtered);
+  const showAll = isPage || expanded || q !== "" || filter !== "all";
   const visible = showAll ? listNotes : listNotes.slice(0, VISIBLE_COUNT);
+  const countOf = (key: Filter) =>
+    key === "all"
+      ? notes.length
+      : notes.filter((n) =>
+          key === "club"
+            ? n.kind === "club"
+            : key === "player"
+              ? n.kind === "player"
+              : key === "pinned"
+                ? n.pinnedAt
+                : n.remindAt,
+        ).length;
+  // Players with at least one note (their own, or mentioned in a club note).
+  const notedPlayers = Object.values(playerInfo)
+    .filter((p) => notes.some((n) => n.playerId === p.id || n.content.includes(`](${p.id})`)))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const current = dialog ? byId.get(dialog.id) ?? null : null;
   const currentIndex = dialog && current ? dialog.ids.indexOf(current.id) : -1;
@@ -185,9 +229,20 @@ export default function RecentNotesPanel({
     note.playerId != null ? `/club/player/${note.playerId}` : "/club";
 
   return (
-    <section className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-sm">
+    <section className={isPage ? "" : "mt-6 rounded-2xl border border-border bg-surface p-6 shadow-sm"}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{t("recentNotesTitle")}</h2>
+        {isPage ? (
+          <p className="text-sm text-muted">{t("notesPageCount", { count: notes.length })}</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">{t("recentNotesTitle")}</h2>
+            {notes.length > 0 && (
+              <Link href="/notes" className="text-xs font-medium text-accent hover:underline">
+                {t("notesViewAll", { count: notes.length })} →
+              </Link>
+            )}
+          </div>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -248,9 +303,10 @@ export default function RecentNotesPanel({
         </div>
       )}
 
-      {/* Search + filters */}
-      {notes.length > 0 && (
-        <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-center">
+      {/* Search + filters (Notas page only) */}
+      {isPage && notes.length > 0 && (
+        <div className="mt-4 space-y-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
           <div className="relative flex-1">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
               <Icon name="search" />
@@ -275,9 +331,45 @@ export default function RecentNotesPanel({
                 }`}
               >
                 {f.label}
+                <span className="ml-1 tabular-nums opacity-60">{countOf(f.key)}</span>
               </button>
             ))}
           </div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <PlayerCombobox
+                key={playerFilter ?? "none"}
+                players={notedPlayers}
+                value={playerFilter}
+                onChange={setPlayerFilter}
+                placeholder={t("notesFilterPlayerPlaceholder")}
+                noResultsLabel={t("dossierNoPlayersFound")}
+              />
+            </div>
+            {playerFilter != null && (
+              <button
+                type="button"
+                onClick={() => setPlayerFilter(null)}
+                aria-label={t("cancelButton")}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted hover:text-foreground"
+              >
+                <Icon name="x" />
+              </button>
+            )}
+          </div>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as Sort)}
+            aria-label={t("notesSortLabel")}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+          >
+            <option value="recent">{t("notesSortRecent")}</option>
+            <option value="oldest">{t("notesSortOldest")}</option>
+            <option value="reminder">{t("notesSortReminder")}</option>
+          </select>
+        </div>
         </div>
       )}
 
@@ -330,13 +422,12 @@ export default function RecentNotesPanel({
             ))}
           </div>
           {!showAll && listNotes.length > VISIBLE_COUNT && (
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="mt-3 w-full rounded-lg py-1.5 text-xs font-medium text-muted hover:bg-background hover:text-foreground"
+            <Link
+              href="/notes"
+              className="mt-3 block w-full rounded-lg py-1.5 text-center text-xs font-medium text-muted hover:bg-background hover:text-foreground"
             >
-              {t("showMoreButton")} ({listNotes.length - VISIBLE_COUNT})
-            </button>
+              {t("notesViewAll", { count: notes.length })} →
+            </Link>
           )}
           {expanded && q === "" && filter === "all" && listNotes.length > VISIBLE_COUNT && (
             <button
@@ -560,7 +651,8 @@ export default function RecentNotesPanel({
                   quickTarget === "club" ? t("clubNotesPlaceholder") : t("playerNotesPlaceholder")
                 }
                 submitLabel={t("notesSaveButton")}
-                pending={isPending || (quickTarget === "player" && quickPlayerId == null)}
+                pending={isPending}
+                submitDisabled={quickTarget === "player" && quickPlayerId == null}
                 onCancel={() => setQuickAddOpen(false)}
                 onSubmit={(result) =>
                   new Promise<void>((resolve) =>

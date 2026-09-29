@@ -1,6 +1,9 @@
 "use server";
 
 import { getTranslations } from "next-intl/server";
+import { revalidatePath } from "next/cache";
+import { effectiveSessionConfig, isCollectiveKey, isGkKey, type LiveStatConfig } from "./liveStatConfig";
+import { loadTeamStatConfig } from "@/lib/liveStatConfigServer";
 import type { Locale } from "@/i18n/routing";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveLiveMatchTeams } from "@/lib/liveStats";
@@ -36,10 +39,13 @@ export interface GuestLiveFeed {
   entries: LiveEntryRow[];
   collectiveStats: CollectiveStats;
   gkStats: GkStats;
+  // The fields this game shows — frozen at kickoff, the club's current
+  // ones before it.
+  statConfig: LiveStatConfig;
 }
 
 const SESSION_COLUMNS =
-  "id, team_id, preparation_key, member_token, viewer_token, gk_token, started_at, halftime_at, second_half_at, ended_at, home_lineup, away_lineup, home_lineup_live, away_lineup_live, bench_notes";
+  "id, team_id, preparation_key, member_token, viewer_token, gk_token, started_at, halftime_at, second_half_at, ended_at, home_lineup, away_lineup, home_lineup_live, away_lineup_live, bench_notes, stat_config";
 
 // Most mutations below are triggered from the Member link — resolve that
 // token to a session id (or bail) once, instead of repeating the lookup.
@@ -109,6 +115,11 @@ export async function getLiveFeedByToken(
   const teams = await resolveLiveMatchTeams(session.preparation_key, session.team_id);
   if (!teams) return null;
 
+  const statConfig = effectiveSessionConfig(
+    session,
+    session.started_at ? null : await loadTeamStatConfig(admin, session.team_id),
+  );
+
   const { data: entriesData } = await admin
     .from("live_match_entries")
     .select(
@@ -147,6 +158,7 @@ export async function getLiveFeedByToken(
       session.ended_at,
     ),
     gkStats: computeGkStats(allEntries.filter((r) => r.kind === "stat")),
+    statConfig,
   };
 }
 
@@ -234,6 +246,7 @@ export async function addCollectiveStatByToken(
   statKey: CollectiveCounterKey,
   teamSide: "home" | "away",
 ) {
+  if (!isCollectiveKey(statKey)) throw new Error("Invalid stat");
   const sessionId = await requireSessionIdByMemberToken(token);
   const admin = createAdminClient();
 
@@ -342,6 +355,7 @@ export async function addGkStatByToken(
   statKey: GkCounterKey,
   outcome: GkOutcome = "complete",
 ) {
+  if (!isGkKey(statKey)) throw new Error("Invalid stat");
   const sessionId = await requireSessionIdByMemberOrGkToken(token);
   const admin = createAdminClient();
 
@@ -538,14 +552,19 @@ export async function markKickoffByToken(token: string) {
   // from here on, Modo Jogo mutates home_lineup_live/away_lineup_live only.
   const { data: session } = await admin
     .from("live_match_sessions")
-    .select("home_lineup, away_lineup")
+    .select("home_lineup, away_lineup, team_id")
     .eq("id", sessionId)
     .single();
+
+  // Freeze the club's fields as they are now — later config changes only
+  // reach the games after this one.
+  const statConfig = session ? await loadTeamStatConfig(admin, session.team_id) : null;
 
   const { error } = await admin
     .from("live_match_sessions")
     .update({
       started_at: new Date().toISOString(),
+      stat_config: statConfig,
       halftime_at: null,
       second_half_at: null,
       ended_at: null,
@@ -591,6 +610,43 @@ export async function markFullTimeByToken(token: string) {
     .eq("id", sessionId);
 
   if (error) throw new Error(error.message);
+  await carryScoreToManualGame(admin, sessionId);
+}
+
+// A manual game has no API-Football result, so at full time the score
+// logged in ASM Live Mode becomes its final score — unless the coach already
+// typed one in by hand. (API fixtures take the Live Mode score only for
+// display, while API-Football has none — see lib/liveScores.ts.)
+async function carryScoreToManualGame(admin: ReturnType<typeof createAdminClient>, sessionId: string) {
+  const { data: session } = await admin
+    .from("live_match_sessions")
+    .select("preparation_key")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session?.preparation_key.startsWith("manual-")) return;
+  const manualId = session.preparation_key.slice("manual-".length);
+
+  const [{ data: manualRow }, { data: goals }] = await Promise.all([
+    admin.from("manual_preparations").select("is_home, goals_for, goals_against").eq("id", manualId).maybeSingle(),
+    admin
+      .from("live_match_entries")
+      .select("team_side")
+      .eq("session_id", sessionId)
+      .eq("kind", "event")
+      .eq("event_type", "goal"),
+  ]);
+  if (!manualRow || manualRow.goals_for != null || manualRow.goals_against != null) return;
+
+  const home = (goals ?? []).filter((g) => g.team_side === "home").length;
+  const away = (goals ?? []).filter((g) => g.team_side === "away").length;
+  await admin
+    .from("manual_preparations")
+    .update({
+      goals_for: manualRow.is_home ? home : away,
+      goals_against: manualRow.is_home ? away : home,
+    })
+    .eq("id", manualId);
+  revalidatePath("/", "layout");
 }
 
 // Puts everything back to how it was right at kickoff — clock, the live
@@ -615,6 +671,7 @@ export async function restartLiveSessionByToken(token: string) {
       halftime_at: null,
       second_half_at: null,
       ended_at: null,
+      stat_config: null,
       home_lineup_live: session?.home_lineup ?? null,
       away_lineup_live: session?.away_lineup ?? null,
     })

@@ -12,8 +12,15 @@ export default function TeamCrest({
   className?: string;
 }) {
   if (logo) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={logo} alt="" className={`shrink-0 object-contain ${className}`} />;
+    // Dark theme outline for dark crests: globals.css (.dark img.object-contain).
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={logo}
+        alt=""
+        className={`shrink-0 object-contain ${className}`}
+      />
+    );
   }
   return (
     <span

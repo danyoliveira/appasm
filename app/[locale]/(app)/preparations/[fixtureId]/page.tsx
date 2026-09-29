@@ -26,7 +26,7 @@ import EditManualPreparation from "../EditManualPreparation";
 import PreparationTabs from "../PreparationTabs";
 import BackLink from "../../BackLink";
 import Countdown from "../../Countdown";
-import { matchResult } from "../../club/fixtureHelpers";
+import { matchResult, translateRound } from "../../club/fixtureHelpers";
 import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "../../club/playerShared";
 import { getVideoEmbedUrl } from "@/lib/videoEmbed";
 import { type PreparationVideoRow } from "../PreparationVideoList";
@@ -36,8 +36,10 @@ import type { PlayerStatus, TacticalArrow, TacticalMarker, TacticalPosition } fr
 import type { GameSubmoment, VideoCategory } from "../videoCategories";
 import LiveStatsPanel from "../LiveStatsPanel";
 import LiveMatchRecapSection from "../LiveMatchRecapSection";
+import FinishPreparationBar from "../FinishPreparationBar";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
 import TeamCrest from "@/components/TeamCrest";
+import { loadLiveScores, withLiveScore } from "@/lib/liveScores";
 
 interface PreparationMatch {
   // null for a custom opponent typed by hand — one that isn't in
@@ -78,7 +80,6 @@ export default async function PreparationDetailPage({
     .eq("id", user.id)
     .maybeSingle();
   const isCoach = profile?.role === "coach";
-  const isLiveStatsManager = isCoach;
 
   const { data: coachProfile } = await supabase
     .from("profiles")
@@ -92,6 +93,8 @@ export default async function PreparationDetailPage({
   const ourTeam = ourTeamInfo[0]?.team ?? null;
 
   let match: PreparationMatch | null = null;
+  // Set once the preparation is finished (Concluída) — read-only from then.
+  let finishedAt: string | null = null;
   // Manual games only — what the edit form prefills.
   let manualDetails: ManualMatchDetails | undefined;
 
@@ -103,12 +106,13 @@ export default async function PreparationDetailPage({
     const { data: manualRow } = await supabase
       .from("manual_preparations")
       .select(
-        "opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against",
+        "opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against, finished_at",
       )
       .eq("id", manualId)
       .maybeSingle();
 
     if (manualRow) {
+      finishedAt = manualRow.finished_at ?? null;
       const opponent = await resolveManualOpponent(manualRow);
 
       // A manual game has no external result — the only place a final
@@ -176,8 +180,12 @@ export default async function PreparationDetailPage({
     }
   } else {
     const fixtureId = Number(fixtureIdParam);
-    const fixtureResult = await getFixtureById(fixtureId).catch(() => []);
-    const fixture = fixtureResult[0] ?? null;
+    const [fixtureResult, liveScores] = await Promise.all([
+      getFixtureById(fixtureId).catch(() => []),
+      teamId ? loadLiveScores(supabase, teamId) : Promise.resolve(new Map()),
+    ]);
+    // No API-Football score yet → the ASM Live Mode one.
+    const fixture = fixtureResult[0] ? withLiveScore(fixtureResult[0], liveScores) : null;
     const opponent =
       fixture && teamId
         ? fixture.teams.home.id === teamId
@@ -216,6 +224,15 @@ export default async function PreparationDetailPage({
             { onConflict: "team_id,fixture_id", ignoreDuplicates: true },
           );
       }
+      if (teamId) {
+        const { data: preparationRow } = await supabase
+          .from("fixture_preparations")
+          .select("finished_at")
+          .eq("team_id", teamId)
+          .eq("fixture_id", fixtureId)
+          .maybeSingle();
+        finishedAt = preparationRow?.finished_at ?? null;
+      }
     }
   }
 
@@ -223,6 +240,17 @@ export default async function PreparationDetailPage({
   if (match) {
     liveSession = await getLiveSession(fixtureIdParam);
   }
+
+  // Finished preparations are read-only for everyone until reopened.
+  const canEdit = isCoach && !finishedAt;
+  const isLiveStatsManager = canEdit;
+  // "Finalizar" is only offered after the game: a result, a finished Live
+  // Mode session, or two hours past kick-off.
+  const gameOver =
+    match != null &&
+    (match.finished ||
+      liveSession?.endedAt != null ||
+      new Date(match.date).getTime() + 2 * 60 * 60 * 1000 < new Date().getTime());
 
   // Opponent scouting profile for the Pré-Jogo tab — the same data and
   // layout already proven on the dashboard's "next fixture" opponent panel
@@ -672,7 +700,8 @@ export default async function PreparationDetailPage({
         ourSquad={ourSquad}
         ourLogo={match?.ourTeamLogo}
         opponentLogo={match?.opponentLogo}
-        isCoach={isCoach}
+        isCoach={canEdit}
+        readOnly={finishedAt != null}
         sideBySide={sideBySide}
         tacticalRows={tacticalSnapshots}
         videoRows={videoRows}
@@ -692,6 +721,24 @@ export default async function PreparationDetailPage({
   }
 
   function renderPostGameContent() {
+    if (!match) return null;
+    const finishBar = (
+      <FinishPreparationBar
+        preparationKey={fixtureIdParam}
+        finishedAt={finishedAt}
+        gameOver={gameOver}
+        isCoach={isCoach}
+      />
+    );
+    return (
+      <>
+        {finishBar}
+        {renderPostGameBody()}
+      </>
+    );
+  }
+
+  function renderPostGameBody() {
     if (!match) return null;
     if (!liveSession) {
       // Explains how this tab actually fills in, instead of the generic
@@ -734,7 +781,7 @@ export default async function PreparationDetailPage({
                 <TeamCrest logo={match.competition.logo} className="h-4 w-4" />
                 <span>
                   {match.competition.name}
-                  {match.competition.round ? ` · ${match.competition.round}` : ""}
+                  {match.competition.round ? ` · ${translateRound(match.competition.round, t)}` : ""}
                 </span>
               </div>
             )}
@@ -788,9 +835,14 @@ export default async function PreparationDetailPage({
                 })}
               </span>
               {match.venue && <span>🏟️ {match.venue}</span>}
+              {finishedAt && (
+                <span className="flex items-center gap-1 rounded-full bg-green-600/10 px-2 py-0.5 font-medium text-green-700 dark:text-green-400">
+                  ✓ {t("preparationFinishedBadge")}
+                </span>
+              )}
             </div>
 
-            {!match.realFixtureId && isCoach && (
+            {!match.realFixtureId && canEdit && (
               <div className="mt-2 flex justify-center">
                 <EditManualPreparation
                   id={fixtureIdParam.replace(/^manual-/, "")}
@@ -832,6 +884,7 @@ export default async function PreparationDetailPage({
               opponentName={match.opponentName}
               liveSession={liveSession}
               finished={match.finished}
+              locked={finishedAt != null}
               ourLogo={match.ourTeamLogo}
               opponentLogo={match.opponentLogo}
               ourTeamName={match.ourTeamName}

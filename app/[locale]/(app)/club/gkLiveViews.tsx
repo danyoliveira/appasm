@@ -1,16 +1,27 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
-  GK_COUNTER_KEYS,
   emptyGkStatsSide,
   gkEfficiency,
+  statOf,
   type GkCounterKey,
   type GkStatsByPlayer,
   type GkStatsSide,
 } from "../../live/liveStatsShared";
-import { GK_GROUPS, GK_LABEL_KEYS } from "../../live/GkStatsPanel";
+import { fieldLabel, gkKeysOf, groupLabel, type LiveGkGroup } from "../../live/liveStatConfig";
+
+// The goalkeeper actions and groups a view shows come from the club's
+// configured fields (plus any older field the games in view used) — see
+// displayGkGroups in liveStatConfig.ts.
+
+const keysOf = (group: LiveGkGroup) => group.fields.map((f) => f.key);
+
+function labelIn(groups: LiveGkGroup[], key: string, t: (k: string) => string): string {
+  const f = groups.flatMap((g) => g.fields).find((x) => x.key === key);
+  return fieldLabel(f ?? { key, label: null }, t);
+}
 
 // Shared goalkeeping views for ASM Live Mode — the club's Estatística tab
 // (the team's goalkeeping, whoever was in goal) and a goalkeeper's own
@@ -19,7 +30,7 @@ import { GK_GROUPS, GK_LABEL_KEYS } from "../../live/GkStatsPanel";
 export type GkTotals = { complete: GkStatsSide; incomplete: GkStatsSide };
 
 export function sumKeys(side: GkStatsSide, keys: readonly GkCounterKey[]) {
-  return keys.reduce((sum, key) => sum + side[key], 0);
+  return keys.reduce((sum, key) => sum + statOf(side, key), 0);
 }
 
 // Keepers of one game summed (a mid-game change still counts as that
@@ -28,11 +39,12 @@ export function gkTotalsOf(keepers: GkStatsByPlayer[]): GkTotals | null {
   if (!keepers.length) return null;
   const complete = emptyGkStatsSide();
   const incomplete = emptyGkStatsSide();
+  const add = (into: GkStatsSide, from: GkStatsSide) => {
+    for (const [key, n] of Object.entries(from)) into[key] = (into[key] ?? 0) + n;
+  };
   for (const keeper of keepers) {
-    for (const key of GK_COUNTER_KEYS) {
-      complete[key] += keeper.stats[key];
-      incomplete[key] += keeper.incomplete[key];
-    }
+    add(complete, keeper.stats);
+    add(incomplete, keeper.incomplete);
   }
   return { complete, incomplete };
 }
@@ -67,15 +79,17 @@ export function EfficiencyBar({ complete, incomplete }: { complete: number; inco
 export function GkKeeperBreakdown({
   keeper,
   totals,
+  groups,
   showName = true,
 }: {
   keeper?: string;
   totals: GkTotals;
+  groups: LiveGkGroup[];
   showName?: boolean;
 }) {
   const t = useTranslations("dashboard");
-  const complete = sumKeys(totals.complete, GK_COUNTER_KEYS);
-  const incomplete = sumKeys(totals.incomplete, GK_COUNTER_KEYS);
+  const complete = sumKeys(totals.complete, gkKeysOf(groups));
+  const incomplete = sumKeys(totals.incomplete, gkKeysOf(groups));
   const efficiency = gkEfficiency(complete, incomplete);
   return (
     <div className="space-y-3">
@@ -100,28 +114,28 @@ export function GkKeeperBreakdown({
       </div>
 
       <div className="space-y-3">
-        {GK_GROUPS.map((group) => {
+        {groups.map((group) => {
           const groupEfficiency = gkEfficiency(
-            sumKeys(totals.complete, group.keys),
-            sumKeys(totals.incomplete, group.keys),
+            sumKeys(totals.complete, keysOf(group)),
+            sumKeys(totals.incomplete, keysOf(group)),
           );
           return (
-            <div key={group.titleKey}>
+            <div key={group.id}>
               <div className="mb-1 flex items-center justify-between text-xs font-semibold">
-                <span>{t(group.titleKey)}</span>
+                <span>{groupLabel(group, t)}</span>
                 <span className="tabular-nums text-muted">{groupEfficiency == null ? "–" : `${groupEfficiency}%`}</span>
               </div>
               <div className="divide-y divide-border rounded-lg border border-border">
-                {group.keys.map((key) => {
-                  const ok = totals.complete[key];
-                  const ko = totals.incomplete[key];
+                {keysOf(group).map((key) => {
+                  const ok = statOf(totals.complete, key);
+                  const ko = statOf(totals.incomplete, key);
                   const pct = gkEfficiency(ok, ko);
                   return (
                     <div
                       key={key}
                       className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_2.75rem] items-center gap-2 px-2.5 py-1.5 text-xs"
                     >
-                      <span className="text-foreground">{t(GK_LABEL_KEYS[key])}</span>
+                      <span className="text-foreground">{labelIn(groups, key, t)}</span>
                       <EfficiencyBar complete={ok} incomplete={ko} />
                       <span className="text-right tabular-nums">
                         <span className="font-semibold text-green-700 dark:text-green-400">{ok}</span>
@@ -141,87 +155,189 @@ export function GkKeeperBreakdown({
   );
 }
 
-// Several games side by side: overall efficiency, then each group and
-// action with ✓ / ✗ and % per game — best % highlighted — plus the pooled %
-// of `averageTotals` (e.g. every filtered game).
+const effTone = (pct: number) =>
+  pct >= 70 ? "bg-green-600" : pct >= 40 ? "bg-amber-500" : "bg-red-500";
+
+// Comparing goalkeeping across 2–3 games. Leads with one summary card per
+// game (overall efficiency, ✓/✗, best one marked), then a table by group —
+// each group opens to its actions (or "Ver por ação" opens them all) —
+// where every cell is the efficiency with a small bar and the ✓/✗ counts.
 export function GkComparisonTable({
   columns,
   averageTotals,
+  groups,
 }: {
   columns: { key: string; header: ReactNode; totals: GkTotals | null }[];
   averageTotals: (GkTotals | null)[];
+  groups: LiveGkGroup[];
 }) {
   const t = useTranslations("dashboard");
-  const rows: { key: string; label: string; keys: readonly GkCounterKey[]; isGroup: boolean }[] = [
-    { key: "all", label: t("gkEfficiencyTitle"), keys: GK_COUNTER_KEYS, isGroup: true },
-    ...GK_GROUPS.flatMap((group) => [
-      { key: group.titleKey, label: t(group.titleKey), keys: group.keys, isGroup: true },
-      ...group.keys.map((k) => ({ key: k, label: t(GK_LABEL_KEYS[k]), keys: [k], isGroup: false })),
-    ]),
-  ];
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const allOpen = openGroups.size === groups.length;
+
+  function toggleGroup(key: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const cellsFor = (keys: readonly GkCounterKey[]) => {
+    const perGame = columns.map((col) => {
+      if (!col.totals) return null;
+      const ok = sumKeys(col.totals.complete, keys);
+      const ko = sumKeys(col.totals.incomplete, keys);
+      return { ok, ko, pct: gkEfficiency(ok, ko) };
+    });
+    const pcts = perGame.map((p) => p?.pct).filter((p): p is number => p != null);
+    const best = pcts.length > 1 ? Math.max(...pcts) : null;
+    const bestCount = pcts.filter((p) => p === best).length;
+    const isBest = (pct: number | null | undefined) => pct != null && pct === best && bestCount < pcts.length;
+    return { perGame, isBest, pooled: pooledEfficiency(averageTotals, keys) };
+  };
+
+  function renderCell(p: { ok: number; ko: number; pct: number | null } | null, best: boolean) {
+    if (!p || p.pct == null) return <span className="text-xs text-muted">—</span>;
+    return (
+      <div className="min-w-[4.5rem]">
+        <div className={`flex items-center gap-1 text-sm font-semibold tabular-nums ${best ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+          {p.pct}%{best && <span className="text-[10px]">▲</span>}
+        </div>
+        <div className="mt-1 h-1 w-full max-w-[5rem] overflow-hidden rounded-full bg-border">
+          <div className={`h-full rounded-full ${effTone(p.pct)}`} style={{ width: `${p.pct}%` }} />
+        </div>
+        <div className="mt-0.5 text-[10px] tabular-nums text-muted">
+          <span className="text-green-700 dark:text-green-400">✓{p.ok}</span>{" "}
+          <span className="text-red-600 dark:text-red-400">✗{p.ko}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const overall = cellsFor(gkKeysOf(groups));
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-[10px] uppercase tracking-wider text-muted">
-            <th className="w-[26%] pb-1 text-left font-medium" />
-            {columns.map((col) => (
-              <th key={col.key} className="pb-1 pl-2 text-left font-medium">
-                {col.header}
-              </th>
-            ))}
-            <th className="pb-1 pl-2 text-right font-medium">{t("liveStatsAverageColumn")}</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {rows.map((row) => {
-            const perGame = columns.map((col) => {
-              if (!col.totals) return null;
-              const ok = sumKeys(col.totals.complete, row.keys);
-              const ko = sumKeys(col.totals.incomplete, row.keys);
-              return { ok, ko, pct: gkEfficiency(ok, ko) };
-            });
-            const pcts = perGame.map((p) => p?.pct).filter((p): p is number => p != null);
-            const best = pcts.length > 1 ? Math.max(...pcts) : null;
-            const bestCount = pcts.filter((p) => p === best).length;
-            const pooled = pooledEfficiency(averageTotals, row.keys);
-            return (
-              <tr key={row.key} className={row.isGroup ? "bg-background/60" : ""}>
-                <td className={`py-1.5 pr-2 text-xs ${row.isGroup ? "font-semibold" : "pl-3 text-muted"}`}>{row.label}</td>
-                {perGame.map((p, i) => {
-                  const isBest = p?.pct != null && p.pct === best && bestCount < pcts.length;
-                  return (
-                    <td key={columns[i].key} className="py-1.5 pl-2">
-                      {p == null ? (
-                        <span className="text-xs text-muted">—</span>
-                      ) : (
-                        <span
-                          className={`inline-flex items-baseline gap-1.5 rounded-md px-1.5 py-0.5 text-xs tabular-nums ${
-                            isBest ? "bg-emerald-500/10" : ""
-                          }`}
-                        >
-                          <span>
-                            <span className="text-green-700 dark:text-green-400">{p.ok}</span>
-                            <span className="text-muted">/</span>
-                            <span className="text-red-600 dark:text-red-400">{p.ko}</span>
-                          </span>
-                          <span className={`font-semibold ${isBest ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
-                            {isBest && "▲ "}
-                            {p.pct == null ? "–" : `${p.pct}%`}
-                          </span>
-                        </span>
-                      )}
+    <div>
+      {/* Summary: one card per game + the average. */}
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${columns.length + 1}, minmax(0, 1fr))` }}>
+        {columns.map((col, i) => {
+          const p = overall.perGame[i];
+          const best = overall.isBest(p?.pct);
+          return (
+            <div
+              key={col.key}
+              className={`rounded-xl border p-3 ${best ? "border-emerald-500/50 bg-emerald-500/5" : "border-border bg-background"}`}
+            >
+              <div className="truncate text-xs font-medium">{col.header}</div>
+              {p && p.pct != null ? (
+                <>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-2xl font-bold tabular-nums">{p.pct}%</span>
+                    {best && (
+                      <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+                        ▲ {t("gkCompareBest")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-border">
+                    <div className={`h-full rounded-full ${effTone(p.pct)}`} style={{ width: `${p.pct}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] tabular-nums text-muted">
+                    <span className="text-green-700 dark:text-green-400">✓ {p.ok}</span> ·{" "}
+                    <span className="text-red-600 dark:text-red-400">✗ {p.ko}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-muted">{t("gkCompareNoData")}</p>
+              )}
+            </div>
+          );
+        })}
+        <div className="rounded-xl border border-dashed border-border p-3">
+          <div className="text-xs font-medium text-muted">{t("liveStatsAverageColumn")}</div>
+          <div className="mt-2 text-2xl font-bold tabular-nums text-muted">
+            {overall.pooled == null ? "–" : `${overall.pooled}%`}
+          </div>
+        </div>
+      </div>
+
+      {/* By group (and action). */}
+      <div className="mt-4 flex items-center justify-between gap-2">
+        <h5 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{t("gkCompareByGroup")}</h5>
+        <button
+          type="button"
+          onClick={() => setOpenGroups(allOpen ? new Set() : new Set(groups.map((g) => g.id)))}
+          className="text-xs font-medium text-accent hover:underline"
+        >
+          {allOpen ? t("gkCompareHideActions") : t("gkCompareShowActions")}
+        </button>
+      </div>
+      <div className="mt-2 overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-background text-left text-[11px] text-muted">
+              <th className="w-[32%] px-3 py-2 font-medium" />
+              {columns.map((col) => (
+                <th key={col.key} className="px-2 py-2 font-medium">
+                  <div className="max-w-[9rem] truncate">{col.header}</div>
+                </th>
+              ))}
+              <th className="px-3 py-2 text-right font-medium">{t("liveStatsAverageColumn")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((group) => {
+              const open = openGroups.has(group.id);
+              const g = cellsFor(keysOf(group));
+              return (
+                <Fragment key={group.id}>
+                  <tr className="border-b border-border last:border-b-0">
+                    <td className="px-3 py-2.5">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group.id)}
+                        aria-expanded={open}
+                        className="flex items-center gap-1.5 text-left text-xs font-semibold hover:text-accent"
+                      >
+                        <span className={`inline-block text-[10px] text-muted transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+                        {groupLabel(group, t)}
+                      </button>
                     </td>
-                  );
-                })}
-                <td className="py-1.5 pl-2 text-right text-xs tabular-nums text-muted">
-                  {pooled == null ? "–" : `${pooled}%`}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                    {g.perGame.map((p, i) => (
+                      <td key={columns[i].key} className="px-2 py-2.5 align-top">
+                        {renderCell(p, g.isBest(p?.pct))}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2.5 text-right align-top text-xs font-semibold tabular-nums text-muted">
+                      {g.pooled == null ? "–" : `${g.pooled}%`}
+                    </td>
+                  </tr>
+                  {open &&
+                    keysOf(group).map((key) => {
+                      const a = cellsFor([key]);
+                      return (
+                        <tr key={key} className="border-b border-border bg-background/50 last:border-b-0">
+                          <td className="py-2 pl-8 pr-3 text-xs text-muted">{labelIn(groups, key, t)}</td>
+                          {a.perGame.map((p, i) => (
+                            <td key={columns[i].key} className="px-2 py-2 align-top">
+                              {renderCell(p, a.isBest(p?.pct))}
+                            </td>
+                          ))}
+                          <td className="px-3 py-2 text-right align-top text-xs tabular-nums text-muted">
+                            {a.pooled == null ? "–" : `${a.pooled}%`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] text-muted">{t("gkCompareLegend")}</p>
     </div>
   );
 }
@@ -231,19 +347,21 @@ export function GkEfficiencyChart({
   points,
   selected,
   onSelect,
+  groups,
 }: {
   points: { id: string; label: string; opponent: string; totals: GkTotals | null }[];
   selected: string[];
   onSelect: (id: string) => void;
+  groups: LiveGkGroup[];
 }) {
   const t = useTranslations("dashboard");
   const [scope, setScope] = useState<string>("all");
   const [hover, setHover] = useState<number | null>(null);
 
   const scopes: { key: string; label: string; keys: readonly GkCounterKey[] }[] = [
-    { key: "all", label: t("gkEfficiencyTitle"), keys: GK_COUNTER_KEYS },
-    ...GK_GROUPS.map((g) => ({ key: g.titleKey, label: t(g.titleKey), keys: g.keys })),
-    ...GK_COUNTER_KEYS.map((k) => ({ key: k, label: t(GK_LABEL_KEYS[k]), keys: [k] as readonly GkCounterKey[] })),
+    { key: "all", label: t("gkEfficiencyTitle"), keys: gkKeysOf(groups) },
+    ...groups.map((g) => ({ key: `group:${g.id}`, label: groupLabel(g, t), keys: keysOf(g) })),
+    ...gkKeysOf(groups).map((k) => ({ key: k, label: labelIn(groups, k, t), keys: [k] as readonly GkCounterKey[] })),
   ];
   const current = scopes.find((s) => s.key === scope) ?? scopes[0];
   const series = points

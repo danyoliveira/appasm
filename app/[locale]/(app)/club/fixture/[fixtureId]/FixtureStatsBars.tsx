@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getLogoColor, resolveOpponentColor } from "@/lib/logoColor";
+import { getVividLogoColor, resolveOpponentColor, visibleOnTheme } from "@/lib/logoColor";
+import { useIsDark } from "@/components/useIsDark";
 
 export interface StatBarRow {
   type: string;
@@ -38,7 +39,7 @@ export default function FixtureStatsBars({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getLogoColor(homeLogo), getLogoColor(awayLogo)]).then(([h, a]) => {
+    Promise.all([getVividLogoColor(homeLogo), getVividLogoColor(awayLogo)]).then(([h, a]) => {
       if (!cancelled) {
         setHomeColor(h);
         setAwayColor(a);
@@ -49,7 +50,12 @@ export default function FixtureStatsBars({
     };
   }, [homeLogo, awayLogo]);
 
-  const resolvedAway = homeColor && awayColor ? resolveOpponentColor(homeColor, awayColor) : null;
+  // Crest colors, kept visible on the current theme (a black crest's bar
+  // would vanish on the dark background, a white one on the light).
+  const isDark = useIsDark();
+  const rawAway = homeColor && awayColor ? resolveOpponentColor(homeColor, awayColor) : null;
+  const resolvedAway = rawAway ? visibleOnTheme(rawAway, isDark) : null;
+  const visibleHome = homeColor ? visibleOnTheme(homeColor, isDark) : null;
 
   function renderRow(row: StatBarRow, size: "lg" | "sm") {
     const textSize = size === "lg" ? "text-sm" : "text-xs";
@@ -69,7 +75,7 @@ export default function FixtureStatsBars({
             <div className={`overflow-hidden rounded-full bg-background ${barHeight}`}>
               <div
                 className={`h-full ${homeColor ? "" : "bg-accent"}`}
-                style={{ width: `${Math.min(row.homeNum, 100)}%`, background: homeColor ?? undefined }}
+                style={{ width: `${Math.min(row.homeNum, 100)}%`, background: visibleHome ?? undefined }}
               />
             </div>
             <div className={`overflow-hidden rounded-full bg-background ${barHeight}`}>
@@ -85,7 +91,7 @@ export default function FixtureStatsBars({
               className={homeColor ? undefined : "bg-accent"}
               style={{
                 width: `${(row.homeNum / (row.homeNum + row.awayNum || 1)) * 100}%`,
-                background: homeColor ?? undefined,
+                background: visibleHome ?? undefined,
               }}
             />
             <div

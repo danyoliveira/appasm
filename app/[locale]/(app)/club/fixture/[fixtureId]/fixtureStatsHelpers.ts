@@ -22,6 +22,13 @@ export const STAT_LABELS: Record<string, { pt: string; es: string; fr: string; e
   "Passes accurate": { pt: "Passes certos", es: "Pases precisos", fr: "Passes réussies", en: "Accurate passes" },
   "Passes %": { pt: "Precisão de passe", es: "Precisión de pase", fr: "Précision de passe", en: "Pass accuracy" },
   expected_goals: { pt: "Golos esperados (xG)", es: "Goles esperados (xG)", fr: "Buts attendus (xG)", en: "Expected goals (xG)" },
+  // ASM Live Mode collective counters (manual games' match page).
+  live_offensive_transition: { pt: "Transições ofensivas", es: "Transiciones ofensivas", fr: "Transitions offensives", en: "Offensive transitions" },
+  live_tackle: { pt: "Desarmes", es: "Entradas", fr: "Tacles", en: "Tackles" },
+  live_interception: { pt: "Interceções", es: "Intercepciones", fr: "Interceptions", en: "Interceptions" },
+  live_recovery_own_half: { pt: "Recuperações (campo próprio)", es: "Recuperaciones (campo propio)", fr: "Récupérations (propre camp)", en: "Recoveries (own half)" },
+  live_recovery_opp_half: { pt: "Recuperações (campo adversário)", es: "Recuperaciones (campo rival)", fr: "Récupérations (camp adverse)", en: "Recoveries (opposition half)" },
+  live_progressive_pass: { pt: "Passes progressivos", es: "Pases progresivos", fr: "Passes progressives", en: "Progressive passes" },
 };
 
 export function translateStatLabel(type: string, locale: Locale): string {
@@ -40,7 +47,7 @@ export const HEADLINE_STAT_TYPES = new Set(["Ball Possession", "Total Shots", "S
 // shared proportional bar between them would misleadingly imply otherwise.
 export const INDEPENDENT_PERCENT_STAT_TYPES = new Set(["Passes %"]);
 
-export type StatSectionId = "attack" | "passing" | "discipline" | "goalkeeping";
+export type StatSectionId = "collective" | "attack" | "passing" | "discipline" | "goalkeeping";
 
 export const STAT_SECTION: Record<string, StatSectionId> = {
   "Shots off Goal": "attack",
@@ -57,14 +64,25 @@ export const STAT_SECTION: Record<string, StatSectionId> = {
   "Yellow Cards": "discipline",
   "Red Cards": "discipline",
   "Goalkeeper Saves": "goalkeeping",
+  live_offensive_transition: "collective",
+  live_tackle: "collective",
+  live_interception: "collective",
+  live_recovery_own_half: "collective",
+  live_recovery_opp_half: "collective",
+  live_progressive_pass: "collective",
 };
 
 export const STAT_SECTION_ORDER: { id: StatSectionId; titleKey: string }[] = [
+  { id: "collective", titleKey: "collectiveStatsTitle" },
   { id: "attack", titleKey: "statGroupAttack" },
   { id: "passing", titleKey: "statGroupPasses" },
   { id: "discipline", titleKey: "statGroupDiscipline" },
   { id: "goalkeeping", titleKey: "statGroupGoalkeeping" },
 ];
+
+// ASM Live Mode counters ("live_<key>") all go under Estatísticas coletivas.
+const sectionOf = (type: string): StatSectionId | undefined =>
+  STAT_SECTION[type] ?? (type.startsWith("live_") ? "collective" : undefined);
 
 export interface FixtureStatSections {
   headline: StatBarRow[];
@@ -77,6 +95,9 @@ export function buildFixtureStatSections(
   awayStats: { statistics: { type: string; value: unknown }[] } | undefined,
   locale: Locale,
   sectionTitle: (titleKey: string) => string,
+  // Names for stat types this file doesn't know (ASM Live Mode fields the
+  // coach configured), by type.
+  extraLabels: Record<string, string> = {},
 ): FixtureStatSections {
   const statTypes = Array.from(
     new Set([
@@ -90,7 +111,7 @@ export function buildFixtureStatSections(
     const awayRaw = awayStats?.statistics.find((s) => s.type === type)?.value;
     return {
       type,
-      label: translateStatLabel(type, locale),
+      label: extraLabels[type] ?? translateStatLabel(type, locale),
       homeDisplay: String(homeRaw ?? "-"),
       awayDisplay: String(awayRaw ?? "-"),
       homeNum: Number(String(homeRaw ?? "0").replace("%", "")) || 0,
@@ -103,7 +124,7 @@ export function buildFixtureStatSections(
     headline: statTypes.filter((type) => HEADLINE_STAT_TYPES.has(type)).map(toRow),
     sections: STAT_SECTION_ORDER.map(({ id, titleKey }) => ({
       title: sectionTitle(titleKey),
-      rows: statTypes.filter((type) => STAT_SECTION[type] === id).map(toRow),
+      rows: statTypes.filter((type) => sectionOf(type) === id).map(toRow),
     })),
   };
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { contrastTextColor, getLogoColor, getVividLogoColor, resolveOpponentColor } from "@/lib/logoColor";
+import { contrastTextColor, getVividLogoColor, resolveOpponentColor } from "@/lib/logoColor";
 
 export interface TeamColors {
   usColor: string;
@@ -25,7 +25,9 @@ export function useTeamColors(ourLogo?: string, opponentLogo?: string): TeamColo
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getLogoColor(ourLogo), getLogoColor(opponentLogo)]).then(([us, opponentRaw]) => {
+    // Vivid, not dominant: the dominant pixel of many crests is a grey or
+    // white outline (Benfica's comes out light grey).
+    Promise.all([getVividLogoColor(ourLogo), getVividLogoColor(opponentLogo)]).then(([us, opponentRaw]) => {
       if (cancelled) return;
       const opponent = resolveOpponentColor(us, opponentRaw);
       setColors({

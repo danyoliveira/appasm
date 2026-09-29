@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   emptyGkStatsSide,
@@ -9,37 +10,23 @@ import {
   type GkStatsByPlayer,
   type GkStatsSide,
   type LineupPlayer,
+  statOf,
 } from "./liveStatsShared";
+import {
+  DEFAULT_LIVE_STAT_CONFIG,
+  activeGkGroups,
+  fieldLabel,
+  gkKeysOf,
+  groupLabel,
+  type LiveGkGroup,
+  type LiveStatConfig,
+} from "./liveStatConfig";
 
-export const GK_LABEL_KEYS: Record<GkCounterKey, string> = {
-  gk_reposicao: "gkStatReposicao",
-  gk_reposicao_mao: "gkStatReposicaoMao",
-  gk_bloqueio_medio: "gkStatBloqueioMedio",
-  gk_bloqueio_alto: "gkStatBloqueioAlto",
-  gk_bloqueio_baixo: "gkStatBloqueioBaixo",
-  gk_defesa_lateral_baixa: "gkStatDefesaLateralBaixa",
-  gk_pontape_baliza: "gkStatPontapeBaliza",
-  gk_saida_fora_area: "gkStatSaidaForaArea",
-  gk_comunicacao: "gkStatComunicacao",
-  gk_saida_1x1: "gkStatSaida1x1",
-  gk_cruzamento_soco_desvio: "gkStatCruzamentoSocoDesvio",
-  gk_cruzamentos: "gkStatCruzamentos",
-  gk_jogo_pes: "gkStatJogoPes",
-};
-
-// Grouped instead of one long flat list — reads more like a proper
-// goalkeeping report (restarts / shot-stopping / aerial / sweeping / other)
-// than a plain counter dump, and keeps each group short enough to scan.
-export const GK_GROUPS: { titleKey: string; keys: GkCounterKey[] }[] = [
-  { titleKey: "gkGroupRestarts", keys: ["gk_reposicao", "gk_reposicao_mao", "gk_pontape_baliza"] },
-  {
-    titleKey: "gkGroupBlocks",
-    keys: ["gk_bloqueio_alto", "gk_bloqueio_medio", "gk_bloqueio_baixo", "gk_defesa_lateral_baixa"],
-  },
-  { titleKey: "gkGroupAerial", keys: ["gk_cruzamentos", "gk_cruzamento_soco_desvio"] },
-  { titleKey: "gkGroupExits", keys: ["gk_saida_fora_area", "gk_saida_1x1"] },
-  { titleKey: "gkGroupOther", keys: ["gk_comunicacao", "gk_jogo_pes"] },
-];
+// A field's display name within the given groups.
+function labelIn(groups: LiveGkGroup[], key: string, t: (k: string) => string): string {
+  const f = groups.flatMap((g) => g.fields).find((x) => x.key === key);
+  return fieldLabel(f ?? { key, label: null }, t);
+}
 
 // The first player of the starting XI is the keeper (the lineup lists the
 // goalkeeper first — "Preencher com o plantel" does too) — offered as a
@@ -48,128 +35,153 @@ function guessGkName(startingPlayers: LineupPlayer[]): string | null {
   return startingPlayers[0]?.name ?? null;
 }
 
-// Same card + row shape as CollectiveStatsPanel's per-side breakdown, so the
-// two stat sections in the Pós-Jogo recap read as one consistent design
-// instead of two different systems.
-// One outcome's counter: − value + (buttons only when editing).
-function OutcomeCounter({
-  value,
-  outcome,
-  canEdit,
-  isPending,
-  onIncrement,
-  onDecrement,
-}: {
-  value: number;
-  outcome: GkOutcome;
-  canEdit: boolean;
-  isPending: boolean;
-  onIncrement?: () => void;
-  onDecrement?: () => void;
-}) {
+function EfficiencyPill({ value }: { value: number | null }) {
+  if (value == null) return <span className="text-xs tabular-nums text-muted">–</span>;
   const tone =
-    outcome === "complete"
-      ? "border-green-600/50 text-green-700 hover:bg-green-600/10 dark:text-green-400"
-      : "border-red-500/50 text-red-600 hover:bg-red-500/10 dark:text-red-400";
+    value >= 70
+      ? "bg-green-600/10 text-green-700 dark:text-green-400"
+      : value >= 40
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "bg-red-500/10 text-red-600 dark:text-red-400";
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${tone}`}>{value}%</span>;
+}
+
+const sumOf = (side: GkStatsSide, keys: readonly GkCounterKey[]) => keys.reduce((sum, key) => sum + statOf(side, key), 0);
+const keysOf = (group: LiveGkGroup) => group.fields.map((f) => f.key);
+
+// Edit mode (bench / GK coach): every action as a small tile — label on
+// top, one ✓ and one ✗ button below — packed several per row, so the whole
+// sheet fits in about a screen instead of a long scroll. A tap adds one;
+// mistakes are fixed with "Desfazer" (last taps) or the "Corrigir" mode,
+// where the same buttons take one away — no − buttons cluttering every row.
+function GkTapBoard({
+  groups,
+  stats,
+  incomplete,
+  correcting,
+  isPending,
+  onTap,
+}: {
+  groups: LiveGkGroup[];
+  stats: GkStatsSide;
+  incomplete: GkStatsSide;
+  correcting: boolean;
+  isPending: boolean;
+  onTap: (key: GkCounterKey, outcome: GkOutcome) => void;
+}) {
+  const t = useTranslations("dashboard");
+
+  function renderButton(key: GkCounterKey, outcome: GkOutcome) {
+    const complete = outcome === "complete";
+    const value = complete ? statOf(stats, key) : statOf(incomplete, key);
+    const tone = correcting
+      ? "border-border bg-surface text-muted"
+      : complete
+        ? "border-green-600/40 bg-green-600/10 text-green-700 hover:bg-green-600/20 dark:text-green-400"
+        : "border-red-500/40 bg-red-500/10 text-red-600 hover:bg-red-500/20 dark:text-red-400";
+    return (
+      <button
+        type="button"
+        disabled={isPending || (correcting && value === 0)}
+        onClick={() => onTap(key, outcome)}
+        aria-label={`${correcting ? "−" : "+"} ${labelIn(groups, key, t)} — ${t(complete ? "gkOutcomeComplete" : "gkOutcomeIncomplete")}`}
+        className={`flex h-11 items-center justify-center gap-1.5 rounded-lg border text-sm font-semibold transition active:scale-95 disabled:opacity-40 ${tone}`}
+      >
+        <span>{correcting ? "−" : complete ? "✓" : "✗"}</span>
+        <span className="text-base font-bold tabular-nums text-foreground">{value}</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="flex items-center justify-center gap-1.5">
-      {canEdit && (
-        <button
-          type="button"
-          disabled={isPending || value === 0}
-          onClick={onDecrement}
-          className="flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs text-muted transition-colors hover:border-foreground/40 disabled:opacity-40"
-        >
-          −
-        </button>
-      )}
-      <span className="w-6 text-center text-sm font-semibold tabular-nums">{value}</span>
-      {canEdit && (
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={onIncrement}
-          className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs transition-colors disabled:opacity-50 ${tone}`}
-        >
-          +
-        </button>
-      )}
+    <div className="space-y-4">
+      {groups.map((group) => {
+        const groupComplete = sumOf(stats, keysOf(group));
+        const groupIncomplete = sumOf(incomplete, keysOf(group));
+        return (
+          <section key={group.id}>
+            <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted">{groupLabel(group, t)}</h4>
+              <EfficiencyPill value={gkEfficiency(groupComplete, groupIncomplete)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {keysOf(group).map((key) => (
+                <div key={key} className="rounded-xl border border-border bg-background p-2">
+                  <div className="flex min-h-8 items-start justify-between gap-1">
+                    <span className="line-clamp-2 text-xs font-medium leading-tight">{labelIn(groups, key, t)}</span>
+                    {gkEfficiency(statOf(stats, key), statOf(incomplete, key)) != null && (
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted">
+                        {gkEfficiency(statOf(stats, key), statOf(incomplete, key))}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                    {renderButton(key, "complete")}
+                    {renderButton(key, "incomplete")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-// Each action has two columns — completed ✓ and not completed ✗ — plus the
-// resulting efficiency, as the goalkeeper coach asked ("duplicar a coluna").
+// Read-only (viewers, recap, a finished keeper's card): compact tables —
+// ✓ / ✗ in the header (full label on hover) so narrow columns never stack.
 function GkGroupCards({
+  groups,
   stats,
   incomplete,
-  canEdit,
-  isPending,
-  onIncrement,
-  onDecrement,
 }: {
+  groups: LiveGkGroup[];
   stats: GkStatsSide;
   incomplete: GkStatsSide;
-  canEdit: boolean;
-  isPending: boolean;
-  onIncrement?: (key: GkCounterKey, outcome: GkOutcome) => void;
-  onDecrement?: (key: GkCounterKey, outcome: GkOutcome) => void;
 }) {
   const t = useTranslations("dashboard");
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {GK_GROUPS.map((group) => {
-        const groupComplete = group.keys.reduce((sum, key) => sum + stats[key], 0);
-        const groupIncomplete = group.keys.reduce((sum, key) => sum + incomplete[key], 0);
-        const groupEfficiency = gkEfficiency(groupComplete, groupIncomplete);
+    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      {groups.map((group) => {
+        const groupComplete = sumOf(stats, keysOf(group));
+        const groupIncomplete = sumOf(incomplete, keysOf(group));
         return (
-          <div key={group.titleKey} className="rounded-2xl border border-border bg-background p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold">{t(group.titleKey)}</h4>
-              {groupEfficiency != null && (
-                <span className="text-xs font-medium tabular-nums text-muted">{groupEfficiency}%</span>
-              )}
+          <div key={group.id} className="rounded-2xl border border-border bg-background p-4">
+            <div className="flex items-center justify-between gap-3 border-b border-border pb-2.5">
+              <h4 className="text-sm font-semibold">{groupLabel(group, t)}</h4>
+              <div className="flex items-center gap-2 text-xs tabular-nums">
+                <span className="font-semibold text-green-700 dark:text-green-400" title={t("gkOutcomeComplete")}>
+                  ✓ {groupComplete}
+                </span>
+                <span className="font-semibold text-red-600 dark:text-red-400" title={t("gkOutcomeIncomplete")}>
+                  ✗ {groupIncomplete}
+                </span>
+                <EfficiencyPill value={gkEfficiency(groupComplete, groupIncomplete)} />
+              </div>
             </div>
-            <div
-              className={`mt-2 grid items-center gap-x-2 text-[10px] font-semibold uppercase tracking-wide text-muted ${
-                canEdit ? "grid-cols-[minmax(0,1fr)_7rem_7rem_2.5rem]" : "grid-cols-[minmax(0,1fr)_2.5rem_2.5rem_2.5rem]"
-              }`}
-            >
+            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_2.5rem_2.5rem_3rem] items-center gap-x-2 text-sm font-semibold">
               <span />
-              <span className="text-center text-green-700 dark:text-green-400">✓ {t("gkOutcomeComplete")}</span>
-              <span className="text-center text-red-600 dark:text-red-400">✗ {t("gkOutcomeIncomplete")}</span>
-              <span className="text-right">%</span>
+              <span title={t("gkOutcomeComplete")} className="text-center text-green-700 dark:text-green-400">
+                ✓
+              </span>
+              <span title={t("gkOutcomeIncomplete")} className="text-center text-red-600 dark:text-red-400">
+                ✗
+              </span>
+              <span className="text-right text-[10px] uppercase tracking-wide text-muted">%</span>
             </div>
             <div className="mt-1 divide-y divide-border">
-              {group.keys.map((key) => {
-                const efficiency = gkEfficiency(stats[key], incomplete[key]);
+              {keysOf(group).map((key) => {
+                const efficiency = gkEfficiency(statOf(stats, key), statOf(incomplete, key));
                 return (
                   <div
                     key={key}
-                    className={`grid items-center gap-x-2 py-1.5 ${
-                      canEdit
-                        ? "grid-cols-[minmax(0,1fr)_7rem_7rem_2.5rem]"
-                        : "grid-cols-[minmax(0,1fr)_2.5rem_2.5rem_2.5rem]"
-                    }`}
+                    className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.5rem_3rem] items-center gap-x-2 py-1.5"
                   >
-                    <span className="text-sm">{t(GK_LABEL_KEYS[key])}</span>
-                    <OutcomeCounter
-                      value={stats[key]}
-                      outcome="complete"
-                      canEdit={canEdit}
-                      isPending={isPending}
-                      onIncrement={() => onIncrement?.(key, "complete")}
-                      onDecrement={() => onDecrement?.(key, "complete")}
-                    />
-                    <OutcomeCounter
-                      value={incomplete[key]}
-                      outcome="incomplete"
-                      canEdit={canEdit}
-                      isPending={isPending}
-                      onIncrement={() => onIncrement?.(key, "incomplete")}
-                      onDecrement={() => onDecrement?.(key, "incomplete")}
-                    />
+                    <span className="text-sm">{labelIn(groups, key, t)}</span>
+                    <span className="text-center text-sm font-semibold tabular-nums">{statOf(stats, key)}</span>
+                    <span className="text-center text-sm font-semibold tabular-nums">{statOf(incomplete, key)}</span>
                     <span className="text-right text-xs tabular-nums text-muted">
                       {efficiency == null ? "–" : `${efficiency}%`}
                     </span>
@@ -218,6 +230,7 @@ export default function GkStatsPanel({
   onIncrement,
   onDecrement,
   byPlayer,
+  statConfig = DEFAULT_LIVE_STAT_CONFIG,
 }: {
   // Completed actions…
   stats: GkStatsSide;
@@ -236,11 +249,16 @@ export default function GkStatsPanel({
   // gets their own card instead of collapsing everything into whoever
   // ended the match in goal.
   byPlayer?: GkStatsByPlayer[];
+  // The game's fields (its own frozen copy once it kicked off).
+  statConfig?: LiveStatConfig;
 }) {
   const t = useTranslations("dashboard");
+  const groups = activeGkGroups(statConfig);
+  // This device's own taps, newest last — "Desfazer" walks back through them.
+  const [tapHistory, setTapHistory] = useState<{ key: GkCounterKey; outcome: GkOutcome }[]>([]);
+  const [correcting, setCorrecting] = useState(false);
 
   const startingPlayers = players.filter((p) => p.starting && p.name.trim());
-  const namedPlayers = players.filter((p) => p.name.trim());
   // The confirmed keeper leaving the starting XI (sub, red card) means the
   // confirmation no longer holds — re-prompt instead of silently keeping
   // score for someone who isn't even on the pitch anymore.
@@ -250,9 +268,27 @@ export default function GkStatsPanel({
   // whoever came on; the picker only appears when nobody is (still) in goal.
   const showPicker = needsConfirm;
   const suggestedName = needsConfirm ? guessGkName(startingPlayers) : null;
+  const incomplete = incompleteStats ?? emptyGkStatsSide();
 
   function confirm(name: string) {
+    setTapHistory([]);
     onSelectGk?.(name);
+  }
+
+  function handleTap(key: GkCounterKey, outcome: GkOutcome) {
+    if (correcting) {
+      onDecrement?.(key, outcome);
+      return;
+    }
+    setTapHistory((h) => [...h.slice(-19), { key, outcome }]);
+    onIncrement?.(key, outcome);
+  }
+
+  function handleUndo() {
+    const last = tapHistory[tapHistory.length - 1];
+    if (!last) return;
+    setTapHistory((h) => h.slice(0, -1));
+    onDecrement?.(last.key, last.outcome);
   }
 
   if (!showPicker && byPlayer && byPlayer.length > 1) {
@@ -268,7 +304,7 @@ export default function GkStatsPanel({
                 teamName={teamName}
               />
               <div className="mt-3">
-                <GkGroupCards stats={entry.stats} incomplete={entry.incomplete} canEdit={false} isPending={false} />
+                <GkGroupCards groups={groups} stats={entry.stats} incomplete={entry.incomplete} />
               </div>
             </div>
           ))}
@@ -279,66 +315,140 @@ export default function GkStatsPanel({
 
   const gkNumber = gkName ? (players.find((p) => p.name === gkName)?.number ?? null) : null;
 
+  if (showPicker) {
+    return (
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("gkStatsTitle")}</h3>
+        <div className="mt-2 space-y-2 rounded-2xl border border-border bg-background p-4">
+          {suggestedName && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow ring-2 ring-accent/50">
+                  {startingPlayers.find((p) => p.name === suggestedName)?.number ?? "-"}
+                </div>
+                <span className="text-sm font-medium">{t("gkSuggestedLabel", { name: suggestedName })}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => confirm(suggestedName)}
+                disabled={isPending}
+                className="shrink-0 rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {t("gkConfirmButton")}
+              </button>
+            </div>
+          )}
+          <select
+            value=""
+            onChange={(e) => e.target.value && confirm(e.target.value)}
+            disabled={isPending}
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent disabled:opacity-50"
+          >
+            <option value="">{t("gkSelectPlaceholder")}</option>
+            {/* Only players on the pitch — picking someone on the bench
+                would never stick (they aren't playing), which is what
+                happened after a keeper's red card. */}
+            {startingPlayers.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.number != null ? `${p.number} · ` : ""}
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-muted">{t("gkPickerBenchHint")}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!gkName) {
+    return (
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("gkStatsTitle")}</h3>
+        <p className="mt-2 rounded-2xl border border-border bg-background p-4 text-sm text-muted">
+          {t("gkNoSelectionHint")}
+        </p>
+      </div>
+    );
+  }
+
+  if (!canEdit) {
+    return (
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("gkStatsTitle")}</h3>
+        <div className="mt-2 rounded-2xl border border-border bg-background p-4">
+          <GkIdentityHeader number={gkNumber} name={gkName} teamName={teamName} />
+        </div>
+        <div className="mt-4">
+          <GkGroupCards groups={groups} stats={stats} incomplete={incomplete} />
+        </div>
+      </div>
+    );
+  }
+
+  const allKeys = gkKeysOf(groups);
+  const totalComplete = sumOf(stats, allKeys);
+  const totalIncomplete = sumOf(incomplete, allKeys);
+  const lastTap = tapHistory[tapHistory.length - 1];
+
   return (
     <div>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("gkStatsTitle")}</h3>
-
-      <div className="mt-2 rounded-2xl border border-border bg-background p-4">
-        {showPicker ? (
-          <div className="space-y-2">
-            {needsConfirm && suggestedName && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow ring-2 ring-accent/50">
-                    {startingPlayers.find((p) => p.name === suggestedName)?.number ?? "-"}
-                  </div>
-                  <span className="text-sm font-medium">{t("gkSuggestedLabel", { name: suggestedName })}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => confirm(suggestedName)}
-                  disabled={isPending}
-                  className="shrink-0 rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {t("gkConfirmButton")}
-                </button>
-              </div>
-            )}
-            <select
-              value=""
-              onChange={(e) => e.target.value && confirm(e.target.value)}
-              disabled={isPending}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent disabled:opacity-50"
-            >
-              <option value="">{t("gkSelectPlaceholder")}</option>
-              {namedPlayers.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+      {/* One compact bar: who's in goal, the running totals, and the two
+          ways to fix a mistake — stays on screen while scrolling. */}
+      <div className="sticky top-0 z-10 -mx-1 rounded-2xl border border-border bg-surface/95 px-3 py-2 shadow-sm backdrop-blur">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white ring-2 ring-accent/50">
+            {gkNumber ?? "-"}
           </div>
-        ) : gkName ? (
-          <div className="flex items-center gap-3">
-            <GkIdentityHeader number={gkNumber} name={gkName} teamName={teamName} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{gkName}</p>
+            <p className="truncate text-[10px] uppercase tracking-wide text-muted">{teamName}</p>
           </div>
-        ) : (
-          <p className="text-sm text-muted">{t("gkNoSelectionHint")}</p>
-        )}
+          <div className="flex shrink-0 items-center gap-2 text-xs font-semibold tabular-nums">
+            <span className="text-green-700 dark:text-green-400">✓ {totalComplete}</span>
+            <span className="text-red-600 dark:text-red-400">✗ {totalIncomplete}</span>
+            <EfficiencyPill value={gkEfficiency(totalComplete, totalIncomplete)} />
+          </div>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleUndo}
+            disabled={!lastTap || isPending || correcting}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium transition-colors hover:border-foreground/30 disabled:opacity-40"
+          >
+            <span aria-hidden>↶</span>
+            <span className="truncate">
+              {lastTap
+                ? `${t("gkUndoLast")}: ${labelIn(groups, lastTap.key, t)} ${lastTap.outcome === "complete" ? "✓" : "✗"}`
+                : t("gkUndoLast")}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCorrecting((c) => !c)}
+            className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+              correcting
+                ? "border-amber-500 bg-amber-500 text-white"
+                : "border-border bg-background text-muted hover:text-foreground"
+            }`}
+          >
+            {correcting ? t("gkCorrectDone") : t("gkCorrectMode")}
+          </button>
+        </div>
+        {correcting && <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">{t("gkCorrectModeHint")}</p>}
       </div>
 
-      {gkName && !showPicker && (
-        <div className="mt-4">
-          <GkGroupCards
-            stats={stats}
-            incomplete={incompleteStats ?? emptyGkStatsSide()}
-            canEdit={canEdit}
-            isPending={isPending}
-            onIncrement={onIncrement}
-            onDecrement={onDecrement}
-          />
-        </div>
-      )}
+      <div className="mt-3">
+        <GkTapBoard
+          groups={groups}
+          stats={stats}
+          incomplete={incomplete}
+          correcting={correcting}
+          isPending={isPending}
+          onTap={handleTap}
+        />
+      </div>
     </div>
   );
 }

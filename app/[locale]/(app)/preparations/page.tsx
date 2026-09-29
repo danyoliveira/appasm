@@ -9,6 +9,7 @@ import AddManualPreparation from "./AddManualPreparation";
 import PreparationFixtureList, {
   type PreparationFixtureRow,
 } from "./PreparationFixtureList";
+import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
 
 export default async function PreparationListPage({
   params,
@@ -56,15 +57,19 @@ export default async function PreparationListPage({
     try {
       const current = await getCurrentCompetitions(teamId);
       if (current.defaultSeason) {
-        const [seasonFixtures, preparedRows] = await Promise.all([
+        const [apiSeasonFixtures, preparedRows, liveScores] = await Promise.all([
           getTeamSeasonFixtures(teamId, current.defaultSeason).catch(() => []),
           supabase
             .from("fixture_preparations")
-            .select("fixture_id")
+            .select("fixture_id, finished_at")
             .eq("team_id", teamId)
             .then(({ data }) => data ?? []),
+          loadLiveScores(supabase, teamId),
         ]);
+        // No API-Football score yet → the ASM Live Mode one.
+        const seasonFixtures = withLiveScores(apiSeasonFixtures, liveScores);
         const preparedFixtureIds = new Set(preparedRows.map((row) => row.fixture_id));
+        const finishedFixtureIds = new Set(preparedRows.filter((row) => row.finished_at).map((row) => row.fixture_id));
 
         const toRow = (fx: (typeof seasonFixtures)[number]): PreparationFixtureRow => {
           const opponent = fx.teams.home.id === teamId ? fx.teams.away : fx.teams.home;
@@ -77,6 +82,7 @@ export default async function PreparationListPage({
             competitionLogo: fx.league.logo,
             isHome: fx.teams.home.id === teamId,
             isPrepared: preparedFixtureIds.has(fx.fixture.id),
+            isFinished: finishedFixtureIds.has(fx.fixture.id),
           };
         };
         // Past games only show up once actually prepared (i.e. someone
@@ -109,7 +115,7 @@ export default async function PreparationListPage({
     const { data: manualRows } = await supabase
       .from("manual_preparations")
       .select(
-        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_name, competition_logo, is_home",
+        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_name, competition_logo, is_home, finished_at",
       )
       .eq("team_id", teamId)
       .order("match_date", { ascending: true });
@@ -126,6 +132,7 @@ export default async function PreparationListPage({
         competitionLogo: row.competition_logo,
         isHome: row.is_home,
         isPrepared: true,
+        isFinished: row.finished_at != null,
         isManual: true,
       }));
       pastFixtureRows = [
@@ -171,6 +178,15 @@ export default async function PreparationListPage({
           manualBadge: t("preparationManualBadge"),
           deleteAction: t("deleteButton"),
           confirmDelete: t("confirmDeleteMessage"),
+          finishedBadge: t("preparationFinishedBadge"),
+          viewAction: t("preparationViewButton"),
+          sectionInProgress: t("prepSectionInProgress"),
+          sectionInProgressHint: t("prepSectionInProgressHint"),
+          sectionUpcoming: t("prepSectionUpcoming"),
+          sectionFinished: t("prepSectionFinished"),
+          toFinishBadge: t("prepToFinishBadge"),
+          finishAction: t("prepFinishShortButton"),
+          finishConfirm: t("preparationFinishConfirm"),
         }}
       />
     </div>

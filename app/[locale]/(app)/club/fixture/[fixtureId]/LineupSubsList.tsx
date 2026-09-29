@@ -13,11 +13,14 @@ export default function LineupSubsList({
   events,
   locale,
   assistLabel,
+  linkablePlayerIds,
 }: {
   lineup: FixtureLineup;
   events: FixtureEvent[];
   locale: Locale;
   assistLabel: string;
+  // Same as PitchDiagram: omitted = every player links to their page.
+  linkablePlayerIds?: number[];
 }) {
   const [color, setColor] = useState<string | null>(null);
 
@@ -37,12 +40,8 @@ export default function LineupSubsList({
     <div className="mt-2 grid grid-cols-2 gap-1.5">
       {lineup.substitutes.map((p) => {
         const evts = playerEvents(p.player.id, events);
-        return (
-          <Link
-            key={p.player.id}
-            href={`/club/player/${p.player.id}`}
-            className="group relative flex items-center gap-1.5 rounded-full bg-background px-2 py-1 text-xs transition-colors hover:bg-border"
-          >
+        const content = (
+          <>
             <span
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-border text-[10px] font-bold"
               style={badgeStyle}
@@ -69,7 +68,21 @@ export default function LineupSubsList({
                 ))}
               </div>
             )}
+          </>
+        );
+        const className = "group relative flex items-center gap-1.5 rounded-full bg-background px-2 py-1 text-xs";
+        return !linkablePlayerIds || linkablePlayerIds.includes(p.player.id) ? (
+          <Link
+            key={p.player.id}
+            href={`/club/player/${p.player.id}`}
+            className={`${className} transition-colors hover:bg-border`}
+          >
+            {content}
           </Link>
+        ) : (
+          <div key={p.player.id} className={className}>
+            {content}
+          </div>
         );
       })}
     </div>

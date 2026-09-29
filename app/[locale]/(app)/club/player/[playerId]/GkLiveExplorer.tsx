@@ -5,7 +5,8 @@ import { useLocale, useTranslations } from "next-intl";
 import Icon from "@/components/Icon";
 import TeamCrest from "@/components/TeamCrest";
 import type { LiveGameStats } from "@/lib/liveMatchHistory";
-import { GK_COUNTER_KEYS, emptyGkStatsSide, gkEfficiency } from "../../../../live/liveStatsShared";
+import { emptyGkStatsSide, gkEfficiency } from "../../../../live/liveStatsShared";
+import { displayGkGroups, gkKeysOf, type LiveStatConfig } from "../../../../live/liveStatConfig";
 import {
   GkComparisonTable,
   GkEfficiencyChart,
@@ -38,10 +39,8 @@ function sumTotals(list: (GkTotals | null)[]): GkTotals {
   const incomplete = emptyGkStatsSide();
   for (const tot of list) {
     if (!tot) continue;
-    for (const key of GK_COUNTER_KEYS) {
-      complete[key] += tot.complete[key];
-      incomplete[key] += tot.incomplete[key];
-    }
+    for (const [key, n] of Object.entries(tot.complete)) complete[key] = (complete[key] ?? 0) + n;
+    for (const [key, n] of Object.entries(tot.incomplete)) incomplete[key] = (incomplete[key] ?? 0) + n;
   }
   return { complete, incomplete };
 }
@@ -50,8 +49,20 @@ function sumTotals(list: (GkTotals | null)[]): GkTotals {
 // with a keeper change, only the part) he played — same layout as the club's
 // Estatística → ASM Live Mode: list on one side, averages / one game /
 // comparison of up to 3 on the other, and the efficiency trend.
-export default function GkLiveExplorer({ games }: { games: LiveGameStats[] }) {
+export default function GkLiveExplorer({
+  games,
+  statConfig,
+}: {
+  games: LiveGameStats[];
+  // The club's current fields (plus any older one these games used).
+  statConfig: LiveStatConfig;
+}) {
   const t = useTranslations("dashboard");
+  const groups = displayGkGroups(
+    statConfig,
+    games.map((g) => g.statConfig),
+  );
+  const allKeys = gkKeysOf(groups);
   const locale = useLocale();
   const [competition, setCompetition] = useState("");
   const [venue, setVenue] = useState<"all" | "home" | "away">("all");
@@ -190,12 +201,14 @@ export default function GkLiveExplorer({ games }: { games: LiveGameStats[] }) {
             ))}
           </div>
           <GkComparisonTable
+            groups={groups}
             columns={selectedGames.map((g, i) => ({
               key: g.sessionId,
               totals: gkTotalsOf(g.gk),
               header: (
-                <span className="flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${SLOT_DOT[i]}`} />✓ / ✗ · %
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${SLOT_DOT[i]}`} />
+                  <span className="truncate">{g.opponent.name}</span>
                 </span>
               ),
             }))}
@@ -220,7 +233,7 @@ export default function GkLiveExplorer({ games }: { games: LiveGameStats[] }) {
                 const slot = selected.indexOf(g.sessionId);
                 const totals = gkTotalsOf(g.gk);
                 const pct = totals
-                  ? gkEfficiency(sumKeys(totals.complete, GK_COUNTER_KEYS), sumKeys(totals.incomplete, GK_COUNTER_KEYS))
+                  ? gkEfficiency(sumKeys(totals.complete, allKeys), sumKeys(totals.incomplete, allKeys))
                   : null;
                 return (
                   <button
@@ -266,13 +279,13 @@ export default function GkLiveExplorer({ games }: { games: LiveGameStats[] }) {
                 <div className="space-y-3">
                   {renderGameLine(selectedGames[0])}
                   {gkTotalsOf(selectedGames[0].gk) && (
-                    <GkKeeperBreakdown totals={gkTotalsOf(selectedGames[0].gk)!} showName={false} />
+                    <GkKeeperBreakdown groups={groups} totals={gkTotalsOf(selectedGames[0].gk)!} showName={false} />
                   )}
                 </div>
               ) : (
                 <div className="space-y-3">
                   <p className="text-xs text-muted">{t("gkLiveAveragesHint", { count: filtered.length })}</p>
-                  <GkKeeperBreakdown totals={sumTotals(filtered.map((g) => gkTotalsOf(g.gk)))} showName={false} />
+                  <GkKeeperBreakdown groups={groups} totals={sumTotals(filtered.map((g) => gkTotalsOf(g.gk)))} showName={false} />
                 </div>
               )}
             </section>
@@ -280,6 +293,7 @@ export default function GkLiveExplorer({ games }: { games: LiveGameStats[] }) {
 
           <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
             <GkEfficiencyChart
+              groups={groups}
               points={filtered.map((g) => ({
                 id: g.sessionId,
                 label: dayLabel(g.date),

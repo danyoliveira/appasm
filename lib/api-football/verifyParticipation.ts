@@ -43,7 +43,8 @@ export async function getFixtureAppearances(
 ): Promise<Map<number, VerifiedAppearance>> {
   const [playersData, lineups, events] = await Promise.all([
     getFixturePlayers(fixtureId).catch(() => []),
-    getFixtureLineups(fixtureId).catch(() => []),
+    // Only ever called for played fixtures.
+    getFixtureLineups(fixtureId, { finished: true }).catch(() => []),
     getFixtureEvents(fixtureId).catch(() => []),
   ]);
 

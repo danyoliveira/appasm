@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { contrastTextColor, getLogoColor } from "@/lib/logoColor";
+import { contrastTextColor, getVividLogoColor } from "@/lib/logoColor";
 
 // Same treatment as the club header (ClubHeaderAccent): a solid wash of the
 // player's current club color, with the headline season stats folded into
@@ -25,7 +25,7 @@ export default function PlayerHero({
   useEffect(() => {
     if (!clubLogoUrl) return;
     let cancelled = false;
-    getLogoColor(clubLogoUrl).then((c) => {
+    getVividLogoColor(clubLogoUrl).then((c) => {
       if (!cancelled) setColor(c);
     });
     return () => {

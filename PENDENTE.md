@@ -34,7 +34,7 @@
   - DESARMES ✅
   - INTERCEÇÕES ✅
   - RECUPERAÇOES DE BOLA - MEIO CAMPO E MEIO CAMPO ADVERSARIO ✅
-- BALIZA = PARAMETROS QUE ELE JA ENVIOU (TREINADOR DE GR)
+- BALIZA = PARAMETROS QUE ELE JA ENVIOU (TREINADOR DE GR) ✅
 
 ## PREPARAÇOES
 
@@ -61,10 +61,11 @@
 - MODO GK ✅ (separador "GK" no Modo Jogo — escolhe o guarda-redes por equipa e os 13 parâmetros: reposição, reposição com a mão, bloqueio médio/alto/baixo, defesa lateral baixa, pontapé de baliza, saída fora da área, comunicação, saída 1x1, cruzamento/soco/desvio, cruzamentos, jogo de pés)
 - AUTO PREENCHIMENTO CASO NAO HAJA 11S ✅ (botão preencher aleatório)
 - ADD ESTATISTICA INTERNAS ✅ (posse de bola, transições, desarmes, interceções, recuperações, passes progressivos — separador "Estatísticas" no Modo Jogo)
-- TREINADOR DE GR - AÇÕES COMPLETAS E INCOMPLETAS: MANTER TUDO O QUE ESTÁ, MAS DUPLICAR (MAIS UMA COLUNA PARA ADICIONAR VALORES)
+- TREINADOR DE GR - AÇÕES COMPLETAS E INCOMPLETAS: MANTER TUDO O QUE ESTÁ, MAS DUPLICAR (MAIS UMA COLUNA PARA ADICIONAR VALORES) ✅
+- TREINADOR DE GR - DIVISÃO EM GRUPOS DAS AÇÕES: PEDIR AO TREINADOR DE GR COMO AGRUPA AS 13 AÇÕES E SUBSTITUIR OS GRUPOS PROVISÓRIOS (BOLA PARADA / DEFESAS / JOGO AÉREO / SAÍDAS / OUTROS) NO MODO GK, NA ESTATÍSTICA > ASM LIVE MODE E NO PERFIL DO GR ✅
 
 ## GERAL
 
-- MODO ESCURO: ALTERA AS LETRAS ENTRE BRANCO E PRETO, MAS NÃO MUDA O FUNDO (SAFARI + AVAST BROWSER)
+- MODO ESCURO: ALTERA AS LETRAS ENTRE BRANCO E PRETO, MAS NÃO MUDA O FUNDO (SAFARI + AVAST BROWSER) ✅ (revisão completa do modo escuro)
 
-## MARCA DE AGUA
+## MARCA DE AGUA ✅

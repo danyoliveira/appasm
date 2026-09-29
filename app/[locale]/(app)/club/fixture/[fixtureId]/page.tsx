@@ -14,6 +14,13 @@ import FixtureHeroAccent from "../../../FixtureHeroAccent";
 import FixtureStatsBars from "./FixtureStatsBars";
 import LineupSubsList from "./LineupSubsList";
 import { buildFixtureStatSections } from "./fixtureStatsHelpers";
+import { loadLiveScores, withLiveScore } from "@/lib/liveScores";
+import ManualFixtureDetail from "./ManualFixtureDetail";
+import EventsTimeline from "./EventsTimeline";
+import { fixtureStatusLabel, translateRound } from "../../fixtureHelpers";
+import FixtureStatsSourceTabs from "./FixtureStatsSourceTabs";
+import LiveInternalStats from "./LiveInternalStats";
+import { loadLiveFixture } from "@/lib/liveFixtureLoader";
 
 export default async function FixtureDetailPage({
   params,
@@ -22,6 +29,10 @@ export default async function FixtureDetailPage({
 }) {
   const { locale, fixtureId: fixtureIdParam } = await params;
   setRequestLocale(locale);
+  // Games created from scratch have their own page, built from our data.
+  if (fixtureIdParam.startsWith("manual-")) {
+    return <ManualFixtureDetail locale={locale} preparationKey={fixtureIdParam} />;
+  }
   const t = await getTranslations("dashboard");
   const fixtureId = Number(fixtureIdParam);
 
@@ -67,6 +78,9 @@ export default async function FixtureDetailPage({
     .maybeSingle();
   const teamId = coachProfile?.api_football_team_id ?? null;
 
+  // No API-Football score yet → the ASM Live Mode one.
+  if (teamId) detail = withLiveScore(detail, await loadLiveScores(supabase, teamId));
+
   let hasPreparation = false;
   if (teamId) {
     const { data: preparationRow } = await supabase
@@ -77,6 +91,17 @@ export default async function FixtureDetailPage({
       .maybeSingle();
     hasPreparation = preparationRow != null;
   }
+
+  // Interna: the same game as logged in ASM Live Mode, if it was followed there.
+  const ourSide: "home" | "away" = detail.teams.home.id === teamId ? "home" : "away";
+  const live = teamId
+    ? await loadLiveFixture(supabase, {
+        preparationKey: String(fixtureId),
+        home: detail.teams.home,
+        away: detail.teams.away,
+        ourSide,
+      })
+    : null;
 
   const homeLineup = lineups.find((l) => l.team.id === detail!.teams.home.id);
   const awayLineup = lineups.find((l) => l.team.id === detail!.teams.away.id);
@@ -98,7 +123,8 @@ export default async function FixtureDetailPage({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={detail.league.logo} alt="" className="h-4 w-4 object-contain" />
           <span>
-            {detail.league.name} · {detail.league.round}
+            {detail.league.name}
+            {detail.league.round && ` · ${translateRound(detail.league.round, t)}`}
           </span>
         </div>
 
@@ -117,7 +143,7 @@ export default async function FixtureDetailPage({
             <div className="text-3xl font-bold tracking-tight">
               {detail.goals.home ?? "-"} - {detail.goals.away ?? "-"}
             </div>
-            <div className="mt-1 text-xs text-muted">{detail.fixture.status.long}</div>
+            <div className="mt-1 text-xs text-muted">{fixtureStatusLabel(detail.fixture.status, t)}</div>
           </div>
           <Link
             href={`/club/${detail.teams.away.id}`}
@@ -132,7 +158,16 @@ export default async function FixtureDetailPage({
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted">
-          <span>{new Date(detail.fixture.date).toLocaleString(locale)}</span>
+          <span className="first-letter:uppercase">
+            {new Date(detail.fixture.date).toLocaleString(locale, {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
           {detail.fixture.venue.name && (
             <span>
               🏟️ {detail.fixture.venue.name}
@@ -153,6 +188,21 @@ export default async function FixtureDetailPage({
           </div>
         )}
       </FixtureHeroAccent>
+
+      <EventsTimeline
+        events={events}
+        homeTeamId={detail.teams.home.id}
+        homeName={detail.teams.home.name}
+        awayName={detail.teams.away.name}
+        locale={locale}
+        labels={{
+          title: t("matchTimelineTitle"),
+          assist: t("assistLabel"),
+          halfTime: t("liveStatsPhaseHalftime"),
+          showAll: t("matchTimelineShowAll"),
+          showLess: t("matchTimelineShowLess"),
+        }}
+      />
 
       {homeLineup && awayLineup && (
         <section className="mt-10">
@@ -198,22 +248,36 @@ export default async function FixtureDetailPage({
         </section>
       )}
 
-      {homeStats && awayStats && statTypes.length > 0 && (
-        <section className="mt-10 rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <h2 className="text-lg font-semibold">{t("fixtureStatsTitle")}</h2>
-          {(() => {
-            const { headline, sections } = buildFixtureStatSections(homeStats, awayStats, locale, t);
-            return (
-              <FixtureStatsBars
-                homeLogo={detail.teams.home.logo}
-                awayLogo={detail.teams.away.logo}
-                headline={headline}
-                sections={sections}
-              />
-            );
-          })()}
-        </section>
-      )}
+      <FixtureStatsSourceTabs
+        external={
+          homeStats && awayStats && statTypes.length > 0
+            ? (() => {
+                const { headline, sections } = buildFixtureStatSections(homeStats, awayStats, locale, t);
+                return (
+                  <FixtureStatsBars
+                    homeLogo={detail.teams.home.logo}
+                    awayLogo={detail.teams.away.logo}
+                    headline={headline}
+                    sections={sections}
+                  />
+                );
+              })()
+            : null
+        }
+        internal={
+          live ? (
+            <LiveInternalStats
+              live={live}
+              ourSide={ourSide}
+              ourTeamName={ourSide === "home" ? detail.teams.home.name : detail.teams.away.name}
+              homeLogo={detail.teams.home.logo}
+              awayLogo={detail.teams.away.logo}
+              locale={locale}
+              sectionTitle={t}
+            />
+          ) : null
+        }
+      />
     </div>
   );
 }

@@ -10,6 +10,14 @@ const EVENT_LABELS: Record<string, { pt: string; es: string; fr: string }> = {
   "Yellow Card": { pt: "Cartão amarelo", es: "Tarjeta amarilla", fr: "Carton jaune" },
   "Red Card": { pt: "Cartão vermelho", es: "Tarjeta roja", fr: "Carton rouge" },
   "Second Yellow card": { pt: "Segundo amarelo", es: "Segunda amarilla", fr: "Deuxième jaune" },
+  "Goal cancelled": { pt: "Golo anulado (VAR)", es: "Gol anulado (VAR)", fr: "But annulé (VAR)" },
+  "Goal Disallowed - offside": { pt: "Golo anulado por fora de jogo (VAR)", es: "Gol anulado por fuera de juego (VAR)", fr: "But refusé pour hors-jeu (VAR)" },
+  "Goal Disallowed - handball": { pt: "Golo anulado por mão (VAR)", es: "Gol anulado por mano (VAR)", fr: "But refusé pour main (VAR)" },
+  "Goal Disallowed - Foul": { pt: "Golo anulado por falta (VAR)", es: "Gol anulado por falta (VAR)", fr: "But refusé pour faute (VAR)" },
+  "Goal confirmed": { pt: "Golo confirmado (VAR)", es: "Gol confirmado (VAR)", fr: "But confirmé (VAR)" },
+  "Penalty confirmed": { pt: "Penálti confirmado (VAR)", es: "Penalti confirmado (VAR)", fr: "Penalty confirmé (VAR)" },
+  "Penalty cancelled": { pt: "Penálti anulado (VAR)", es: "Penalti anulado (VAR)", fr: "Penalty annulé (VAR)" },
+  "Card upgrade": { pt: "Cartão agravado (VAR)", es: "Tarjeta agravada (VAR)", fr: "Carton aggravé (VAR)" },
 };
 
 export function translateEventDetail(detail: string, locale: Locale): string {

@@ -168,11 +168,11 @@ export default async function ArchivedStintPage({
 
       {team && (
         <div className="mt-4">
-          <ClubHeaderAccent logoUrl={team.logo}>
-            <div className="text-xl font-semibold">{team.name}</div>
-            <div className="mt-1 text-sm opacity-80">
-              {startedAt.toLocaleDateString(locale)} – {endedAt.toLocaleDateString(locale)}
-            </div>
+          <ClubHeaderAccent
+            logoUrl={team.logo}
+            eyebrow={`${startedAt.toLocaleDateString(locale)} – ${endedAt.toLocaleDateString(locale)}`}
+          >
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{team.name}</h1>
           </ClubHeaderAccent>
         </div>
       )}

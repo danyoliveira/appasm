@@ -12,8 +12,6 @@ import {
   getTeamInfo,
   getTopScorers,
   getTopAssists,
-  getSquad,
-  getPlayerProfile,
 } from "@/lib/api-football/cache";
 import {
   getCurrentCompetitions,
@@ -40,6 +38,8 @@ function RankedPlayerRow({ rank, scorer, value }: { rank: number; scorer: TopSco
     </div>
   );
 }
+import Icon, { type IconName } from "@/components/Icon";
+import TeamCrest from "@/components/TeamCrest";
 import SeasonStatsGrid from "../SeasonStatsGrid";
 import Countdown from "../Countdown";
 import NextFixturePrepareButton from "../NextFixturePrepareButton";
@@ -49,20 +49,35 @@ import {
   isNonInjuryReason,
   translateInjuryType,
   shortenPlayerName,
-  orderSquadLikeGeneralTab,
 } from "../club/playerShared";
 import RecentNotesPanel from "../notes/RecentNotesPanel";
-import { getCurrentStintId } from "@/lib/coachingStints";
-import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
-import {
-  CLUB_NOTE_COLUMNS,
-  PLAYER_NOTE_COLUMNS,
-  clubNoteFromRow,
-  playerNoteFromRow,
-  type NoteItem,
-  type NotePlayer,
-} from "../notes/noteShared";
+import { loadTeamNotes } from "../notes/loadTeamNotes";
 import { matchResult } from "../club/fixtureHelpers";
+import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
+
+// Same heading on every dashboard card: a small tinted icon tile, the
+// title, and an optional count.
+function SectionHeading({ icon, title, count }: { icon: IconName; title: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+        <Icon name={icon} className="h-4 w-4" />
+      </span>
+      <h2 className="text-base font-semibold">{title}</h2>
+      {count != null && (
+        <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium tabular-nums text-muted ring-1 ring-border">
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const RESULT_TONE: Record<"W" | "D" | "L", string> = {
+  W: "bg-green-600 text-white",
+  D: "bg-border text-foreground",
+  L: "bg-red-500 text-white",
+};
 
 
 export default async function DashboardOverviewPage({
@@ -98,6 +113,7 @@ export default async function DashboardOverviewPage({
   const teamId = coachProfile?.api_football_team_id ?? null;
 
   let standings: StandingRow[] = [];
+  let standingsLeague: { name: string; logo: string } | null = null;
   let topScorers: TopScorer[] = [];
   let topAssists: TopScorer[] = [];
   let nextFixture: Fixture | null = null;
@@ -109,16 +125,20 @@ export default async function DashboardOverviewPage({
   let headToHead: Fixture[] = [];
   let isNextFixturePrepared = false;
   let ourLogo: string | null = null;
+  let ourName: string | null = null;
 
   if (teamId) {
     try {
-      const [fixtures, current, store, ourTeamInfo] = await Promise.all([
+      const [apiFixtures, current, store, ourTeamInfo, liveScores] = await Promise.all([
         getNextFixtures(teamId),
         getCurrentCompetitions(teamId),
         cookies(),
         getTeamInfo(teamId).catch(() => []),
+        loadLiveScores(supabase, teamId),
       ]);
+      const fixtures = withLiveScores(apiFixtures, liveScores);
       ourLogo = ourTeamInfo[0]?.team.logo ?? null;
+      ourName = ourTeamInfo[0]?.team.name ?? null;
       // API-Football's "next" fixtures endpoint can lag in marking a match as
       // finished — guard against picking one back up here by requiring it to
       // still have no final score, not just a future-looking date.
@@ -131,6 +151,7 @@ export default async function DashboardOverviewPage({
           ? current.allCompetitions.find((c) => c.league.id === selectedCompetitionId)
           : null;
         const standingsLeagueId = selectedCompetition?.league.id ?? current.defaultCompetition.league.id;
+        standingsLeague = (selectedCompetition ?? current.defaultCompetition).league;
         const standingsSeason =
           selectedCompetition?.seasons.find((s) => s.current)?.year ?? current.defaultSeason;
 
@@ -221,51 +242,9 @@ export default async function DashboardOverviewPage({
   }
 
   // Notes across the club and its players (coach-only, same as the notes
-  // themselves) — the dashboard panel searches/filters them client-side.
-  let dashboardNotes: NoteItem[] = [];
-  let notePlayers: NotePlayer[] = [];
-  const notePlayerInfo: Record<number, NotePlayer> = {};
-  if (isCoach && teamId) {
-    const stintId = await getCurrentStintId(supabase, teamId);
-    const [{ data: playerNoteRows }, { data: clubNoteRows }, apiSquad, manualRows] = await Promise.all([
-      supabase.from("player_notes").select(PLAYER_NOTE_COLUMNS).eq("team_id", teamId),
-      supabase.from("club_notes").select(CLUB_NOTE_COLUMNS).eq("team_id", teamId),
-      getSquad(teamId).catch(() => []),
-      getManualPlayers(supabase, teamId, stintId),
-    ]);
-    const squad = withManualPlayers(apiSquad, manualRows);
-    dashboardNotes = [
-      ...(playerNoteRows ?? []).map(playerNoteFromRow),
-      ...(clubNoteRows ?? []).map(clubNoteFromRow),
-    ];
-
-    // Same order as the squad on the club page (goalkeepers first).
-    notePlayers = orderSquadLikeGeneralTab(squad[0]?.players ?? [], new Map()).map((p) => ({
-      id: p.id,
-      name: shortenPlayerName(p.name),
-      photo: p.photo,
-    }));
-    notePlayers.forEach((p) => (notePlayerInfo[p.id] = p));
-
-    // Players who've since left the squad fall back to their cached profile.
-    const missingIds = [
-      ...new Set(
-        dashboardNotes
-          .map((n) => n.playerId)
-          .filter((id): id is number => id != null && !notePlayerInfo[id]),
-      ),
-    ];
-    await Promise.all(
-      missingIds.map(async (id) => {
-        const player = (await getPlayerProfile(id).catch(() => []))[0]?.player;
-        notePlayerInfo[id] = {
-          id,
-          name: player ? shortenPlayerName(player.name) : `#${id}`,
-          photo: player?.photo ?? null,
-        };
-      }),
-    );
-  }
+  // themselves) — the dashboard shows reminders + the latest few; the full
+  // list with filters lives on the Notas page.
+  const teamNotes = isCoach && teamId ? await loadTeamNotes(supabase, teamId) : null;
 
   let peopleCount = 0;
   if (isCoach) {
@@ -299,10 +278,25 @@ export default async function DashboardOverviewPage({
 
   return (
     <div>
-      <ClubHeaderAccent logoUrl={ourLogo}>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          {t("overviewGreeting", { name: profile.full_name || "" })}
+      <ClubHeaderAccent
+        logoUrl={ourLogo}
+        eyebrow={new Date().toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}
+      >
+        <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">
+          {profile.full_name?.trim() ? t("overviewGreeting", { name: profile.full_name.trim().split(/\s+/)[0] }) : t("overviewGreetingNoName")}
         </h1>
+        {(ourName || (nextFixture && opponent)) && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            {ourName && <span className="font-medium text-foreground">{ourName}</span>}
+            {ourName && nextFixture && opponent && <span aria-hidden className="hidden opacity-50 sm:inline">•</span>}
+            {nextFixture && opponent && (
+              <span>
+                {t("nextFixtureLabel")}: {opponent.name} ·{" "}
+                {new Date(nextFixture.fixture.date).toLocaleDateString(locale, { day: "numeric", month: "short" })}
+              </span>
+            )}
+          </p>
+        )}
       </ClubHeaderAccent>
 
       {!teamId && (
@@ -317,288 +311,290 @@ export default async function DashboardOverviewPage({
         </div>
       )}
 
-      {/* The hero — everything else on this page is either context for this
-          match or general reference, so it leads and gets the most visual
-          weight (same gradient treatment as the Live Mode panel). */}
+      {/* Notes first — reminders and pinned notes are what the coach acts on
+          day to day. */}
+      {teamNotes && teamId && (
+        <RecentNotesPanel
+          variant="dashboard"
+          teamId={teamId}
+          notes={teamNotes.notes}
+          players={teamNotes.players}
+          playerInfo={teamNotes.playerInfo}
+          clubLogo={ourLogo}
+        />
+      )}
+
+      {/* The hero — the next match in one tight block: a header line (label,
+          competition, home/away, venue), then the matchup on the left and
+          the countdown + the one action on the right. */}
       {teamId && (
-        <FixtureHeroAccent
-          className="mt-8"
-          homeLogo={ourLogo}
-          awayLogo={opponent?.logo ?? null}
-        >
-          <h2 className="text-lg font-semibold">{t("nextFixtureLabel")}</h2>
+        <FixtureHeroAccent className="mt-6" homeLogo={ourLogo} awayLogo={opponent?.logo ?? null}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+              {t("nextFixtureLabel")}
+            </h2>
+            {nextFixture && opponent && (
+              <>
+                <span className="flex min-w-0 items-center gap-1.5 text-muted">
+                  {nextFixture.league.logo && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={nextFixture.league.logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  )}
+                  <span className="truncate">{nextFixture.league.name}</span>
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 font-medium ${
+                    nextFixture.teams.home.id === teamId
+                      ? "bg-accent/10 text-accent"
+                      : "bg-background text-muted ring-1 ring-border"
+                  }`}
+                >
+                  {nextFixture.teams.home.id === teamId ? t("homeLabel") : t("awayLabel")}
+                </span>
+                {nextFixture.fixture.venue.name && (
+                  <span className="truncate text-muted">🏟️ {nextFixture.fixture.venue.name}</span>
+                )}
+              </>
+            )}
+          </div>
 
           {!nextFixture || !opponent ? (
             <p className="mt-4 text-sm text-muted">{t("noUpcomingFixtures")}</p>
           ) : (
-            <>
-              <Link
-                href={`/club/${opponent.id}`}
-                className="mt-3 flex items-center gap-3 transition-opacity hover:opacity-80"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={opponent.logo} alt="" className="h-12 w-12 object-contain" />
-                <div>
-                  <div className="text-lg font-medium">{opponent.name}</div>
-                  <div className="text-sm text-muted">
-                    {nextFixture.fixture.venue.name && `${nextFixture.fixture.venue.name} · `}
-                    {new Date(nextFixture.fixture.date).toLocaleDateString(locale)} ·{" "}
-                    {new Date(nextFixture.fixture.date).toLocaleTimeString(locale, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+            (() => {
+              const date = new Date(nextFixture.fixture.date);
+              const weAreHome = nextFixture.teams.home.id === teamId;
+              const us = { id: teamId, name: ourName ?? "", logo: ourLogo ?? "" };
+              const teamBlock = (team: { id: number; name: string; logo: string }, isUs: boolean, align: "left" | "right") => (
+                <Link
+                  href={isUs ? "/club" : `/club/${team.id}`}
+                  className={`group flex min-w-0 flex-col items-center gap-2 text-center sm:flex-row sm:gap-3 ${
+                    align === "right" ? "sm:flex-row-reverse sm:text-right" : "sm:text-left"
+                  }`}
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white p-2 shadow-md ring-1 ring-black/5 transition-transform group-hover:-translate-y-0.5 sm:h-14 sm:w-14">
+                    <TeamCrest logo={team.logo} className="h-full w-full" />
+                  </span>
+                  <span className="line-clamp-2 min-w-0 text-sm font-semibold group-hover:text-accent sm:text-base">
+                    {team.name}
+                  </span>
+                </Link>
+              );
+              return (
+                <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
+                  <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-3">
+                    {weAreHome ? teamBlock(us, true, "left") : teamBlock(opponent, false, "left")}
+                    <div className="text-center">
+                      <div className="text-xl font-bold tabular-nums sm:text-2xl">
+                        {date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div className="text-[11px] font-medium text-muted first-letter:uppercase">
+                        {date.toLocaleDateString(locale, { weekday: "short", day: "numeric", month: "short" })}
+                      </div>
+                    </div>
+                    {weAreHome ? teamBlock(opponent, false, "right") : teamBlock(us, true, "right")}
+                  </div>
+
+                  <div className="flex flex-col items-center gap-1 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 [&>*:first-child]:mt-0">
+                    <Countdown
+                      target={nextFixture.fixture.date}
+                      labels={{
+                        days: t("countdownDays"),
+                        hours: t("countdownHours"),
+                        minutes: t("countdownMinutes"),
+                        seconds: t("countdownSeconds"),
+                        live: t("countdownLive"),
+                      }}
+                    />
+                    <NextFixturePrepareButton
+                      fixtureId={nextFixture.fixture.id}
+                      isPrepared={isNextFixturePrepared}
+                      opponentName={opponent.name}
+                      labels={{
+                        prepareAction: t("preparationStartButton"),
+                        inProgressAction: t("preparationInProgressButton"),
+                        confirmStart: t("preparationConfirmStart"),
+                        cancel: t("cancelButton"),
+                      }}
+                    />
                   </div>
                 </div>
-              </Link>
-
-              <Countdown
-                target={nextFixture.fixture.date}
-                labels={{
-                  days: t("countdownDays"),
-                  hours: t("countdownHours"),
-                  minutes: t("countdownMinutes"),
-                  seconds: t("countdownSeconds"),
-                  live: t("countdownLive"),
-                }}
-              />
-
-              <NextFixturePrepareButton
-                fixtureId={nextFixture.fixture.id}
-                isPrepared={isNextFixturePrepared}
-                opponentName={opponent.name}
-                labels={{
-                  prepareAction: t("preparationStartButton"),
-                  inProgressAction: t("preparationInProgressButton"),
-                  confirmStart: t("preparationConfirmStart"),
-                  cancel: t("cancelButton"),
-                }}
-              />
-            </>
+              );
+            })()
           )}
         </FixtureHeroAccent>
-      )}
-
-      {isCoach && teamId && (
-        <RecentNotesPanel
-          teamId={teamId}
-          notes={dashboardNotes}
-          players={notePlayers}
-          playerInfo={notePlayerInfo}
-          clubLogo={ourLogo}
-        />
       )}
 
       {/* Scouting content for that same match, split into its own cards
           instead of one long scroll inside the hero — each is skipped
           entirely when there's nothing to show. */}
       {(opponentInjuries.length > 0 || opponentUnavailable.length > 0) && (
-        <section className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">{t("opponentAbsencesTitle")}</h2>
-
-          <div className="mt-4">
-            <h3 className="text-sm font-semibold text-muted">{t("injuriesTitle")}</h3>
-            {opponentInjuries.length === 0 ? (
-              <p className="mt-2 text-sm text-muted">{t("noInjuriesFound")}</p>
-            ) : (
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {opponentInjuries.map((injury) => (
-                  <Link
-                    key={injury.player.id}
-                    href={`/club/player/${injury.player.id}`}
-                    className="flex items-start gap-3 rounded-lg border border-border bg-background p-2.5 transition-colors hover:border-accent"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={injury.player.photo}
-                      alt=""
-                      className="h-8 w-8 shrink-0 rounded-full object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {shortenPlayerName(injury.player.name)}
-                      </div>
-                      <div className="line-clamp-2 text-xs text-muted">
-                        {translateInjuryType(injury.player.reason, locale)}
-                      </div>
+        <section className="mt-6 rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-6">
+          <SectionHeading
+            icon="users"
+            title={t("opponentAbsencesTitle")}
+            count={opponentInjuries.length + opponentUnavailable.length}
+          />
+          <div className="mt-4 grid gap-5 lg:grid-cols-2">
+            {[
+              { title: t("injuriesTitle"), list: opponentInjuries, dot: "bg-red-500" },
+              { title: t("unavailableTitle"), list: opponentUnavailable, dot: "bg-amber-500" },
+            ]
+              .filter((group) => group.list.length > 0 || group.title === t("injuriesTitle"))
+              .map((group) => (
+                <div key={group.title}>
+                  <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                    <span className={`h-1.5 w-1.5 rounded-full ${group.dot}`} />
+                    {group.title}
+                    <span className="tabular-nums">· {group.list.length}</span>
+                  </h3>
+                  {group.list.length === 0 ? (
+                    <p className="mt-2 text-sm text-muted">{t("noInjuriesFound")}</p>
+                  ) : (
+                    <div className="mt-2 divide-y divide-border rounded-xl border border-border bg-background">
+                      {group.list.map((injury) => (
+                        <Link
+                          key={injury.player.id}
+                          href={`/club/player/${injury.player.id}`}
+                          className="flex items-center gap-3 px-3 py-2 transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={injury.player.photo} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                            {shortenPlayerName(injury.player.name)}
+                          </span>
+                          <span className="max-w-[45%] truncate text-xs text-muted">
+                            {translateInjuryType(injury.player.reason, locale)}
+                          </span>
+                        </Link>
+                      ))}
                     </div>
-                  </Link>
-                ))}
-              </div>
-            )}
+                  )}
+                </div>
+              ))}
           </div>
-
-          {opponentUnavailable.length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-sm font-semibold text-muted">{t("unavailableTitle")}</h3>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {opponentUnavailable.map((injury) => (
-                  <Link
-                    key={injury.player.id}
-                    href={`/club/player/${injury.player.id}`}
-                    className="flex items-start gap-3 rounded-lg border border-border bg-background p-2.5 transition-colors hover:border-accent"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={injury.player.photo}
-                      alt=""
-                      className="h-8 w-8 shrink-0 rounded-full object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {shortenPlayerName(injury.player.name)}
-                      </div>
-                      <div className="line-clamp-2 text-xs text-muted">
-                        {translateInjuryType(injury.player.reason, locale)}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
         </section>
       )}
 
       {(headToHead.length > 0 || opponentLastFixture || opponentNextFixture || opponentStats) && (
-        <div className="mt-6 grid gap-6 lg:grid-cols-5">
-          {headToHead.length > 0 && (
-            <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm lg:col-span-2">
-              <h2 className="text-lg font-semibold">{t("headToHeadTitle")}</h2>
-              <div className="mt-4 space-y-2">
-                {headToHead.map((fx) => (
-                  <div
-                    key={fx.fixture.id}
-                    className="rounded-lg border border-border bg-background p-2.5 text-sm"
-                  >
-                    <Link
-                      href={`/club/fixture/${fx.fixture.id}`}
-                      className="flex items-center gap-1 text-xs text-muted hover:text-accent"
-                    >
-                      <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
-                      <span>·</span>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
-                      <span className="truncate">{fx.league.name}</span>
-                    </Link>
-                    <div className="mt-0.5 font-medium">
-                      <Link href={`/club/${fx.teams.home.id}`} className="hover:text-accent">
-                        {fx.teams.home.name}
-                      </Link>{" "}
-                      <Link href={`/club/fixture/${fx.fixture.id}`} className="hover:text-accent">
-                        {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                      </Link>{" "}
-                      <Link href={`/club/${fx.teams.away.id}`} className="hover:text-accent">
-                        {fx.teams.away.name}
+        <section className="mt-6 rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-6">
+          <div
+            className={`grid gap-6 ${
+              headToHead.length > 0 && (opponentLastFixture || opponentNextFixture || opponentStats)
+                ? "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-0 lg:divide-x lg:divide-border lg:[&>*:first-child]:pr-6 lg:[&>*:last-child]:pl-6"
+                : ""
+            }`}
+          >
+            {(opponentLastFixture || opponentNextFixture || opponentStats) && (
+              <div className="min-w-0">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("opponentFormTitle")}</h3>
+                {(opponentLastFixture || opponentNextFixture) && (
+                  <div className="mt-2 divide-y divide-border rounded-xl border border-border bg-background">
+                    {opponentLastFixture && opponentLastOpponent && (
+                      <Link
+                        href={`/club/fixture/${opponentLastFixture.fixture.id}`}
+                        className="flex items-center gap-2 rounded-t-xl px-3 py-2 text-sm transition-colors last:rounded-b-xl hover:bg-surface"
+                      >
+                        <span className="w-16 shrink-0 text-[11px] text-muted">{t("opponentLastMatchLabel")}</span>
+                        <TeamCrest logo={opponentLastOpponent.logo} className="h-4 w-4" />
+                        <span className="min-w-0 flex-1 truncate">{opponentLastOpponent.name}</span>
+                        <span
+                          className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
+                            opponentLastResult ? RESULT_TONE[opponentLastResult] : "bg-border text-foreground"
+                          }`}
+                        >
+                          {opponentLastFixture.goals.home ?? "-"} - {opponentLastFixture.goals.away ?? "-"}
+                        </span>
                       </Link>
-                    </div>
+                    )}
+                    {opponentNextFixture && opponentNextOpponent && (
+                      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+                        <span className="w-16 shrink-0 text-[11px] text-muted">{t("opponentNextMatchLabel")}</span>
+                        <TeamCrest logo={opponentNextOpponent.logo} className="h-4 w-4" />
+                        <span className="min-w-0 flex-1 truncate">{opponentNextOpponent.name}</span>
+                        <span className="shrink-0 text-xs text-muted">
+                          {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale, {
+                            day: "numeric",
+                            month: "short",
+                          })}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                ))}
+                )}
+                {opponentStats && (
+                  <div className="mt-4">
+                    <SeasonStatsGrid t={t} stats={opponentStats} />
+                  </div>
+                )}
               </div>
-            </section>
-          )}
+            )}
 
-          {(opponentLastFixture || opponentNextFixture || opponentStats) && (
-            <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm lg:col-span-3">
-              <h2 className="text-lg font-semibold">{t("opponentFormTitle")}</h2>
-
-              {(opponentLastFixture || opponentNextFixture) && (
-                <div className="mt-4 space-y-2">
-                  {opponentLastFixture && opponentLastOpponent && (
-                    <Link
-                      href={`/club/fixture/${opponentLastFixture.fixture.id}`}
-                      className="block rounded-lg border border-border bg-background p-2.5 text-sm transition-colors hover:border-accent"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="shrink-0 text-xs text-muted">
-                          {t("opponentLastMatchLabel")}
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          {opponentLastResult && (
-                            <span
-                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                                opponentLastResult === "W"
-                                  ? "bg-green-600"
-                                  : opponentLastResult === "L"
-                                    ? "bg-red-500"
-                                    : "bg-muted"
-                              }`}
-                            >
-                              {opponentLastResult}
+            {headToHead.length > 0 && (
+              <div className="min-w-0">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("headToHeadTitle")}</h3>
+                <div className="mt-2 space-y-0.5">
+                  {headToHead.map((fx) => {
+                    const result = teamId ? matchResult(fx, teamId) : null;
+                    return (
+                      <Link
+                        key={fx.fixture.id}
+                        href={`/club/fixture/${fx.fixture.id}`}
+                        className="block rounded-xl px-2.5 py-2 transition-colors hover:bg-background"
+                      >
+                        <div className="flex items-center gap-1 text-[10px] text-muted">
+                          <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
+                          <span>·</span>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
+                          <span className="truncate">{fx.league.name}</span>
+                        </div>
+                        <div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
+                          <span className="flex min-w-0 items-center justify-end gap-1.5">
+                            <span className={`truncate ${fx.teams.home.id === teamId ? "font-semibold" : ""}`}>
+                              {fx.teams.home.name}
                             </span>
-                          )}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={opponentLastOpponent.logo}
-                            alt=""
-                            className="h-4 w-4 shrink-0 object-contain"
-                          />
-                          <span className="truncate">{opponentLastOpponent.name}</span>
-                          <span className="shrink-0 font-medium">
-                            {opponentLastFixture.goals.home ?? "-"} -{" "}
-                            {opponentLastFixture.goals.away ?? "-"}
+                            <TeamCrest logo={fx.teams.home.logo} className="h-4 w-4" />
                           </span>
-                        </span>
-                      </div>
-                      <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={opponentLastFixture.league.logo}
-                          alt=""
-                          className="h-3 w-3 shrink-0 object-contain"
-                        />
-                        <span className="truncate">{opponentLastFixture.league.name}</span>
-                      </div>
-                    </Link>
-                  )}
-                  {opponentNextFixture && opponentNextOpponent && (
-                    <div className="rounded-lg border border-border bg-background p-2.5 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="shrink-0 text-xs text-muted">
-                          {t("opponentNextMatchLabel")}
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={opponentNextOpponent.logo}
-                            alt=""
-                            className="h-4 w-4 shrink-0 object-contain"
-                          />
-                          <span className="truncate">{opponentNextOpponent.name}</span>
-                          <span className="shrink-0 text-xs text-muted">
-                            {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
+                              result ? RESULT_TONE[result] : "bg-border text-foreground"
+                            }`}
+                          >
+                            {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
                           </span>
-                        </span>
-                      </div>
-                      <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={opponentNextFixture.league.logo}
-                          alt=""
-                          className="h-3 w-3 shrink-0 object-contain"
-                        />
-                        <span className="truncate">{opponentNextFixture.league.name}</span>
-                      </div>
-                    </div>
-                  )}
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <TeamCrest logo={fx.teams.away.logo} className="h-4 w-4" />
+                            <span className={`truncate ${fx.teams.away.id === teamId ? "font-semibold" : ""}`}>
+                              {fx.teams.away.name}
+                            </span>
+                          </span>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
-              )}
-
-              {opponentStats && (
-                <div className="mt-4">
-                  <SeasonStatsGrid t={t} stats={opponentStats} />
-                </div>
-              )}
-            </section>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {/* General league reference, lowest priority for day-to-day use — one
           full-width card instead of the old our-stats/standings pairing
           (our own numbers were redundant with the standings row below). */}
       {teamId && (
-        <section className="mt-6 rounded-2xl border border-border bg-surface p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">{t("competitionDataTitle")}</h2>
+        <section className="mt-6 rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-6">
+          {standingsLeague ? (
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white p-1 shadow-sm ring-1 ring-black/5">
+                <TeamCrest logo={standingsLeague.logo} className="h-full w-full" />
+              </span>
+              <h2 className="text-base font-semibold">{standingsLeague.name}</h2>
+            </div>
+          ) : (
+            <SectionHeading icon="grid" title={t("competitionDataTitle")} />
+          )}
 
           <div className="mt-4 grid gap-6 lg:grid-cols-2">
             <div>
@@ -623,10 +619,14 @@ export default async function DashboardOverviewPage({
                         <tr
                           key={row.team.id}
                           className={`border-b border-border last:border-b-0 ${
-                            row.team.id === teamId ? "bg-accent/5" : ""
+                            row.team.id === teamId ? "bg-accent/10 font-semibold" : ""
                           }`}
                         >
-                          <td className="px-3 py-2 text-muted">{row.rank}</td>
+                          <td
+                            className={`px-3 py-2 ${row.team.id === teamId ? "text-accent shadow-[inset_3px_0_0_var(--accent)]" : "text-muted"}`}
+                          >
+                            {row.rank}
+                          </td>
                           <td className="px-3 py-2">
                             <Link
                               href={`/club/${row.team.id}`}
@@ -687,7 +687,8 @@ export default async function DashboardOverviewPage({
           href="/profile"
           className="mt-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-accent"
         >
-          {t("membersSectionTitle")} · {t("peopleWithAccessCount", { count: peopleCount })} →
+          <Icon name="users" className="h-4 w-4" />
+          {t("peopleWithAccessCount", { count: peopleCount })} →
         </Link>
       )}
     </div>

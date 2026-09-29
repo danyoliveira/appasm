@@ -157,7 +157,13 @@ function extractVividColor(url: string): Promise<string> {
           const { s } = rgbToHsl(r, g, b);
           if (!best || s > best.s) best = { r, g, b, s };
         }
-        resolve(best ? rgbToHex(best.r, best.g, best.b) : DEFAULT_COLOR);
+        // A crest with no real color (black/white/grey) has no "vivid" one —
+        // use its dominant color instead of an arbitrary grey.
+        if (!best || best.s < 0.2) {
+          extractDominantColor(url).then(resolve);
+          return;
+        }
+        resolve(rgbToHex(best.r, best.g, best.b));
       } catch {
         resolve(DEFAULT_COLOR);
       }
@@ -167,14 +173,41 @@ function extractVividColor(url: string): Promise<string> {
   });
 }
 
+// Persisted between page loads: extracting from the crest takes a moment,
+// and without this every navigation first showed the default color.
+const VIVID_STORAGE_KEY = "asm:vividLogoColors";
+function storedVivid(url: string): string | null {
+  try {
+    const all = JSON.parse(localStorage.getItem(VIVID_STORAGE_KEY) ?? "{}") as Record<string, string>;
+    return all[url] ?? null;
+  } catch {
+    return null;
+  }
+}
+function storeVivid(url: string, color: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(VIVID_STORAGE_KEY) ?? "{}") as Record<string, string>;
+    all[url] = color;
+    localStorage.setItem(VIVID_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    // Storage unavailable (private mode…) — just not remembered.
+  }
+}
+
 export function getVividLogoColor(url: string | null | undefined): Promise<string> {
   if (!url) return Promise.resolve(DEFAULT_COLOR);
   if (vividColorCache.has(url)) return Promise.resolve(vividColorCache.get(url)!);
+  const remembered = storedVivid(url);
+  if (remembered) {
+    vividColorCache.set(url, remembered);
+    return Promise.resolve(remembered);
+  }
   const inFlight = vividPending.get(url);
   if (inFlight) return inFlight;
   const promise = extractVividColor(url).then((color) => {
     vividColorCache.set(url, color);
     vividPending.delete(url);
+    storeVivid(url, color);
     return color;
   });
   vividPending.set(url, promise);
@@ -191,7 +224,14 @@ function relativeLuminance(hex: string): number {
 
 // White text on a dark pin, dark text on a light one.
 export function contrastTextColor(bgHex: string): string {
-  return relativeLuminance(bgHex) > 0.45 ? "#111827" : "#ffffff";
+  // Whichever of white / near-black has the higher WCAG contrast ratio
+  // against the background (a fixed luminance cut-off put white text on
+  // mid greys, where dark text reads far better).
+  const l = relativeLuminance(bgHex);
+  const dark = relativeLuminance("#111827");
+  const vsWhite = 1.05 / (l + 0.05);
+  const vsDark = (l + 0.05) / (dark + 0.05);
+  return vsDark > vsWhite ? "#111827" : "#ffffff";
 }
 
 function colorDistance(a: string, b: string): number {
@@ -210,4 +250,22 @@ const NEUTRAL_DARK = "#0f172a"; // slate-900 — the board's original default
 // sides apart on the pitch, fall back to a safe neutral dark instead.
 export function resolveOpponentColor(ourColor: string, opponentColor: string): string {
   return colorDistance(ourColor, opponentColor) < 90 ? NEUTRAL_DARK : opponentColor;
+}
+
+// A crest color used as a fill (stat bars, badges) has to stay visible on
+// the page: near-black ones are lifted on the dark theme, near-white ones
+// deepened on the light theme.
+export function visibleOnTheme(hex: string, dark: boolean): string {
+  const l = relativeLuminance(hex);
+  const mix = (target: number, amount: number) => {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = (c: number) => Math.round(c + (target - c) * amount);
+    const r = ch((n >> 16) & 255);
+    const g = ch((n >> 8) & 255);
+    const b = ch(n & 255);
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  };
+  if (dark && l < 0.06) return mix(255, 0.45);
+  if (!dark && l > 0.85) return mix(0, 0.35);
+  return hex;
 }

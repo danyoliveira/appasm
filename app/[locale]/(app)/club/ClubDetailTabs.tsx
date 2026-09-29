@@ -39,7 +39,7 @@ export default function ClubDetailTabs({
 
   return (
     <div className="mt-8">
-      <div className="flex flex-wrap gap-1 border-b border-border">
+      <div className="-mx-4 flex gap-1 overflow-x-auto border-b border-border px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
         {tabs.map((tabDef) => (
           <button
             key={tabDef.key}

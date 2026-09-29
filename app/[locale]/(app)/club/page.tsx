@@ -44,6 +44,11 @@ import { CLUB_DOSSIER_CATEGORIES } from "./dossierShared";
 import { loadDossierFiles } from "@/lib/dossier";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
+import { aggregateLivePlayerTotals } from "@/lib/livePlayerStats";
+import { computeLiveTeamStats } from "@/lib/liveTeamStats";
+import { loadTeamStatConfig } from "@/lib/liveStatConfigServer";
+import { DEFAULT_LIVE_STAT_CONFIG } from "../../live/liveStatConfig";
+import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
 import StatsSubTabs from "./StatsSubTabs";
 import LiveStatsExplorer from "./LiveStatsExplorer";
 import type { ManualPlayerInfo } from "./ManualPlayerDialog";
@@ -83,21 +88,101 @@ export default async function ClubPage({
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: profile }, { data: coachProfile }] = await Promise.all([
+    supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+    supabase.from("profiles").select("api_football_team_id").eq("role", "coach").maybeSingle(),
+  ]);
   const isCoach = profile?.role === "coach";
-
-  const { data: coachProfile } = await supabase
-    .from("profiles")
-    .select("api_football_team_id")
-    .eq("role", "coach")
-    .maybeSingle();
 
   const teamId = coachProfile?.api_football_team_id ?? null;
   const currentStintId = teamId ? await getCurrentStintId(supabase, teamId) : null;
+
+  // Everything below that doesn't depend on something else starts right
+  // here, all at once — this page used to wait for ~20 queries one after
+  // the other. Each block further down just awaits its own result.
+  const settle = <T,>(p: PromiseLike<T>) =>
+    Promise.resolve(p).then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const, value: null }),
+    );
+  const pre = teamId
+    ? {
+        teamInfoSquad: settle(Promise.all([getTeamInfo(teamId), getSquad(teamId)])),
+        countries: getCountries().catch(() => []),
+        manualRows: getManualPlayers(supabase, teamId, currentStintId),
+        competitions: settle(getCurrentCompetitions(teamId)),
+        cookieStore: cookies(),
+        manualStats: currentStintId
+          ? Promise.resolve(
+              supabase
+                .from("player_manual_stats")
+                .select("player_id, appearances, minutes, goals, assists, saves, conceded")
+                .eq("team_id", teamId)
+                .eq("stint_id", currentStintId),
+            )
+          : null,
+        liveGames: (async () => {
+          const { data: stintRow } = currentStintId
+            ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
+            : { data: null };
+          return loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
+        })().catch(() => [] as LiveGameStats[]),
+        clubNotes: isCoach
+          ? Promise.resolve(supabase.from("club_notes").select(CLUB_NOTE_COLUMNS).eq("team_id", teamId))
+          : null,
+        availability: Promise.resolve(
+          supabase
+            .from("player_availability")
+            .select("player_id, status, last_seen_injury_key, excluded")
+            .eq("team_id", teamId)
+            .eq("stint_id", currentStintId),
+        ),
+        openInjuries: currentStintId
+          ? Promise.resolve(
+              supabase
+                .from("player_injuries")
+                .select("id, player_id, expected_return_at")
+                .eq("team_id", teamId)
+                .eq("stint_id", currentStintId)
+                .is("actual_return_at", null)
+                .not("expected_return_at", "is", null)
+                .lte("expected_return_at", new Date().toISOString().slice(0, 10)),
+            )
+          : null,
+        teamManual: currentStintId
+          ? Promise.resolve(
+              supabase
+                .from("team_manual_stats")
+                .select(
+                  "played, wins, draws, loses, goals_for, goals_against, clean_sheets, played_home, played_away, wins_home, wins_away, draws_home, draws_away, loses_home, loses_away, goals_for_home, goals_for_away, goals_against_home, goals_against_away, clean_sheets_home, clean_sheets_away, biggest_win_goals_for, biggest_win_goals_against, biggest_loss_goals_for, biggest_loss_goals_against, penalty_scored, penalty_missed",
+                )
+                .eq("team_id", teamId)
+                .eq("stint_id", currentStintId)
+                .maybeSingle(),
+            )
+          : null,
+        squadCacheRow: Promise.resolve(
+          supabase.from("api_football_cache").select("fetched_at").eq("cache_key", `team:${teamId}:squad`).maybeSingle(),
+        ),
+        manualGames: Promise.resolve(
+          supabase
+            .from("manual_preparations")
+            .select(
+              "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against, finished_at",
+            )
+            .eq("team_id", teamId),
+        ),
+        finishedPreparations: Promise.resolve(
+          supabase.from("fixture_preparations").select("fixture_id").eq("team_id", teamId).not("finished_at", "is", null),
+        ),
+        liveStatConfig: loadTeamStatConfig(supabase, teamId).catch(() => DEFAULT_LIVE_STAT_CONFIG),
+        dossierFiles: currentStintId
+          ? loadDossierFiles(supabase, { teamId, stintId: currentStintId, categories: CLUB_DOSSIER_CATEGORIES }).catch(
+              () => [] as DossierFile[],
+            )
+          : Promise.resolve([] as DossierFile[]),
+      }
+    : null;
 
   let teamInfo = null;
   let squad = null;
@@ -116,17 +201,15 @@ export default async function ClubPage({
   let defaultCompetition: TeamLeague | null = null;
   let defaultSeason: number | null = null;
 
-  if (teamId) {
-    try {
-      [teamInfo, squad] = await Promise.all([getTeamInfo(teamId), getSquad(teamId)]);
-    } catch {
-      clubDataError = true;
-    }
+  if (pre) {
+    const result = await pre.teamInfoSquad;
+    if (result.ok) [teamInfo, squad] = result.value;
+    else clubDataError = true;
   }
 
   // Countries (cached, long TTL) — flags for the squad, and the nationality
   // picker for hand-added players.
-  const countries = teamId ? await getCountries().catch(() => []) : [];
+  const countries = pre ? await pre.countries : [];
   const countryOptions = countries
     .filter((c) => c.flag && c.name !== "World")
     .map((c) => ({ name: c.name, flag: c.flag, code: c.code }));
@@ -151,7 +234,7 @@ export default async function ClubPage({
   // (squad, dossier picker, @mentions) sees them. The raw API list is kept
   // for spotting "this manual player has now arrived from the API".
   const apiSquadPlayers = squad?.[0]?.players ?? [];
-  const manualRows = teamId ? await getManualPlayers(supabase, teamId, currentStintId) : [];
+  const manualRows = pre ? await pre.manualRows : [];
   if (teamId && !clubDataError) squad = withManualPlayers(squad ?? [], manualRows);
   manualRows.forEach((row) => {
     const flag = resolveFlagUrl(row.nationality);
@@ -214,16 +297,18 @@ export default async function ClubPage({
     });
   }
 
-  if (teamId && !clubDataError) {
+  if (pre && !clubDataError) {
     try {
-      const result = await getCurrentCompetitions(teamId);
+      const settled = await pre.competitions;
+      if (!settled.ok) throw new Error("competitions");
+      const result = settled.value;
       competitions = result.competitions;
       allCompetitions = result.allCompetitions;
       friendlyCompetitionIds = new Set(result.friendlyCompetitions.map((c) => c.league.id));
       defaultCompetition = result.defaultCompetition;
       defaultSeason = result.defaultSeason;
 
-      const store = await cookies();
+      const store = await pre.cookieStore;
       selectedCompetitionId = resolveSelectedCompetition(
         store.get(COMPETITION_FILTER_COOKIE)?.value,
         allCompetitions,
@@ -235,12 +320,15 @@ export default async function ClubPage({
 
   if (teamId && !clubDataError && defaultCompetition && defaultSeason) {
     try {
-      const [injuriesResult, playersStats, statsByCompetitionId, seasonFixtures] = await Promise.all([
+      const [injuriesResult, playersStats, statsByCompetitionId, apiSeasonFixtures, liveScores] = await Promise.all([
         getInjuries(teamId, defaultSeason).catch(() => []),
         getPlayersStatistics(teamId, defaultSeason).catch(() => []),
         getStatsPerCompetition(teamId, allCompetitions, defaultSeason),
         getTeamSeasonFixtures(teamId, defaultSeason).catch(() => []),
+        loadLiveScores(supabase, teamId),
       ]);
+      // No API-Football score yet → the ASM Live Mode one.
+      const seasonFixtures = withLiveScores(apiSeasonFixtures, liveScores);
       injuries = injuriesResult;
 
       // "All competitions" (no specific selection) never includes friendlies.
@@ -345,12 +433,8 @@ export default async function ClubPage({
   // ("external") ones — the squad section lets the coach pick which to show
   // (external by default; players created from scratch always use internal).
   const internalStatsById = new Map<number, SquadStat>();
-  if (teamId && currentStintId && squad?.[0]?.players.length) {
-    const { data: manualStatRows } = await supabase
-      .from("player_manual_stats")
-      .select("player_id, appearances, minutes, goals, assists, saves, conceded")
-      .eq("team_id", teamId)
-      .eq("stint_id", currentStintId);
+  if (pre?.manualStats && squad?.[0]?.players.length) {
+    const { data: manualStatRows } = await pre.manualStats;
 
     manualStatRows?.forEach((row) => {
       internalStatsById.set(row.player_id, {
@@ -364,6 +448,26 @@ export default async function ClubPage({
     });
   }
 
+  // Finished ASM Live Mode games of this stint — the "Live Mode" sub-tab,
+  // and the fallback for any internal stat the coach hasn't typed in.
+  const liveGames: LiveGameStats[] = pre ? await pre.liveGames : [];
+  if (squad?.[0]?.players.length) {
+    const liveTotals = aggregateLivePlayerTotals(liveGames);
+    for (const player of squad[0].players) {
+      const live = liveTotals.get(player.id);
+      if (!live) continue;
+      const manual = internalStatsById.get(player.id);
+      internalStatsById.set(player.id, {
+        appearances: manual?.appearances ?? live.appearances,
+        minutes: manual?.minutes ?? live.minutes,
+        goals: manual?.goals ?? live.goals,
+        assists: manual?.assists ?? live.assists,
+        saves: manual?.saves ?? null,
+        conceded: manual?.conceded ?? (player.position === "Goalkeeper" ? live.conceded : null),
+      });
+    }
+  }
+
   const injuriesByPlayerId = new Map<number, PendingInjury>(
     injuries.map((injury) => [
       injury.player.id,
@@ -374,21 +478,14 @@ export default async function ClubPage({
   // Club-level notes (not about a specific player) — coach-only, same as
   // player notes.
   let clubNotes: NoteItem[] = [];
-  if (isCoach && teamId) {
-    const { data: notesData } = await supabase
-      .from("club_notes")
-      .select(CLUB_NOTE_COLUMNS)
-      .eq("team_id", teamId);
+  if (pre?.clubNotes) {
+    const { data: notesData } = await pre.clubNotes;
     clubNotes = (notesData ?? []).map(clubNoteFromRow);
   }
 
   const availabilityByPlayerId = new Map<number, AvailabilityInfo>();
-  if (teamId) {
-    const { data: availabilityRows } = await supabase
-      .from("player_availability")
-      .select("player_id, status, last_seen_injury_key, excluded")
-      .eq("team_id", teamId)
-      .eq("stint_id", currentStintId);
+  if (pre) {
+    const { data: availabilityRows } = await pre.availability;
 
     availabilityRows?.forEach((row) => {
       availabilityByPlayerId.set(row.player_id, {
@@ -403,16 +500,8 @@ export default async function ClubPage({
   // coach to confirm the actual return instead of letting a stale estimate
   // sit there forever.
   const dueReturnByPlayerId = new Map<number, DueReturnInjury>();
-  if (teamId && currentStintId) {
-    const today = new Date().toISOString().slice(0, 10);
-    const { data: openInjuries } = await supabase
-      .from("player_injuries")
-      .select("id, player_id, expected_return_at")
-      .eq("team_id", teamId)
-      .eq("stint_id", currentStintId)
-      .is("actual_return_at", null)
-      .not("expected_return_at", "is", null)
-      .lte("expected_return_at", today);
+  if (pre?.openInjuries) {
+    const { data: openInjuries } = await pre.openInjuries;
 
     openInjuries?.forEach((row) => {
       dueReturnByPlayerId.set(row.player_id, {
@@ -470,15 +559,8 @@ export default async function ClubPage({
     penaltyScored: null,
     penaltyMissed: null,
   };
-  if (teamId && currentStintId) {
-    const { data: teamManualRow } = await supabase
-      .from("team_manual_stats")
-      .select(
-        "played, wins, draws, loses, goals_for, goals_against, clean_sheets, played_home, played_away, wins_home, wins_away, draws_home, draws_away, loses_home, loses_away, goals_for_home, goals_for_away, goals_against_home, goals_against_away, clean_sheets_home, clean_sheets_away, biggest_win_goals_for, biggest_win_goals_against, biggest_loss_goals_for, biggest_loss_goals_against, penalty_scored, penalty_missed",
-      )
-      .eq("team_id", teamId)
-      .eq("stint_id", currentStintId)
-      .maybeSingle();
+  if (pre?.teamManual) {
+    const { data: teamManualRow } = await pre.teamManual;
 
     if (teamManualRow) {
       internalTeamStats = {
@@ -512,6 +594,17 @@ export default async function ClubPage({
       };
     }
   }
+  // Internal team stats the coach hasn't typed in come from ASM Live Mode —
+  // the same competition scope as the external figures (a selected
+  // competition, or everything but friendlies).
+  const liveTeamStats = computeLiveTeamStats(
+    liveGames.filter((g) =>
+      selectedCompetitionId
+        ? g.leagueId === selectedCompetitionId
+        : g.leagueId == null || !friendlyCompetitionIds.has(g.leagueId),
+    ),
+  );
+
   const externalTeamStats: TeamManualStatsInput = {
     played: teamStats?.fixtures.played.total ?? null,
     wins: teamStats?.fixtures.wins.total ?? null,
@@ -543,12 +636,8 @@ export default async function ClubPage({
   };
 
   let lastUpdatedAt: string | null = null;
-  if (teamId) {
-    const { data: cacheRow } = await supabase
-      .from("api_football_cache")
-      .select("fetched_at")
-      .eq("cache_key", `team:${teamId}:squad`)
-      .maybeSingle();
+  if (pre) {
+    const { data: cacheRow } = await pre.squadCacheRow;
     lastUpdatedAt = cacheRow?.fetched_at ?? null;
   }
 
@@ -557,15 +646,11 @@ export default async function ClubPage({
   // competition filter as the API fixtures when one is selected.
   let calendarPast = pastCalendarRows;
   let calendarFuture = futureCalendarRows;
-  if (teamId) {
-    let manualQuery = supabase
-      .from("manual_preparations")
-      .select(
-        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home, goals_for, goals_against",
-      )
-      .eq("team_id", teamId);
-    if (selectedCompetitionId) manualQuery = manualQuery.eq("competition_league_id", selectedCompetitionId);
-    const { data: manualGameRows } = await manualQuery;
+  if (pre) {
+    const { data: allManualGameRows } = await pre.manualGames;
+    const manualGameRows = (allManualGameRows ?? []).filter(
+      (row) => !selectedCompetitionId || row.competition_league_id === selectedCompetitionId,
+    );
 
     if (manualGameRows?.length) {
       const opponents = await Promise.all(manualGameRows.map(resolveManualOpponent));
@@ -591,6 +676,7 @@ export default async function ClubPage({
           goalsFor: row.goals_for,
           goalsAgainst: row.goals_against,
           finished: hasScore || new Date(row.match_date).getTime() < now,
+          preparationFinished: row.finished_at != null,
         };
       });
       const byDateDesc = (a: CalendarRow, b: CalendarRow) => b.date.localeCompare(a.date);
@@ -604,6 +690,20 @@ export default async function ClubPage({
       ].sort((a, b) => a.date.localeCompare(b.date));
     }
   }
+
+  // Games whose preparation was finished (Concluída) get a ✓ in the calendar.
+  if (pre) {
+    const { data: finishedRows } = await pre.finishedPreparations;
+    const finishedIds = new Set((finishedRows ?? []).map((r) => r.fixture_id));
+    if (finishedIds.size) {
+      const mark = (row: CalendarRow) => (!row.manualKey && finishedIds.has(row.id) ? { ...row, preparationFinished: true } : row);
+      calendarPast = calendarPast.map(mark);
+      calendarFuture = calendarFuture.map(mark);
+    }
+  }
+
+  // The club's ASM Live Mode fields (what the Live Mode stats list).
+  const liveStatConfig = pre ? await pre.liveStatConfig : DEFAULT_LIVE_STAT_CONFIG;
 
   const generalContent = (
     <div className="space-y-10">
@@ -685,14 +785,7 @@ export default async function ClubPage({
     </div>
   );
 
-  const dossierFiles: DossierFile[] =
-    teamId && currentStintId
-      ? await loadDossierFiles(supabase, {
-          teamId,
-          stintId: currentStintId,
-          categories: CLUB_DOSSIER_CATEGORIES,
-        })
-      : [];
+  const dossierFiles: DossierFile[] = pre ? await pre.dossierFiles : [];
 
   const dossierPlayers: DossierPlayer[] = orderSquadLikeGeneralTab(
     (squad?.[0]?.players ?? []).filter((p) => !availabilityByPlayerId.get(p.id)?.excluded),
@@ -708,14 +801,6 @@ export default async function ClubPage({
     />
   ) : null;
 
-  // Finished ASM Live Mode games of this stint — the "Live Mode" sub-tab.
-  let liveGames: LiveGameStats[] = [];
-  if (teamId) {
-    const { data: stintRow } = currentStintId
-      ? await supabase.from("coaching_stints").select("started_at").eq("id", currentStintId).maybeSingle()
-      : { data: null };
-    liveGames = await loadLiveGames(supabase, teamId, stintRow?.started_at ?? null);
-  }
 
   const generalStatsContent = teamId ? (
     <div className="space-y-8">
@@ -726,6 +811,7 @@ export default async function ClubPage({
           fields={HEADLINE_TEAM_STAT_FIELDS}
           externalValues={externalTeamStats}
           internalValues={internalTeamStats}
+            liveValues={liveTeamStats}
           title={t("teamStatsTitle")}
         />
       </div>
@@ -738,6 +824,7 @@ export default async function ClubPage({
             fields={HOME_TEAM_STAT_FIELDS}
             externalValues={externalTeamStats}
             internalValues={internalTeamStats}
+            liveValues={liveTeamStats}
             title={t("homeLabel")}
           />
         </div>
@@ -748,6 +835,7 @@ export default async function ClubPage({
             fields={AWAY_TEAM_STAT_FIELDS}
             externalValues={externalTeamStats}
             internalValues={internalTeamStats}
+            liveValues={liveTeamStats}
             title={t("awayLabel")}
           />
         </div>
@@ -761,6 +849,7 @@ export default async function ClubPage({
             fields={BIGGEST_RESULTS_FIELDS}
             externalValues={externalTeamStats}
             internalValues={internalTeamStats}
+            liveValues={liveTeamStats}
             title={t("statBiggestTitle")}
           />
           {(biggestAndStreaks.longestWinStreak > 0 ||
@@ -787,6 +876,7 @@ export default async function ClubPage({
             fields={PENALTY_FIELDS}
             externalValues={externalTeamStats}
             internalValues={internalTeamStats}
+            liveValues={liveTeamStats}
             title={t("statPenaltiesTitle")}
           />
         </div>
@@ -797,7 +887,7 @@ export default async function ClubPage({
   const statsContent = teamId ? (
     <StatsSubTabs
       generalContent={generalStatsContent}
-      liveContent={<LiveStatsExplorer games={liveGames} isCoach={isCoach} />}
+      liveContent={<LiveStatsExplorer games={liveGames} isCoach={isCoach} statConfig={liveStatConfig} />}
     />
   ) : null;
 
@@ -849,6 +939,7 @@ export default async function ClubPage({
             <div className="mt-8">
               <ClubHeaderAccent
                 logoUrl={teamInfo[0].team.logo}
+                eyebrow={[t("clubSectionTitle"), teamInfo[0].team.country].filter(Boolean).join(" · ")}
                 stats={
                   teamStats
                     ? [
@@ -866,7 +957,7 @@ export default async function ClubPage({
                     : undefined
                 }
               >
-                <div className="text-xl font-semibold">{teamInfo[0].team.name}</div>
+                <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{teamInfo[0].team.name}</h1>
               </ClubHeaderAccent>
             </div>
           )}

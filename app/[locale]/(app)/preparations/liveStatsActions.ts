@@ -1,5 +1,6 @@
 "use server";
 
+import { effectiveSessionConfig, type LiveStatConfig } from "../../live/liveStatConfig";
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -259,6 +260,8 @@ export interface LiveMatchRecap {
   entries: LiveEntryRow[];
   collectiveStats: CollectiveStats;
   gkStats: GkStats;
+  // The fields this game was played with.
+  statConfig: LiveStatConfig;
 }
 
 // Same data getLiveFeedByToken assembles for the guest link's Pós-Jogo tab,
@@ -271,7 +274,7 @@ export async function getLiveMatchRecap(sessionId: string): Promise<LiveMatchRec
 
   const { data: session } = await supabase
     .from("live_match_sessions")
-    .select("team_id, preparation_key, home_lineup, away_lineup, home_lineup_live, away_lineup_live, ended_at")
+    .select("team_id, preparation_key, home_lineup, away_lineup, home_lineup_live, away_lineup_live, started_at, ended_at, stat_config")
     .eq("id", sessionId)
     .maybeSingle();
   if (!session || !session.ended_at) return null;
@@ -303,6 +306,7 @@ export async function getLiveMatchRecap(sessionId: string): Promise<LiveMatchRec
       session.ended_at,
     ),
     gkStats: computeGkStats(allEntries.filter((r) => r.kind === "stat")),
+    statConfig: effectiveSessionConfig(session, null),
   };
 }
 

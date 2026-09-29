@@ -31,13 +31,17 @@ function SquadNameInput({
 }) {
   const t = useTranslations("dashboard");
   const [open, setOpen] = useState(false);
-  const q = normalize(player.name.trim());
+  // Only filter by what's typed *in this visit* — a slot that already holds
+  // a name (random fill, API lineup, an earlier free-typed name) used to
+  // narrow the list to that name on focus, so most of the squad was missing.
+  const [typing, setTyping] = useState(false);
+  const q = typing ? normalize(player.name.trim()) : "";
   const linked = player.playerId != null ? squad.find((s) => s.id === player.playerId) : undefined;
   // The whole squad (scrollable list), minus players already in the lineup;
   // typing narrows it down.
   const options = squad
     .filter((s) => s.id === player.playerId || !takenIds.has(s.id))
-    .filter((s) => !q || linked || normalize(s.name).includes(q));
+    .filter((s) => !q || normalize(s.name).includes(q));
 
   return (
     <div className="relative min-w-0 flex-1">
@@ -59,10 +63,15 @@ function SquadNameInput({
         <input
           type="text"
           value={player.name}
-          onFocus={() => setOpen(true)}
+          onFocus={(e) => {
+            setTyping(false);
+            setOpen(true);
+            e.target.select();
+          }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onChange={(e) => {
             onType(e.target.value);
+            setTyping(true);
             setOpen(true);
           }}
           placeholder={placeholder}

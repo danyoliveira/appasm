@@ -142,8 +142,13 @@ export default function OpponentSquadTable({
                         </div>
                       </div>
                       {isNew && (
-                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
-                          {t("newSigningBadge")}
+                        // Same ↓ mark as the "Entradas" list; the words on hover.
+                        <span
+                          title={t("newSigningBadge")}
+                          aria-label={t("newSigningBadge")}
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-600/10 text-[11px] font-bold text-green-700 dark:text-green-400"
+                        >
+                          ↓
                         </span>
                       )}
                     </Link>

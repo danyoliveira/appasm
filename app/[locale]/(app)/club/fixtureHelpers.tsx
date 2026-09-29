@@ -60,3 +60,39 @@ export function FixtureTeamsRow({
     </div>
   );
 }
+
+// API-Football's round names are English ("Regular Season - 7", "League
+// Stage - 3"); the numbered ones become "Jornada 7" in the app's language,
+// anything else (knockout rounds) is left as is.
+export function translateRound(round: string | null | undefined, t: (key: string, values?: Record<string, number>) => string): string {
+  if (!round) return "";
+  const match = round.match(/^(?:Regular Season|League Stage|Group Stage|Apertura|Clausura)\s*-\s*(\d+)$/i);
+  return match ? t("roundMatchday", { n: Number(match[1]) }) : round;
+}
+
+// API-Football's short match status → the app's own label.
+const STATUS_KEYS: Record<string, string> = {
+  FT: "fixtureStatusFinished",
+  AET: "fixtureStatusAfterExtraTime",
+  PEN: "fixtureStatusAfterPenalties",
+  NS: "fixtureStatusNotStarted",
+  TBD: "fixtureStatusNotStarted",
+  "1H": "fixtureStatusLive",
+  "2H": "fixtureStatusLive",
+  ET: "fixtureStatusLive",
+  BT: "fixtureStatusLive",
+  P: "fixtureStatusLive",
+  LIVE: "fixtureStatusLive",
+  HT: "fixtureStatusHalfTime",
+  PST: "fixtureStatusPostponed",
+  CANC: "fixtureStatusCancelled",
+  ABD: "fixtureStatusAbandoned",
+  SUSP: "fixtureStatusSuspended",
+  INT: "fixtureStatusSuspended",
+  AWD: "fixtureStatusFinished",
+  WO: "fixtureStatusFinished",
+};
+export function fixtureStatusLabel(status: { short: string; long: string }, t: (key: string) => string): string {
+  const key = STATUS_KEYS[status.short];
+  return key ? t(key) : status.long;
+}

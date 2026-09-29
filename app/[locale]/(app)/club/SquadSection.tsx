@@ -255,7 +255,27 @@ export default function SquadSection({
     manualById.has(player.id) ? "text-sky-700 dark:text-sky-400" : "";
   const [positionFilter, setPositionFilter] = useState<string | null>(null);
   const [showExcludedRaw, setShowExcluded] = useState(false);
-  const [view, setView] = useState<ViewMode>("table");
+  const [view, setViewState] = useState<ViewMode>("table");
+  // The coach's last choice is remembered; without one, phones start on
+  // the cards (the table needs sideways scrolling there). Read after mount
+  // so the server and first client render agree.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem("asm:squadView");
+      } catch {}
+      if (saved === "cards" || saved === "table") setViewState(saved);
+      else if (window.matchMedia("(max-width: 639px)").matches) setViewState("cards");
+    }, 0);
+    return () => clearTimeout(id);
+  }, []);
+  function setView(mode: ViewMode) {
+    setViewState(mode);
+    try {
+      localStorage.setItem("asm:squadView", mode);
+    } catch {}
+  }
   const [outfieldSort, onOutfieldSort] = useSortState();
   const [gkSort, onGkSort] = useSortState();
 

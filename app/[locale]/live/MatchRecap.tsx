@@ -6,6 +6,7 @@ import LiveFeedList from "./LiveFeedList";
 import LiveFormationTeam from "./LiveFormationTeam";
 import CollectiveStatsPanel from "./CollectiveStatsPanel";
 import GkStatsPanel from "./GkStatsPanel";
+import type { LiveStatConfig } from "./liveStatConfig";
 import FixtureExternalStatsSection from "./FixtureExternalStatsSection";
 import {
   countGoals,
@@ -38,6 +39,7 @@ export default function MatchRecap({
   ourGkName,
   ourGkStatsByPlayer,
   ourTeamName,
+  statConfig,
 }: {
   preparationKey: string;
   homeName: string;
@@ -59,6 +61,8 @@ export default function MatchRecap({
   // only shows whoever finished the match in goal).
   ourGkStatsByPlayer: GkStatsByPlayer[];
   ourTeamName: string;
+  // The fields this game was played with.
+  statConfig?: LiveStatConfig;
 }) {
   const t = useTranslations("dashboard");
   const [tab, setTab] = useState<"internal" | "external">("internal");
@@ -133,7 +137,13 @@ export default function MatchRecap({
             </div>
           </div>
 
-          <CollectiveStatsPanel stats={collectiveStats} homeName={homeName} awayName={awayName} canEdit={false} />
+          <CollectiveStatsPanel
+            stats={collectiveStats}
+            homeName={homeName}
+            awayName={awayName}
+            canEdit={false}
+            statConfig={statConfig}
+          />
 
           <GkStatsPanel
             stats={ourGkStats}
@@ -143,6 +153,7 @@ export default function MatchRecap({
             players={ourPlayers}
             canEdit={false}
             byPlayer={ourGkStatsByPlayer}
+            statConfig={statConfig}
           />
         </div>
       ) : (

@@ -1,21 +1,8 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import {
-  COLLECTIVE_COUNTER_KEYS,
-  type CollectiveCounterKey,
-  type CollectiveStats,
-  type PossessionSide,
-} from "./liveStatsShared";
-
-const COUNTER_LABEL_KEYS: Record<CollectiveCounterKey, string> = {
-  offensive_transition: "collectiveStatOffensiveTransitions",
-  tackle: "collectiveStatTackles",
-  interception: "collectiveStatInterceptions",
-  recovery_own_half: "collectiveStatRecoveryOwnHalf",
-  recovery_opp_half: "collectiveStatRecoveryOppHalf",
-  progressive_pass: "collectiveStatProgressivePasses",
-};
+import { statOf, type CollectiveCounterKey, type CollectiveStats, type PossessionSide } from "./liveStatsShared";
+import { DEFAULT_LIVE_STAT_CONFIG, activeCollectiveFields, fieldLabel, type LiveStatConfig } from "./liveStatConfig";
 
 function PossessionBar({
   stats,
@@ -130,6 +117,7 @@ export default function CollectiveStatsPanel({
   onSetPossession,
   onIncrement,
   onDecrement,
+  statConfig = DEFAULT_LIVE_STAT_CONFIG,
 }: {
   stats: CollectiveStats;
   homeName: string;
@@ -139,8 +127,11 @@ export default function CollectiveStatsPanel({
   onSetPossession?: (side: PossessionSide) => void;
   onIncrement?: (side: "home" | "away", key: CollectiveCounterKey) => void;
   onDecrement?: (side: "home" | "away", key: CollectiveCounterKey) => void;
+  // The game's fields (its own frozen copy once it kicked off).
+  statConfig?: LiveStatConfig;
 }) {
   const t = useTranslations("dashboard");
+  const fields = activeCollectiveFields(statConfig);
 
   return (
     <div>
@@ -162,15 +153,15 @@ export default function CollectiveStatsPanel({
           <div key={side} className="rounded-2xl border border-border bg-background p-4">
             <h4 className="text-sm font-semibold">{side === "home" ? homeName : awayName}</h4>
             <div className="mt-2 divide-y divide-border">
-              {COLLECTIVE_COUNTER_KEYS.map((key) => (
+              {fields.map((field) => (
                 <CounterRow
-                  key={key}
-                  label={t(COUNTER_LABEL_KEYS[key])}
-                  value={stats[side][key]}
+                  key={field.key}
+                  label={fieldLabel(field, t)}
+                  value={statOf(stats[side], field.key)}
                   canEdit={canEdit}
                   isPending={isPending}
-                  onIncrement={() => onIncrement?.(side, key)}
-                  onDecrement={() => onDecrement?.(side, key)}
+                  onIncrement={() => onIncrement?.(side, field.key)}
+                  onDecrement={() => onDecrement?.(side, field.key)}
                 />
               ))}
             </div>

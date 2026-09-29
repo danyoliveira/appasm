@@ -77,7 +77,60 @@ const TTL_MS = {
   predictions: 6 * 60 * 60 * 1000,
 };
 
+// In-memory layer on top of the api_football_cache table: a page like Meu
+// Clube reads dozens of cached API responses (squad, every player's
+// profile, every played fixture…), and each one was a database round trip
+// on every load. Entries live at most MEMORY_TTL_MS (or less, if the data
+// itself expires sooner), so data refreshed elsewhere shows up within
+// minutes even with several server instances. Kept on globalThis so dev
+// hot reloads don't empty it.
+const MEMORY_TTL_MS = 10 * 60 * 1000;
+const MEMORY_MAX_ENTRIES = 5000;
+type MemoryEntry = { payload: unknown; teamId: number | null; storedAt: number; expiresAt: number };
+const memory: Map<string, MemoryEntry> = ((globalThis as { __asmApiMemory?: Map<string, MemoryEntry> }).__asmApiMemory ??=
+  new Map());
+const inFlight: Map<string, Promise<unknown>> = ((globalThis as { __asmApiInFlight?: Map<string, Promise<unknown>> })
+  .__asmApiInFlight ??= new Map());
+
+function remember(cacheKey: string, teamId: number | null, payload: unknown, fetchedAt: number, ttlMs: number) {
+  const now = Date.now();
+  memory.delete(cacheKey); // re-insert → most recent at the end
+  memory.set(cacheKey, {
+    payload,
+    teamId,
+    storedAt: now,
+    expiresAt: Math.min(fetchedAt + ttlMs, now + MEMORY_TTL_MS),
+  });
+  if (memory.size > MEMORY_MAX_ENTRIES) {
+    const oldest = memory.keys().next().value;
+    if (oldest) memory.delete(oldest);
+  }
+}
+
+// "Atualizar agora": drop this club's entries from memory too.
+export function forgetCachedTeamData(teamId: number) {
+  for (const [key, entry] of memory) if (entry.teamId === teamId) memory.delete(key);
+}
+
 async function cached<T>(
+  cacheKey: string,
+  teamId: number | null,
+  ttlMs: number,
+  fetcher: () => Promise<T>,
+): Promise<T> {
+  const hit = memory.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) return hit.payload as T;
+
+  // The same key requested several times at once (parallel page sections)
+  // is read/fetched once.
+  const pending = inFlight.get(cacheKey);
+  if (pending) return pending as Promise<T>;
+  const promise = cachedFromTable(cacheKey, teamId, ttlMs, fetcher).finally(() => inFlight.delete(cacheKey));
+  inFlight.set(cacheKey, promise);
+  return promise;
+}
+
+async function cachedFromTable<T>(
   cacheKey: string,
   teamId: number | null,
   ttlMs: number,
@@ -92,6 +145,7 @@ async function cached<T>(
     .maybeSingle();
 
   if (data && Date.now() - new Date(data.fetched_at).getTime() < ttlMs) {
+    remember(cacheKey, teamId, data.payload, new Date(data.fetched_at).getTime(), ttlMs);
     return data.payload as T;
   }
 
@@ -100,6 +154,7 @@ async function cached<T>(
     await admin
       .from("api_football_cache")
       .upsert({ cache_key: cacheKey, team_id: teamId, payload, fetched_at: new Date().toISOString() });
+    remember(cacheKey, teamId, payload, Date.now(), ttlMs);
     return payload;
   } catch (err) {
     // Serve stale data rather than nothing if we have it (e.g. API-Football
@@ -256,9 +311,17 @@ export const getFixtureEvents = (fixtureId: number) =>
     fetchFixtureEvents(fixtureId),
   );
 
-export const getFixtureLineups = (fixtureId: number) =>
-  cached<FixtureLineup[]>(`fixture:${fixtureId}:lineups`, null, TTL_MS.lineups, () =>
-    fetchFixtureLineups(fixtureId),
+// `finished`: a played fixture's lineups never change again, so they get the
+// same long TTL as its other post-match data. Without it, the club and
+// player pages — which read every past fixture's lineups to verify minutes
+// and appearances — re-fetched all of them from API-Football every 5
+// minutes (the pre-kickoff TTL), making those pages take tens of seconds.
+export const getFixtureLineups = (fixtureId: number, { finished = false }: { finished?: boolean } = {}) =>
+  cached<FixtureLineup[]>(
+    `fixture:${fixtureId}:lineups`,
+    null,
+    finished ? TTL_MS.fixturePlayers : TTL_MS.lineups,
+    () => fetchFixtureLineups(fixtureId),
   );
 
 export const getFixtureStatistics = (fixtureId: number) =>

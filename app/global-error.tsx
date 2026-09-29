@@ -22,6 +22,10 @@ export default function GlobalError({
 
   return (
     <html lang="pt">
+      {/* Follows the system theme (no access to the app's stored choice here). */}
+      <head>
+        <style>{`@media (prefers-color-scheme: dark) { body { background: #14171c !important; color: #f3f4f6 !important; } .ge-muted { color: #9aa1ac !important; } }`}</style>
+      </head>
       <body
         style={{
           margin: 0,
@@ -38,7 +42,7 @@ export default function GlobalError({
           <p style={{ margin: 0, fontSize: "0.95rem", fontWeight: 500 }}>
             Ocorreu um erro inesperado.
           </p>
-          <p style={{ marginTop: "0.25rem", marginBottom: 0, fontSize: "0.875rem", color: "#6b7280" }}>
+          <p className="ge-muted" style={{ marginTop: "0.25rem", marginBottom: 0, fontSize: "0.875rem", color: "#6b7280" }}>
             Tenta recarregar a página.
           </p>
           <button

@@ -54,14 +54,17 @@ function toStrings(stats: PlayerManualStatsInput): Record<FieldKey, string> {
   ) as Record<FieldKey, string>;
 }
 
+// Each group is its own small panel — easier to scan than one long list.
 function StatGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mt-4 first:mt-0">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
-      <div className="mt-1 divide-y divide-border">{children}</div>
+    <div className="rounded-xl border border-border bg-background">
+      <h3 className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
+      <div className="divide-y divide-border px-4 pb-1.5">{children}</div>
     </div>
   );
 }
+
+const LIVE_DOT = "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500";
 
 // One row: label, the external (API) value, and the internal (hand-entered)
 // one. The hand-entered value is the source of truth, so the color lands on
@@ -72,6 +75,8 @@ function ComparisonRow({
   label,
   external,
   internalValue,
+  liveValue,
+  liveTitle,
   isEditing,
   onChange,
   step,
@@ -79,20 +84,28 @@ function ComparisonRow({
   label: string;
   external: number | null;
   internalValue: string;
+  // What ASM Live Mode recorded — the internal value whenever the coach
+  // hasn't typed one.
+  liveValue: number | null;
+  liveTitle: string;
   isEditing: boolean;
   onChange: (value: string) => void;
   step?: string;
 }) {
-  const internalNum = internalValue.trim() ? Number(internalValue.trim().replace(",", ".")) : null;
+  const manualNum = internalValue.trim() ? Number(internalValue.trim().replace(",", ".")) : null;
+  const fromLive = manualNum == null && liveValue != null;
+  const internalNum = manualNum ?? liveValue;
   const isMatch = external != null && internalNum != null && external === internalNum;
   const isMismatch = external != null && internalNum != null && external !== internalNum;
 
   return (
-    <div className="grid grid-cols-[1fr_3.5rem_3.5rem] items-center gap-2 py-2 text-sm">
-      <span className="text-muted">{label}</span>
+    <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] items-center gap-3 py-2 text-sm">
+      <span className="truncate text-muted" title={label}>
+        {label}
+      </span>
       <span
-        className={`text-right font-semibold ${
-          isMatch ? "text-green-600" : isMismatch ? "text-yellow-600" : ""
+        className={`text-right tabular-nums ${
+          isMatch ? "text-green-600 dark:text-green-400" : isMismatch ? "text-amber-600 dark:text-amber-400" : "text-muted"
         }`}
       >
         {external ?? "-"}
@@ -103,10 +116,18 @@ function ComparisonRow({
           step={step ?? "1"}
           value={internalValue}
           onChange={(e) => onChange(e.target.value)}
-          className="w-14 justify-self-end rounded-md border border-border bg-background px-1.5 py-0.5 text-right text-sm text-foreground outline-none focus:border-accent"
+          placeholder={liveValue != null ? String(liveValue) : undefined}
+          title={liveValue != null ? liveTitle : undefined}
+          className="w-16 justify-self-end rounded-md border border-border bg-surface px-1.5 py-0.5 text-right text-sm text-foreground outline-none placeholder:text-sky-600/60 focus:border-accent"
         />
       ) : (
-        <span className="text-right font-semibold">{internalNum ?? "-"}</span>
+        <span
+          className="flex items-center justify-end gap-1.5 font-semibold tabular-nums"
+          title={fromLive ? liveTitle : undefined}
+        >
+          {fromLive && <span aria-hidden className={LIVE_DOT} />}
+          {internalNum ?? "-"}
+        </span>
       )}
     </div>
   );
@@ -119,6 +140,7 @@ export default function PlayerStatsComparison({
   isGoalkeeper,
   externalValues,
   initialInternalValues,
+  liveValues = {},
   title,
 }: {
   teamId: number;
@@ -127,6 +149,8 @@ export default function PlayerStatsComparison({
   isGoalkeeper: boolean;
   externalValues: PlayerManualStatsInput;
   initialInternalValues: PlayerManualStatsInput;
+  // Recorded in ASM Live Mode (only the fields it can know).
+  liveValues?: Partial<Record<FieldKey, number>>;
   title: string;
 }) {
   const t = useTranslations("dashboard");
@@ -158,6 +182,12 @@ export default function PlayerStatsComparison({
     setDraft(toStrings(initialInternalValues));
     setIsEditing(false);
   }
+
+  const headlineFields: FieldDef[] = [
+    GENERAL_FIELDS[0],
+    GENERAL_FIELDS[2],
+    ...(isGoalkeeper ? GOALKEEPER_FIELDS : ATTACK_FIELDS.slice(0, 2)),
+  ];
 
   const groups: { title: string; fields: FieldDef[] }[] = [
     { title: t("statGroupGeneral"), fields: GENERAL_FIELDS },
@@ -206,20 +236,52 @@ export default function PlayerStatsComparison({
           ))}
       </div>
 
-      <div className="mt-4 grid grid-cols-[1fr_3.5rem_3.5rem] gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
-        <span />
-        <span className="text-right">{t("statsExternalTab")}</span>
-        <span className="text-right">{t("statsInternalTab")}</span>
+      {/* The four numbers that matter most, big — the internal value (what
+          the coach entered, or Live Mode), with the API figure underneath. */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {headlineFields.map((field) => {
+          const raw = draft[field.key].trim().replace(",", ".");
+          const manual = raw ? Number(raw) : null;
+          const live = liveValues[field.key] ?? null;
+          const value = manual ?? live;
+          const external = externalValues[field.key];
+          return (
+            <div key={field.key} className="rounded-xl border border-border bg-background px-3 py-3.5 text-center">
+              <div className="flex items-center justify-center gap-1.5 text-2xl font-bold tabular-nums">
+                {manual == null && live != null && <span aria-hidden className={LIVE_DOT} />}
+                {value ?? "-"}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] uppercase tracking-wide text-muted">{t(field.labelKey)}</div>
+              {external != null && (
+                <div
+                  className={`mt-1 text-[10px] tabular-nums ${
+                    value == null ? "text-muted" : external === value ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {t("squadStatSourceExternal")} {external}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
+      <div className="mt-4 space-y-3">
       {groups.map((group) => (
         <StatGroup key={group.title} title={group.title}>
+          <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] gap-3 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            <span />
+            <span className="text-right">{t("squadStatSourceExternal")}</span>
+            <span className="text-right">{t("squadStatSourceInternal")}</span>
+          </div>
           {group.fields.map((field) => (
             <ComparisonRow
               key={field.key}
               label={t(field.labelKey)}
               external={externalValues[field.key]}
               internalValue={draft[field.key]}
+              liveValue={liveValues[field.key] ?? null}
+              liveTitle={t("statsLiveValueHint")}
               isEditing={isEditing}
               onChange={(value) => handleFieldChange(field.key, value)}
               step={field.step}
@@ -227,6 +289,18 @@ export default function PlayerStatsComparison({
           ))}
         </StatGroup>
       ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border pt-3 text-xs text-muted">
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden className={LIVE_DOT} />
+          {t("statsLegendLive")}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+          {t("statsLegendMismatch")}
+        </span>
+      </div>
     </div>
   );
 }
