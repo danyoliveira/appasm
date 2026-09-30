@@ -24,7 +24,7 @@ export default async function DashboardLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, email, avatar_url, status")
+    .select("full_name, email, avatar_url, status, role")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -50,6 +50,7 @@ export default async function DashboardLayout({
         fullName={profile.full_name}
         email={profile.email}
         avatarUrl={profile.avatar_url}
+        showArchive={profile.role === "coach"}
       />
       <div className="min-w-0 flex-1 py-6 md:py-10">{children}</div>
     </Container>

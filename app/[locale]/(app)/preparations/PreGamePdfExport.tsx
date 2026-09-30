@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { PreparationVideoRow } from "./PreparationVideoList";
 import type { TeamColors } from "./useTeamColors";
@@ -11,26 +11,31 @@ import { VIDEO_CATEGORIES, type GameSubmoment, type VideoCategory } from "./vide
 export default function PreGamePdfExport({
   ourTeamName,
   opponentName,
+  matchDate,
   tacticalRows,
   videoRows,
   teamColors,
 }: {
   ourTeamName: string;
   opponentName: string;
+  matchDate?: string | null;
   tacticalRows: TacticalSnapshotRow[];
   videoRows: PreparationVideoRow[];
   teamColors: TeamColors;
 }) {
   const t = useTranslations("dashboard");
+  const locale = useLocale();
   const [isGenerating, setIsGenerating] = useState(false);
 
   async function handleDownload() {
     setIsGenerating(true);
     try {
-      const [{ pdf }, { default: PreGamePdf }] = await Promise.all([
+      const [{ pdf }, { default: PreGamePdf }, { registerPdfFonts }] = await Promise.all([
         import("@react-pdf/renderer"),
         import("./PreGamePdf"),
+        import("@/lib/pdfFonts"),
       ]);
+      registerPdfFonts();
 
       const categoryLabels = Object.fromEntries(
         VIDEO_CATEGORIES.map((key) => [key, t(CATEGORY_LABEL_KEYS[key])]),
@@ -53,14 +58,16 @@ export default function PreGamePdfExport({
         videoPlayerPrefix: t("videoPlayerLabel"),
         videoTagLabel: t("videoTagLabel"),
         footerNote: t("progressionFooterNote"),
+        matchDateLabel: t("preGamePdfMatchDate"),
       };
 
       const blob = await pdf(
         <PreGamePdf
-          data={{ ourTeamName, opponentName, tacticalRows, videoRows }}
+          data={{ ourTeamName, opponentName, matchDate, tacticalRows, videoRows }}
           labels={labels}
           teamColors={teamColors}
           generatedAt={new Date()}
+          locale={locale}
         />,
       ).toBlob();
       const url = URL.createObjectURL(blob);

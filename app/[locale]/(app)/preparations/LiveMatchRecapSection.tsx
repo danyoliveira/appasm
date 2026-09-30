@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { getLiveMatchRecap, type LiveMatchRecap } from "./liveStatsActions";
 import MatchRecap from "../../live/MatchRecap";
+import { useTeamColors } from "./useTeamColors";
 
 // The "Pós-Jogo" tab's content — fetched from the authenticated session (no
 // token needed, the coach is already logged in), so it's the same report
@@ -33,6 +34,16 @@ export default function LiveMatchRecapSection({
     };
   }, [sessionId]);
 
+  // Each club's colour, as in Live Mode (before the recap loads there are no
+  // crests to read them from, so it starts on the defaults).
+  const ourIsHome = recap?.ourSide !== "away";
+  const teamColors = useTeamColors(
+    recap ? (ourIsHome ? recap.homeLogo : recap.awayLogo) : undefined,
+    recap ? (ourIsHome ? recap.awayLogo : recap.homeLogo) : undefined,
+  );
+  const ours = { background: teamColors.usColor, text: teamColors.usTextColor };
+  const theirs = { background: teamColors.opponentColor, text: teamColors.opponentTextColor };
+
   if (recap === undefined) {
     return <p className="text-sm text-muted">{t("liveStatsRecapLoading")}</p>;
   }
@@ -47,6 +58,9 @@ export default function LiveMatchRecapSection({
 
   return (
     <MatchRecap
+      tokenColors={{ home: ourIsHome ? ours : theirs, away: ourIsHome ? theirs : ours }}
+      homeLogo={recap.homeLogo}
+      awayLogo={recap.awayLogo}
       preparationKey={preparationKey}
       homeName={recap.homeName}
       awayName={recap.awayName}

@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useTeamColors, useVividLogoColor } from "./useTeamColors";
 import PreGamePdfExport from "./PreGamePdfExport";
+import PostGamePdfExport from "./PostGamePdfExport";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { PreparationVideoRow } from "./PreparationVideoList";
 
@@ -52,11 +53,14 @@ export default function PreparationTabs({
   liveSession,
   finished = false,
   locked = false,
+  hideInGame = false,
+  canFocus = true,
   ourLogo,
   opponentLogo,
   ourTeamName,
   tacticalRows,
   videoRows,
+  postGamePdf = null,
 }: {
   generalInfoContent?: ReactNode;
   preGameContent?: ReactNode;
@@ -72,6 +76,11 @@ export default function PreparationTabs({
   // Finished preparation: no Modo Foco and no "Em Jogo" tab — it's a record
   // to read now, not a match to run.
   locked?: boolean;
+  // No "Em Jogo" tab at all — for whoever can't start the Live Mode game,
+  // until the coach has.
+  hideInGame?: boolean;
+  // Modo Foco is for working the match; hidden for view-only access.
+  canFocus?: boolean;
   ourLogo?: string;
   opponentLogo?: string;
   ourTeamName: string;
@@ -80,6 +89,9 @@ export default function PreparationTabs({
   // Jogo/Informação Geral.
   tacticalRows: TacticalSnapshotRow[];
   videoRows: PreparationVideoRow[];
+  // Pós-Jogo PDF export, same spot — only once the Live Mode match has
+  // ended (there is no report before that).
+  postGamePdf?: { sessionId: string; competition: string | null; notes: string | null } | null;
 }) {
   const t = useTranslations("dashboard");
   // Opens straight on whichever phase the match is actually in right now
@@ -87,7 +99,8 @@ export default function PreparationTabs({
   // tab's own color highlight uses, computed once at mount/refresh.
   const [tab, setTab] = useState<TabKey>(() => {
     const phase = currentPhase(matchDate, liveSession ?? null, finished);
-    return locked && phase === "in" ? "post" : phase;
+    if (phase !== "in") return phase;
+    return locked ? "post" : hideInGame ? "pre" : phase;
   });
   const [isFocusMode, setIsFocusMode] = useState(false);
   // Which phase the match is actually in right now — independent of which
@@ -104,7 +117,7 @@ export default function PreparationTabs({
     { key: "pre", label: t("preparationTabPreGame") },
     { key: "in", label: t("preparationTabInGame") },
     { key: "post", label: t("preparationTabPostGame") },
-  ] as { key: TabKey; label: string }[]).filter((tabDef) => !(locked && tabDef.key === "in"));
+  ] as { key: TabKey; label: string }[]).filter((tabDef) => !((locked || hideInGame) && tabDef.key === "in"));
 
   const comingSoon = (
     <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
@@ -189,12 +202,22 @@ export default function PreparationTabs({
             <PreGamePdfExport
               ourTeamName={ourTeamName}
               opponentName={opponentName}
+              matchDate={matchDate}
               tacticalRows={tacticalRows}
               videoRows={videoRows}
               teamColors={teamColors}
             />
           )}
-          {!locked && (
+          {tab === "post" && postGamePdf && (
+            <PostGamePdfExport
+              sessionId={postGamePdf.sessionId}
+              matchDate={matchDate}
+              competition={postGamePdf.competition}
+              notes={postGamePdf.notes}
+              teamColors={teamColors}
+            />
+          )}
+          {!locked && canFocus && (
             <button
               type="button"
               onClick={() => setIsFocusMode(true)}

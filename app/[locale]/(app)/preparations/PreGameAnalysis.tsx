@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import TacticalAnalysisSection from "./TacticalAnalysisSection";
 import VideoAnalysisSection from "./VideoAnalysisSection";
 import TeamTabs from "./TeamTabs";
+import Icon from "@/components/Icon";
 import { useTeamColors } from "./useTeamColors";
 import type { BenchOption, Team, OpponentSquadOption, OurSquadOption } from "./TacticalBoard";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
@@ -68,21 +69,30 @@ export default function PreGameAnalysis({
     return Array.from(byId.values());
   });
   const ourPlayers: VideoPlayerOption[] = [
-    ...ourSquad.map((p) => ({ id: p.id, name: p.name })),
-    ...customPlayers.filter((p) => p.team === "us").map((p) => ({ id: p.id, name: p.name })),
+    ...ourSquad.map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),
+    ...customPlayers
+      .filter((p) => p.team === "us")
+      .map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),
   ];
   const opponentPlayers: VideoPlayerOption[] = [
-    ...opponentSquad.map((p) => ({ id: p.id, name: p.name })),
-    ...customPlayers.filter((p) => p.team === "opponent").map((p) => ({ id: p.id, name: p.name })),
+    ...opponentSquad.map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),
+    ...customPlayers
+      .filter((p) => p.team === "opponent")
+      .map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),
   ];
 
   return (
     <div className="space-y-4">
       <TeamTabs activeTeam={activeTeam} onChange={setActiveTeam} teamColors={teamColors} />
 
-      <details open className="group rounded-2xl border border-border bg-surface">
-        <summary className="flex cursor-pointer select-none list-none items-center justify-between px-4 py-3 text-sm font-semibold">
-          {t("tacticalAnalysisTitle")}
+      <details open className="group rounded-2xl border border-border bg-surface shadow-sm">
+        <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-3 px-4 py-3">
+          <span className="flex items-center gap-2.5 text-base font-semibold">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+              <Icon name="target" className="h-4 w-4" />
+            </span>
+            {t("tacticalAnalysisTitle")}
+          </span>
           <span className="text-muted transition-transform group-open:rotate-180">▾</span>
         </summary>
         <div className="border-t border-border p-4">
@@ -103,9 +113,14 @@ export default function PreGameAnalysis({
         </div>
       </details>
 
-      <details open className="group rounded-2xl border border-border bg-surface">
-        <summary className="flex cursor-pointer select-none list-none items-center justify-between px-4 py-3 text-sm font-semibold">
-          {t("videoAnalysisTitle")}
+      <details open className="group rounded-2xl border border-border bg-surface shadow-sm">
+        <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-3 px-4 py-3">
+          <span className="flex items-center gap-2.5 text-base font-semibold">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+              <Icon name="video" className="h-4 w-4" />
+            </span>
+            {t("videoAnalysisTitle")}
+          </span>
           <span className="text-muted transition-transform group-open:rotate-180">▾</span>
         </summary>
         <div className="border-t border-border p-4">

@@ -63,6 +63,17 @@ async function callApiFootball<T>(
   return json.response as T;
 }
 
+// The account behind the API key: its plan and how many of today's
+// requests are used. Free to call — it isn't counted against the quota.
+export interface ApiStatus {
+  subscription?: { plan?: string; end?: string; active?: boolean };
+  requests?: { current?: number; limit_day?: number };
+}
+
+export function fetchApiStatus() {
+  return callApiFootball<ApiStatus>("/status");
+}
+
 export interface TeamSearchResult {
   team: { id: number; name: string; logo: string; country: string };
 }

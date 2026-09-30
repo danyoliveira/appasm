@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 
 // Marking a player injured — by hand or by confirming one the API flagged —
 // always asks for these two things, so the injury history built from
@@ -115,13 +115,14 @@ export function InjuryReturnBanner({
   onUpdateExpectedReturn: (expectedReturnAt: string) => void;
 }) {
   const t = useTranslations("dashboard");
+  const locale = useLocale();
   const [editing, setEditing] = useState(false);
   const [draftDate, setDraftDate] = useState(expectedReturnAt);
 
   return (
     <div className="rounded-xl bg-accent/10 p-2.5 text-xs">
       <p className="text-foreground">
-        {t("injuryReturnDuePrompt", { date: new Date(expectedReturnAt).toLocaleDateString() })}
+        {t("injuryReturnDuePrompt", { date: new Date(expectedReturnAt).toLocaleDateString(locale) })}
       </p>
       {editing ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">

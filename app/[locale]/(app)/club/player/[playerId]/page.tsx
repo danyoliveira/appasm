@@ -1,3 +1,4 @@
+import { localizedNationality } from "@/lib/api-football/flags";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
 import { Link, redirect } from "@/i18n/navigation";
@@ -22,6 +23,7 @@ import {
   getSquad,
   getTeamInfo,
   getPlayerProfile,
+  getCountries,
   getPlayersStatistics,
   getPlayerSeasonStatsById,
   getInjuries,
@@ -65,6 +67,9 @@ import { translatePosition, translateInjuryType, shortenPlayerName } from "../..
 import { matchResult } from "../../fixtureHelpers";
 import { HeaderStatusChip, PendingInjuryBanner, InjuryReturnPrompt } from "./PlayerHeaderStatus";
 import PlayerHero from "./PlayerHero";
+import PlayerProfileEditor from "../../PlayerProfileEditor";
+import { EMPTY_PLAYER_PROFILE, positionLabel } from "../../playerProfile";
+import { loadPlayerProfiles } from "@/lib/playerProfiles";
 import NotesList from "../../../notes/NotesList";
 import {
   CLUB_NOTE_COLUMNS,
@@ -647,16 +652,59 @@ export default async function PlayerDetailPage({
         ? { id: realTransfers[0].teams.in.id, name: realTransfers[0].teams.in.name, logo: realTransfers[0].teams.in.logo }
         : null;
 
-  const generalInfoStats: ({ label: string; value: string | number } | null)[] = [
-    position ? { label: t("squadColumnPosition"), value: translatePosition(position, t) } : null,
+  // API-Football transfer types are English ("Transfer", "Free", "N/A") —
+  // fees ("€ 4.3M") are shown as they are.
+  const transferTypeLabel = (type: string | null | undefined) => {
+    if (!type || type === "N/A") return "—";
+    if (/^transfer$/i.test(type)) return t("careerTransferTypeTransfer");
+    if (/free/i.test(type)) return t("careerTransferTypeFree");
+    if (/back from loan|end of loan|return/i.test(type)) return t("careerTransferTypeReturn");
+    return type;
+  };
+  // Position(s) the coach set for this spell (our own players only) and the
+  // preferred foot, which goes with the player wherever they play.
+  const playerProfile =
+    (
+      await loadPlayerProfiles(supabase, {
+        teamId,
+        stintId: squadPlayer ? currentStintId : null,
+        playerIds: [playerId],
+      })
+    )[playerId] ?? EMPTY_PLAYER_PROFILE;
+
+  // Country list (cached) — the nationality in the app's language.
+  const countries = await getCountries().catch(() => []);
+  type HeroStat = { label: string; value: React.ReactNode; hint?: string; wide?: boolean };
+  const generalInfoStats: (HeroStat | null)[] = [
+    // The coach's specific position once set; the external source's group
+    // ("Defesa") until then.
+    // One wider tile: the main position, the second one underneath.
+    playerProfile.primaryPosition
+      ? {
+          label: t("squadColumnPosition"),
+          value: positionLabel(playerProfile.primaryPosition, t),
+          hint: playerProfile.secondaryPosition
+            ? `${t("secondaryPositionLabel")} · ${positionLabel(playerProfile.secondaryPosition, t)}`
+            : undefined,
+          wide: true,
+        }
+      : position
+        ? { label: t("squadColumnPosition"), value: translatePosition(position, t) }
+        : null,
     bio?.age != null ? { label: t("statAge"), value: bio.age } : null,
-    bio?.nationality ? { label: t("statNationality"), value: bio.nationality } : null,
+    bio?.nationality
+      ? {
+          label: t("statNationality"),
+          value: localizedNationality(countries, bio.nationality, locale) ?? bio.nationality,
+        }
+      : null,
     resolvedHeightCm != null ? { label: t("statHeight"), value: `${resolvedHeightCm} cm` } : null,
     resolvedWeightKg != null ? { label: t("statWeight"), value: `${resolvedWeightKg} kg` } : null,
+    playerProfile.preferredFoot
+      ? { label: t("preferredFootShortLabel"), value: t(`preferredFoot_${playerProfile.preferredFoot}`) }
+      : null,
   ];
-  const filteredGeneralInfoStats = generalInfoStats.filter(
-    (s): s is { label: string; value: string | number } => s != null,
-  );
+  const filteredGeneralInfoStats = generalInfoStats.filter((s): s is HeroStat => s != null);
 
   const realSidelined = sidelined.filter(
     (s) => s.type !== "Yellow Cards" && s.type !== "Red Card",
@@ -1120,7 +1168,7 @@ export default async function PlayerDetailPage({
                           </span>
                         ) : (
                           <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                            {transfer.type ?? "—"}
+                            {transferTypeLabel(transfer.type)}
                           </span>
                         )}
                         <span>{new Date(transfer.date).toLocaleDateString(locale)}</span>
@@ -1192,10 +1240,21 @@ export default async function PlayerDetailPage({
           addLabel={t("addNoteButton")}
         />
       )}
-      <div>
-        <h3 className="text-sm font-semibold text-muted">{t("playerVideosTitle")}</h3>
-        <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
-      </div>
+      {/* Same card as the notes above, so the tab reads as two sections. */}
+      <section className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <span aria-hidden>🎬</span>
+          {t("playerVideosTitle")}
+          {playerVideoRows.length > 0 && (
+            <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium tabular-nums text-muted ring-1 ring-border">
+              {playerVideoRows.length}
+            </span>
+          )}
+        </h3>
+        <div className="mt-3">
+          <PreparationVideoList rows={playerVideoRows} isCoach={isCoach} />
+        </div>
+      </section>
     </div>
   );
 
@@ -1268,6 +1327,9 @@ export default async function PlayerDetailPage({
                   status={status}
                   isCoach={isCoach}
                 />
+              )}
+              {squadPlayer && isCoach && (
+                <PlayerProfileEditor teamId={teamId} playerId={playerId} profile={playerProfile} />
               )}
             </div>
           </PlayerHero>

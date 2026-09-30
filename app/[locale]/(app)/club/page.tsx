@@ -42,6 +42,7 @@ import { CLUB_NOTE_COLUMNS, clubNoteFromRow, type NoteItem } from "../notes/note
 import TeamDossier, { type DossierFile, type DossierPlayer } from "./TeamDossier";
 import { CLUB_DOSSIER_CATEGORIES } from "./dossierShared";
 import { loadDossierFiles } from "@/lib/dossier";
+import { loadPlayerProfiles } from "@/lib/playerProfiles";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
 import { aggregateLivePlayerTotals } from "@/lib/livePlayerStats";
@@ -96,6 +97,8 @@ export default async function ClubPage({
 
   const teamId = coachProfile?.api_football_team_id ?? null;
   const currentStintId = teamId ? await getCurrentStintId(supabase, teamId) : null;
+  // The coach's specific positions (this spell) and preferred feet.
+  const playerProfiles = teamId ? await loadPlayerProfiles(supabase, { teamId, stintId: currentStintId }) : {};
 
   // Everything below that doesn't depend on something else starts right
   // here, all at once — this page used to wait for ~20 queries one after
@@ -754,6 +757,7 @@ export default async function ClubPage({
             dueReturnByPlayerId={dueReturnByPlayerId}
             statsByPlayerId={playerStatsById}
             internalStatsByPlayerId={internalStatsById}
+            profileByPlayerId={playerProfiles}
             flagUrlByPlayerId={flagUrlByPlayerId}
             isCoach={isCoach}
             manualPlayers={manualPlayerInfos}

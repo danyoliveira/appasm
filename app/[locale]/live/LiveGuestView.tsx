@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useTranslations } from "next-intl";
+import { useTeamColors } from "../(app)/preparations/useTeamColors";
 import {
   getLiveFeedByToken,
   saveLineupByToken,
@@ -27,6 +28,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import LineupEditor from "./LineupEditor";
 import LiveFormationTeam from "./LiveFormationTeam";
 import MatchClock from "./MatchClock";
+import LiveScoreboard from "./LiveScoreboard";
 import LiveFeedList from "./LiveFeedList";
 import PlayerEventMenu from "./PlayerEventMenu";
 import CollectiveStatsPanel from "./CollectiveStatsPanel";
@@ -36,8 +38,8 @@ import {
   applySubstitution,
   currentMatchMinute,
   eventIconsByName,
-  randomLineups,
   lineupPlayerId,
+  countGoals,
   type LiveSquadPlayer,
   removeFromField,
   restoreToField,
@@ -49,7 +51,6 @@ import {
   type PossessionSide,
   type TeamLineup,
 } from "./liveStatsShared";
-import TeamCrest from "@/components/TeamCrest";
 
 const POLL_MS = 4000;
 const GUEST_NAME_KEY = "asm-live-guest-name";
@@ -127,11 +128,15 @@ export default function LiveGuestView({
   token,
   initialFeed,
   ourSquad = [],
+  opponentSquad = [],
 }: {
   token: string;
   initialFeed: GuestLiveFeed;
   // Our squad, to link lineup names to real players.
   ourSquad?: LiveSquadPlayer[];
+  // The opponent's squad (API-Football clubs only) — same picker on their
+  // side of the match sheet.
+  opponentSquad?: LiveSquadPlayer[];
 }) {
   const t = useTranslations("dashboard");
   const [feed, setFeed] = useState(initialFeed);
@@ -142,6 +147,9 @@ export default function LiveGuestView({
   const [inMatchMode, setInMatchMode] = useState(Boolean(initialFeed.match.startedAt));
   const [showMatchModeConfirm, setShowMatchModeConfirm] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  // Half-time and full-time can't be taken back (only "Reiniciar jogo",
+  // which wipes the match) — a stray tap on the clock button asks first.
+  const [phaseConfirm, setPhaseConfirm] = useState<"halftime" | "fulltime" | null>(null);
   const [eventMenuTarget, setEventMenuTarget] = useState<{ side: "home" | "away"; player: LineupPlayer } | null>(
     null,
   );
@@ -154,7 +162,7 @@ export default function LiveGuestView({
   // A fourth tab (Pós-Jogo) only exists once the match has ended, and opens
   // by default in that case — someone opening the link after full-time
   // should land on the summary, not mid-match tabs that no longer update.
-  const [matchModeTab, setMatchModeTab] = useState<"game" | "stats" | "gk" | "recap">(
+  const [selectedMatchModeTab, setMatchModeTab] = useState<"game" | "stats" | "gk" | "recap">(
     initialFeed.match.endedAt ? "recap" : "game",
   );
   const [lastSeenGameAt, setLastSeenGameAt] = useState<string | null>(
@@ -244,6 +252,26 @@ export default function LiveGuestView({
   const { match, role } = feed;
   const canEdit = role === "member";
   const ourSide = match.ourSide;
+  // The summary tab only exists once the match is over — after "Reiniciar
+  // jogo" (by this device or another) a view still parked on it falls back
+  // to the formation instead of showing a 0–0 "final result".
+  const matchModeTab = selectedMatchModeTab === "recap" && !match.endedAt ? "game" : selectedMatchModeTab;
+  // Each club's own colour on its pitch tokens (the opponent's is nudged
+  // away from ours when the two crests are too alike).
+  const teamColors = useTeamColors(
+    ourSide === "home" ? match.homeLogo : match.awayLogo,
+    ourSide === "home" ? match.awayLogo : match.homeLogo,
+  );
+  const tokenColors = {
+    home:
+      ourSide === "home"
+        ? { background: teamColors.usColor, text: teamColors.usTextColor }
+        : { background: teamColors.opponentColor, text: teamColors.opponentTextColor },
+    away:
+      ourSide === "away"
+        ? { background: teamColors.usColor, text: teamColors.usTextColor }
+        : { background: teamColors.opponentColor, text: teamColors.opponentTextColor },
+  };
   const ourTeamName = ourSide === "home" ? match.homeName : match.awayName;
   const ourGkStats = ourSide === "home" ? feed.gkStats.home : feed.gkStats.away;
   const ourGkIncomplete = ourSide === "home" ? feed.gkStats.homeIncomplete : feed.gkStats.awayIncomplete;
@@ -271,12 +299,6 @@ export default function LiveGuestView({
     if (!autoLineup) return;
     setHomeDraft(autoLineup.home);
     setAwayDraft(autoLineup.away);
-  }
-
-  function handleRandomFill() {
-    const { home, away } = randomLineups();
-    setHomeDraft(home);
-    setAwayDraft(away);
   }
 
   function handleLineupNext() {
@@ -372,25 +394,110 @@ export default function LiveGuestView({
     });
   }
 
-  const handleKickoff = () => refreshAfter(() => markKickoffByToken(token));
-  const handleHalftime = () => refreshAfter(() => markHalftimeByToken(token));
+  // Kick-off from the pre-game steps: store what is on screen first (the
+  // sheet, the formation being dragged, the bench notes — otherwise edits
+  // not yet confirmed with Seguinte were lost), then go straight to Modo
+  // Jogo instead of leaving the coach on the match sheet with the clock
+  // already running.
+  const handleKickoff = () => {
+    startSavingStep(async () => {
+      try {
+        if (!inMatchMode) {
+          const placed = step !== "lineup";
+          await Promise.all([
+            saveLineupByToken(token, "home", {
+              players: placed ? mergeStarting(homeDraft, homeFormationDraft) : homeDraft,
+            }),
+            saveLineupByToken(token, "away", {
+              players: placed ? mergeStarting(awayDraft, awayFormationDraft) : awayDraft,
+            }),
+            saveBenchNotesByToken(token, notesDraft),
+          ]);
+        }
+        await markKickoffByToken(token);
+      } catch {
+        setLinkExpired(true);
+        return;
+      }
+      if (!(await refetchOrExpire())) return;
+      setInMatchMode(true);
+    });
+  };
+  const handleHalftime = () => setPhaseConfirm("halftime");
   const handleSecondHalf = () => refreshAfter(() => markSecondHalfByToken(token));
-  const handleFullTime = () => refreshAfter(() => markFullTimeByToken(token));
+  const handleFullTime = () => setPhaseConfirm("fulltime");
 
-  const handleSetPossession = (side: PossessionSide) => refreshAfter(() => setPossessionByToken(token, side));
+  function handleConfirmPhase() {
+    const phase = phaseConfirm;
+    setPhaseConfirm(null);
+    if (phase === "halftime") {
+      refreshAfter(() => markHalftimeByToken(token));
+    } else if (phase === "fulltime") {
+      refreshAfter(() => markFullTimeByToken(token));
+      // Straight to the summary — the mid-match tabs no longer change.
+      setMatchModeTab("recap");
+    }
+  }
+
+  // Counter taps show at once and save behind the scenes — waiting a second
+  // or two per tap (with every button greyed out meanwhile) made it
+  // impossible to keep up with a match. Same guard as the pitch drags: a
+  // poll that overlaps a save is dropped, and once the last save lands the
+  // screen is reconciled with what the server actually stored (so a tap
+  // that failed simply falls back).
+  function optimisticWrite(apply: (prev: GuestLiveFeed) => GuestLiveFeed, action: () => Promise<void>) {
+    setFeed(apply);
+    formationWriteSeq.current += 1;
+    pendingFormationSaves.current += 1;
+    action()
+      .catch(() => {
+        // Reconciled below; a dead link is caught by that refetch.
+      })
+      .finally(() => {
+        pendingFormationSaves.current -= 1;
+        formationWriteSeq.current += 1;
+        if (pendingFormationSaves.current === 0) void refetchOrExpire();
+      });
+  }
+
+  const bump = (counts: Record<string, number>, key: string, by: 1 | -1) => ({
+    ...counts,
+    [key]: Math.max(0, (counts[key] ?? 0) + by),
+  });
+
+  const handleSetPossession = (side: PossessionSide) =>
+    optimisticWrite(
+      (prev) => ({ ...prev, collectiveStats: { ...prev.collectiveStats, currentPossession: side } }),
+      () => setPossessionByToken(token, side),
+    );
+  const changeCollective = (side: "home" | "away", key: CollectiveCounterKey, by: 1 | -1) =>
+    optimisticWrite(
+      (prev) => ({
+        ...prev,
+        collectiveStats: { ...prev.collectiveStats, [side]: bump(prev.collectiveStats[side], key, by) },
+      }),
+      () => (by === 1 ? addCollectiveStatByToken(token, key, side) : undoCollectiveStatByToken(token, key, side)),
+    );
   const handleCollectiveIncrement = (side: "home" | "away", key: CollectiveCounterKey) =>
-    refreshAfter(() => addCollectiveStatByToken(token, key, side));
+    changeCollective(side, key, 1);
   const handleCollectiveDecrement = (side: "home" | "away", key: CollectiveCounterKey) =>
-    refreshAfter(() => undoCollectiveStatByToken(token, key, side));
+    changeCollective(side, key, -1);
 
   const handleSetGk = (name: string) =>
     refreshAfter(() =>
       setGkByToken(token, ourSide, name, lineupPlayerId(currentTeamLineup(ourSide).players, name)),
     );
-  const handleGkIncrement = (key: GkCounterKey, outcome: GkOutcome) =>
-    refreshAfter(() => addGkStatByToken(token, ourSide, key, outcome));
-  const handleGkDecrement = (key: GkCounterKey, outcome: GkOutcome) =>
-    refreshAfter(() => undoGkStatByToken(token, ourSide, key, outcome));
+  const changeGk = (key: GkCounterKey, outcome: GkOutcome, by: 1 | -1) => {
+    const field =
+      outcome === "complete" ? ourSide : ourSide === "home" ? ("homeIncomplete" as const) : ("awayIncomplete" as const);
+    optimisticWrite(
+      (prev) => ({ ...prev, gkStats: { ...prev.gkStats, [field]: bump(prev.gkStats[field], key, by) } }),
+      () =>
+        by === 1 ? addGkStatByToken(token, ourSide, key, outcome) : undoGkStatByToken(token, ourSide, key, outcome),
+    );
+  };
+  const handleGkIncrement = (key: GkCounterKey, outcome: GkOutcome) => changeGk(key, outcome, 1);
+  const handleGkDecrement = (key: GkCounterKey, outcome: GkOutcome) => changeGk(key, outcome, -1);
 
   function handleConfirmRestart() {
     refreshAfter(() => restartLiveSessionByToken(token));
@@ -550,17 +657,16 @@ export default function LiveGuestView({
   if (role === "gk_coach") {
     return (
       <div className="w-full px-4 py-6">
-        <div className="flex items-center justify-center gap-2 text-xs text-muted">
-          <span className="rounded-full bg-accent/10 px-2.5 py-1 font-medium text-accent">
-            {t("liveStatsGkCoachBadge")}
-          </span>
-        </div>
-
-        <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
-          <div className="flex flex-col items-center gap-2">
-            <TeamCrest logo={match.homeLogo} className="h-12 w-12" />
-            <span className="max-w-[110px] truncate text-center text-sm font-medium">{match.homeName}</span>
-          </div>
+        <LiveScoreboard
+          roleLabel={t("liveStatsGkCoachBadge")}
+          homeName={match.homeName}
+          awayName={match.awayName}
+          homeLogo={match.homeLogo}
+          awayLogo={match.awayLogo}
+          homeScore={match.startedAt ? countGoals(feed.entries, "home") : null}
+          awayScore={match.startedAt ? countGoals(feed.entries, "away") : null}
+          colors={{ home: tokenColors.home.background, away: tokenColors.away.background }}
+        >
           <MatchClock
             startedAt={match.startedAt}
             halftimeAt={match.halftimeAt}
@@ -573,11 +679,7 @@ export default function LiveGuestView({
             onFullTime={() => {}}
             onRestart={() => {}}
           />
-          <div className="flex flex-col items-center gap-2">
-            <TeamCrest logo={match.awayLogo} className="h-12 w-12" />
-            <span className="max-w-[110px] truncate text-center text-sm font-medium">{match.awayName}</span>
-          </div>
-        </div>
+        </LiveScoreboard>
 
         <div className="mx-auto mt-6 max-w-3xl">
           <GkStatsPanel
@@ -604,13 +706,6 @@ export default function LiveGuestView({
     return <NameGate onSubmit={handleNameSubmit} />;
   }
 
-  const stepTitle =
-    step === "lineup"
-      ? t("liveStatsMatchSheetTitle")
-      : step === "formation"
-        ? t("liveStatsFormationTitle")
-        : t("liveStatsNotesTitle");
-
   return (
     <div className="w-full px-4 py-6">
       <ConfirmDialog
@@ -630,6 +725,14 @@ export default function LiveGuestView({
         onConfirm={handleConfirmRestart}
         onCancel={() => setShowRestartConfirm(false)}
       />
+      <ConfirmDialog
+        open={phaseConfirm !== null}
+        message={phaseConfirm === "fulltime" ? t("liveStatsFullTimeConfirm") : t("liveStatsHalftimeConfirm")}
+        confirmLabel={phaseConfirm === "fulltime" ? t("liveStatsFullTimeButton") : t("liveStatsHalftimeButton")}
+        isPending={isSavingStep}
+        onConfirm={handleConfirmPhase}
+        onCancel={() => setPhaseConfirm(null)}
+      />
       <PlayerEventMenu
         open={eventMenuTarget != null}
         mode={substituteMode ? "substitute" : "menu"}
@@ -648,19 +751,16 @@ export default function LiveGuestView({
         onCancel={closeEventMenu}
       />
 
-      <div className="flex items-center justify-center gap-2 text-xs text-muted">
-        <span className="rounded-full bg-accent/10 px-2.5 py-1 font-medium text-accent">
-          {role === "member" ? t("liveStatsMemberBadge") : t("liveStatsViewerBadge")}
-        </span>
-      </div>
-
-      <div className="mt-4 flex items-center justify-center gap-6 sm:gap-10">
-        <div className="flex flex-col items-center gap-2">
-          <TeamCrest logo={match.homeLogo} className="h-12 w-12" />
-          <span className="max-w-[110px] truncate text-center text-sm font-medium">
-            {match.homeName}
-          </span>
-        </div>
+      <LiveScoreboard
+        roleLabel={role === "member" ? t("liveStatsMemberBadge") : t("liveStatsViewerBadge")}
+        homeName={match.homeName}
+        awayName={match.awayName}
+        homeLogo={match.homeLogo}
+        awayLogo={match.awayLogo}
+        homeScore={match.startedAt ? countGoals(feed.entries, "home") : null}
+        awayScore={match.startedAt ? countGoals(feed.entries, "away") : null}
+        colors={{ home: tokenColors.home.background, away: tokenColors.away.background }}
+      >
         <MatchClock
           startedAt={match.startedAt}
           halftimeAt={match.halftimeAt}
@@ -673,13 +773,7 @@ export default function LiveGuestView({
           onFullTime={handleFullTime}
           onRestart={() => setShowRestartConfirm(true)}
         />
-        <div className="flex flex-col items-center gap-2">
-          <TeamCrest logo={match.awayLogo} className="h-12 w-12" />
-          <span className="max-w-[110px] truncate text-center text-sm font-medium">
-            {match.awayName}
-          </span>
-        </div>
-      </div>
+      </LiveScoreboard>
 
       <div className="mx-auto mt-6 max-w-6xl">
         {showMatchMode ? (
@@ -698,7 +792,7 @@ export default function LiveGuestView({
 
             {/* Full-width, equal-split tabs with generous padding so
                 they're easy to hit by thumb pitch-side. */}
-            <div className="mt-3 flex border-b border-border">
+            <div className="mt-3 flex gap-1 rounded-2xl border border-border bg-surface p-1 shadow-sm">
               {(
                 [
                   ...(match.endedAt
@@ -713,10 +807,10 @@ export default function LiveGuestView({
                   key={tab.key}
                   type="button"
                   onClick={() => switchMatchModeTab(tab.key)}
-                  className={`relative -mb-px flex flex-1 items-center justify-center gap-1.5 rounded-t-lg border-b-2 px-3 py-3 text-sm font-semibold transition-colors ${
+                  className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-3 text-sm font-semibold transition-colors ${
                     matchModeTab === tab.key
-                      ? "border-accent bg-accent text-accent-foreground"
-                      : "border-transparent text-muted hover:text-foreground"
+                      ? "bg-accent text-accent-foreground shadow-sm"
+                      : "text-muted hover:bg-background hover:text-foreground"
                   }`}
                 >
                   {tab.label}
@@ -728,6 +822,9 @@ export default function LiveGuestView({
             {matchModeTab === "recap" ? (
               <div className="mt-4">
                 <MatchRecap
+                  tokenColors={tokenColors}
+                  homeLogo={match.homeLogo}
+                  awayLogo={match.awayLogo}
                   preparationKey={match.preparationKey}
                   homeName={match.homeName}
                   awayName={match.awayName}
@@ -749,6 +846,7 @@ export default function LiveGuestView({
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <LiveFormationTeam
                     teamName={match.homeName}
+                    tokenColor={tokenColors.home}
                     players={currentTeamLineup("home").players.filter((p) => p.starting)}
                     substitutes={currentTeamLineup("home").players.filter((p) => !p.starting)}
                     canEdit={canEdit}
@@ -766,6 +864,7 @@ export default function LiveGuestView({
                   />
                   <LiveFormationTeam
                     teamName={match.awayName}
+                    tokenColor={tokenColors.away}
                     players={currentTeamLineup("away").players.filter((p) => p.starting)}
                     substitutes={currentTeamLineup("away").players.filter((p) => !p.starting)}
                     canEdit={canEdit}
@@ -798,6 +897,7 @@ export default function LiveGuestView({
             ) : matchModeTab === "stats" ? (
               <div className="mt-4">
                 <CollectiveStatsPanel
+                  tokenColors={tokenColors}
                   stats={feed.collectiveStats}
                   homeName={match.homeName}
                   awayName={match.awayName}
@@ -829,8 +929,43 @@ export default function LiveGuestView({
           </>
         ) : canEdit ? (
           <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{stepTitle}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              {/* Where you are in the pre-game steps. */}
+              <ol className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                {(
+                  [
+                    { key: "lineup", label: t("liveStatsMatchSheetTitle") },
+                    { key: "formation", label: t("liveStatsFormationTitle") },
+                    { key: "notes", label: t("liveStatsNotesTitle") },
+                  ] as const
+                ).map((item, index, all) => {
+                  const current = all.findIndex((x) => x.key === step);
+                  const state = index < current ? "done" : index === current ? "current" : "todo";
+                  return (
+                    <li key={item.key} className="flex items-center gap-1.5">
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                          state === "current"
+                            ? "bg-accent text-accent-foreground"
+                            : state === "done"
+                              ? "bg-green-600 text-white"
+                              : "bg-surface text-muted ring-1 ring-border"
+                        }`}
+                      >
+                        {state === "done" ? "✓" : index + 1}
+                      </span>
+                      <span
+                        className={`text-xs font-semibold ${
+                          state === "current" ? "text-foreground" : "hidden text-muted sm:inline"
+                        }`}
+                      >
+                        {item.label}
+                      </span>
+                      {index < all.length - 1 && <span aria-hidden className="mx-1 h-px w-4 bg-border sm:w-6" />}
+                    </li>
+                  );
+                })}
+              </ol>
               <div className="flex items-center gap-2">
                 {step === "lineup" && autoLineup && (
                   <button
@@ -839,15 +974,6 @@ export default function LiveGuestView({
                     className="rounded-full border border-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/10"
                   >
                     ⚡ {t("liveStatsAutoFillButton")}
-                  </button>
-                )}
-                {step === "lineup" && (
-                  <button
-                    type="button"
-                    onClick={handleRandomFill}
-                    className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
-                  >
-                    🎲 {t("liveStatsRandomFillButton")}
                   </button>
                 )}
                 {step !== "lineup" && (
@@ -899,14 +1025,14 @@ export default function LiveGuestView({
                   lineup={{ players: homeDraft }}
                   canEdit={canEdit}
                   onChange={setHomeDraft}
-                  squad={ourSide === "home" ? ourSquad : undefined}
+                  squad={ourSide === "home" ? ourSquad : opponentSquad}
                 />
                 <LineupEditor
                   teamName={match.awayName}
                   lineup={{ players: awayDraft }}
                   canEdit={canEdit}
                   onChange={setAwayDraft}
-                  squad={ourSide === "away" ? ourSquad : undefined}
+                  squad={ourSide === "away" ? ourSquad : opponentSquad}
                 />
               </div>
             )}
@@ -915,15 +1041,19 @@ export default function LiveGuestView({
               <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <LiveFormationTeam
                   teamName={match.homeName}
+                  tokenColor={tokenColors.home}
                   players={homeFormationDraft}
                   canEdit={canEdit}
                   onChange={setHomeFormationDraft}
+                  showPresets
                 />
                 <LiveFormationTeam
                   teamName={match.awayName}
+                  tokenColor={tokenColors.away}
                   players={awayFormationDraft}
                   canEdit={canEdit}
                   onChange={setAwayFormationDraft}
+                  showPresets
                 />
               </div>
             )}
@@ -948,11 +1078,13 @@ export default function LiveGuestView({
             <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
               <LiveFormationTeam
                 teamName={match.homeName}
+                tokenColor={tokenColors.home}
                 players={match.homeLineup.players.filter((p) => p.starting)}
                 canEdit={false}
               />
               <LiveFormationTeam
                 teamName={match.awayName}
+                tokenColor={tokenColors.away}
                 players={match.awayLineup.players.filter((p) => p.starting)}
                 canEdit={false}
               />

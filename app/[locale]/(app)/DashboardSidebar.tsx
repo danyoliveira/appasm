@@ -67,9 +67,11 @@ interface Props {
   fullName: string | null;
   email: string;
   avatarUrl: string | null;
+  // The archive (past clubs) is the coach's alone.
+  showArchive: boolean;
 }
 
-export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) {
+export default function DashboardSidebar({ fullName, email, avatarUrl, showArchive }: Props) {
   const t = useTranslations("dashboard");
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
@@ -84,7 +86,9 @@ export default function DashboardSidebar({ fullName, email, avatarUrl }: Props) 
       exact: false,
     },
     { href: "/profile", label: t("navProfile"), icon: <ProfileIcon />, exact: false },
-    { href: "/archive", label: t("navArchive"), icon: <ArchiveIcon />, exact: false },
+    ...(showArchive
+      ? [{ href: "/archive", label: t("navArchive"), icon: <ArchiveIcon />, exact: false }]
+      : []),
   ];
 
   function isActive(href: string, exact: boolean) {

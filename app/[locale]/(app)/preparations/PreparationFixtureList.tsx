@@ -29,6 +29,9 @@ export interface PreparationFixtureRow {
   isPrepared: boolean;
   // Finished after the game (Concluída).
   isFinished?: boolean;
+  // Final score, our goals first (null until there is one).
+  goalsFor?: number | null;
+  goalsAgainst?: number | null;
   // A hand-added game (opponent outside the fixture list, possibly outside
   // API-Football entirely) rather than one pulled from the team's real
   // calendar — shown in the same table, just visually flagged.
@@ -201,18 +204,22 @@ export default function PreparationFixtureList({
     );
   }
 
-  function renderDelete(row: PreparationFixtureRow) {
-    if (!row.isManual || !isCoach) return null;
+  // "3–1" pill in the result's color (W green, D grey, L red).
+  function renderScore(row: PreparationFixtureRow) {
+    if (row.goalsFor == null || row.goalsAgainst == null) return null;
+    const tone =
+      row.goalsFor > row.goalsAgainst
+        ? "bg-green-600 text-white"
+        : row.goalsFor < row.goalsAgainst
+          ? "bg-red-500 text-white"
+          : "bg-border text-foreground";
     return (
-      <button
-        type="button"
-        onClick={() => setPendingDeleteId(String(row.id).replace(/^manual-/, ""))}
-        className="text-xs font-medium text-muted hover:text-red-500"
-      >
-        {labels.deleteAction}
-      </button>
+      <span className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${tone}`}>
+        {row.goalsFor}–{row.goalsAgainst}
+      </span>
     );
   }
+
 
   function renderSectionTitle(title: string, count: number, dot: string, hint?: string) {
     return (
@@ -253,6 +260,7 @@ export default function PreparationFixtureList({
               <Icon name="trash" className="h-3.5 w-3.5" />
             </button>
           )}
+          {played && renderScore(row)}
           {played ? (
             <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
               {labels.toFinishBadge}
@@ -281,7 +289,7 @@ export default function PreparationFixtureList({
             onClick={() => handlePrepareClick(row)}
             className="text-xs font-semibold text-accent hover:underline"
           >
-            {labels.resumeAction} →
+            {isCoach ? labels.resumeAction : labels.viewAction} →
           </button>
           {played && isCoach && (
             <button
@@ -340,7 +348,7 @@ export default function PreparationFixtureList({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          {renderDelete(row)}
+          {kind === "finished" && renderScore(row)}
           {kind === "finished" ? (
             <button
               type="button"
@@ -350,13 +358,34 @@ export default function PreparationFixtureList({
               {labels.viewAction}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => handlePrepareClick(row)}
-              className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
-            >
-              {labels.prepareAction}
-            </button>
+            // Starting a preparation is the coach's — everyone else sees
+            // the game in the list, with nothing to open yet.
+            isCoach && (
+              <button
+                type="button"
+                onClick={() => handlePrepareClick(row)}
+                className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
+              >
+                {labels.prepareAction}
+              </button>
+            )
+          )}
+          {/* Delete (manual games) as a small icon at the very end — a fixed
+              slot on every row keeps the scores and buttons aligned. */}
+          {isCoach && (
+            <span className="flex w-7 justify-center">
+              {row.isManual && (
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteId(String(row.id).replace(/^manual-/, ""))}
+                  aria-label={labels.deleteAction}
+                  title={labels.deleteAction}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-background hover:text-red-500"
+                >
+                  <Icon name="trash" className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </span>
           )}
         </div>
       </div>

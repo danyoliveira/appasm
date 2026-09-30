@@ -26,6 +26,8 @@ export interface TacticalSnapshotRow {
   arrows: TacticalArrow[];
   moment: VideoCategory | null;
   submoment: GameSubmoment | null;
+  // Set when the category is "Jogador".
+  player?: { id: number; name: string } | null;
   notes: string | null;
   videoUrl: string | null;
   videoEmbedUrl: string | null;
@@ -66,7 +68,7 @@ export default function TacticalSnapshotList({
   }
 
   return (
-    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="mt-3 grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {rows.map((row) => {
         const isEditing = editingId === row.id;
         return (
@@ -78,7 +80,7 @@ export default function TacticalSnapshotList({
           >
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">{row.title}</p>
 
-            {(row.moment || row.submoment) && (
+            {(row.moment || row.submoment || row.player) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 {row.moment && (
                   <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
@@ -90,9 +92,16 @@ export default function TacticalSnapshotList({
                     {t(SUBMOMENT_LABEL_KEYS[row.submoment])}
                   </span>
                 )}
+                {row.player && (
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-border">
+                    {row.player.name}
+                  </span>
+                )}
               </div>
             )}
 
+            {/* Words-only analyses (e.g. about one player) skip the empty pitch. */}
+            {(row.positions.length > 0 || row.ball || row.markers.length > 0 || row.arrows.length > 0) && (
             <div className="mt-2">
               <StaticTacticalPitch
                 positions={row.positions}
@@ -102,6 +111,7 @@ export default function TacticalSnapshotList({
                 teamColors={teamColors}
               />
             </div>
+            )}
 
             {row.videoUrl &&
               (row.videoEmbedUrl ? (

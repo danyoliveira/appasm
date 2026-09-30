@@ -52,12 +52,33 @@ export function lineupPlayerId(players: LineupPlayer[], name: string | null | un
   return players.find((p) => p.name === name)?.playerId ?? null;
 }
 
-// "Preencher com o plantel": a goalkeeper + the next ten as the starting XI
-// (in squad order), everyone else on the bench. The coach then adjusts.
+// "Preencher com o plantel": a plausible 4-3-3 as the starting XI — one
+// goalkeeper, four defenders, three midfielders, three forwards, each in
+// squad order — and everyone else on the bench. The coach then adjusts.
+// (Taking "the first eleven" of a squad sorted by position gave a keeper
+// and ten defenders.) A squad short in one line is topped up from the rest.
+const XI_SHAPE: [string, number][] = [
+  ["Goalkeeper", 1],
+  ["Defender", 4],
+  ["Midfielder", 3],
+  ["Attacker", 3],
+];
+
 export function lineupFromSquad(squad: LiveSquadPlayer[]): LineupPlayer[] {
-  const goalkeepers = squad.filter((p) => p.position === "Goalkeeper");
-  const outfield = squad.filter((p) => p.position !== "Goalkeeper");
-  const starters = [...goalkeepers.slice(0, 1), ...outfield.slice(0, STARTING_XI_SIZE - Math.min(1, goalkeepers.length))];
+  const starters: LiveSquadPlayer[] = [];
+  for (const [position, count] of XI_SHAPE) {
+    starters.push(...squad.filter((p) => p.position === position).slice(0, count));
+  }
+  // Top up with outfield players first — a second goalkeeper only if
+  // there is truly nobody else.
+  const leftovers = [
+    ...squad.filter((p) => p.position !== "Goalkeeper"),
+    ...squad.filter((p) => p.position === "Goalkeeper"),
+  ];
+  for (const p of leftovers) {
+    if (starters.length >= STARTING_XI_SIZE) break;
+    if (!starters.includes(p)) starters.push(p);
+  }
   const starterIds = new Set(starters.map((p) => p.id));
   const bench = squad.filter((p) => !starterIds.has(p.id));
   const toLineupPlayer = (p: LiveSquadPlayer, starting: boolean): LineupPlayer => ({
@@ -68,14 +89,25 @@ export function lineupFromSquad(squad: LiveSquadPlayer[]): LineupPlayer[] {
     x: null,
     y: null,
   });
-  return [...starters.map((p) => toLineupPlayer(p, true)), ...bench.map((p) => toLineupPlayer(p, false))];
+  // Drawn as the 4-3-3 it was picked as — the pitch's generic fallback is a
+  // 4-4-2, which would put a forward in midfield.
+  const isFullShape =
+    starters.length === STARTING_XI_SIZE &&
+    XI_SHAPE.every(([position, count]) => starters.filter((p) => p.position === position).length === count);
+  const startingXi = starters.map((p) => toLineupPlayer(p, true));
+  return [
+    ...(isFullShape ? applyFormation(startingXi, [4, 3, 3]) : startingXi),
+    ...bench.map((p) => toLineupPlayer(p, false)),
+  ];
 }
 
 export interface LineupPlayer {
   number: number | null;
   name: string;
-  // The real squad player (our own team only; negative = hand-added). Absent
-  // or null for the opponent, free-text names, and lineups from before this.
+  // The real squad player (negative = hand-added to our squad). Absent or
+  // null for free-text names and lineups from before this. Also set for an
+  // opponent picked from their API squad — anything that credits *our*
+  // players must check the side, not just this id.
   playerId?: number | null;
   starting: boolean;
   // Only ever set for starting players, once placed on the formation pitch.
@@ -85,40 +117,6 @@ export interface LineupPlayer {
 
 export interface TeamLineup {
   players: LineupPlayer[];
-}
-
-// Dev/testing convenience — a quick way to fill both sheets with plausible
-// starting XIs + bench without typing every name by hand. Drawn from one
-// shuffled pool so the two teams (and their subs) never collide on a name.
-const SUB_COUNT = 7;
-const SQUAD_SIZE = STARTING_XI_SIZE + SUB_COUNT;
-const RANDOM_PLAYER_NAMES = [
-  "João Silva", "Pedro Santos", "Rui Costa", "Tiago Ferreira", "André Oliveira",
-  "Miguel Pereira", "Bruno Rodrigues", "Carlos Martins", "Diogo Alves", "Hugo Gomes",
-  "Nuno Carvalho", "Ricardo Lopes", "Filipe Marques", "Vítor Sousa", "Luís Pinto",
-  "Gonçalo Teixeira", "Sérgio Ribeiro", "Manuel Fonseca", "Paulo Nunes", "José Correia",
-  "Fernando Azevedo", "Renato Mendes", "Duarte Cardoso", "Emanuel Cunha", "Igor Ramos",
-  "João Pedro Freitas", "Mário Antunes", "Óscar Simões", "Pedro Miguel Reis", "Rafael Moura",
-  "Samuel Vaz", "Tomás Neves", "Xavier Batista", "Alexandre Coelho", "Bernardo Matos",
-  "César Domingues",
-];
-
-function randomSquad(names: string[]): LineupPlayer[] {
-  return names.map((name, i) => ({
-    number: i + 1,
-    name,
-    starting: i < STARTING_XI_SIZE,
-    x: null,
-    y: null,
-  }));
-}
-
-export function randomLineups(): { home: LineupPlayer[]; away: LineupPlayer[] } {
-  const shuffled = [...RANDOM_PLAYER_NAMES].sort(() => Math.random() - 0.5);
-  return {
-    home: randomSquad(shuffled.slice(0, SQUAD_SIZE)),
-    away: randomSquad(shuffled.slice(SQUAD_SIZE, SQUAD_SIZE * 2)),
-  };
 }
 
 export function emptyLineup(): TeamLineup {
@@ -156,6 +154,39 @@ const DEFAULT_ROWS: { count: number; y: number }[] = [
   { count: 4, y: 42 },
   { count: 2, y: 16 },
 ];
+
+// One-tap systems for the formation step: outfield lines from the back
+// forward. The goalkeeper is always the first starter.
+export const FORMATION_PRESETS: { label: string; lines: number[] }[] = [
+  { label: "4-3-3", lines: [4, 3, 3] },
+  { label: "4-4-2", lines: [4, 4, 2] },
+  { label: "4-2-3-1", lines: [4, 2, 3, 1] },
+  { label: "3-5-2", lines: [3, 5, 2] },
+  { label: "3-4-3", lines: [3, 4, 3] },
+  { label: "5-3-2", lines: [5, 3, 2] },
+];
+
+// Pitch spots for a system, in starter order (keeper, then each line left
+// to right): the keeper on his line, the outfield lines spread evenly from
+// the back (y 70) to the front (y 16).
+export function formationPositions(lines: number[]): { x: number; y: number }[] {
+  const spots = [{ x: 50, y: 90 }];
+  const back = 70;
+  const front = 16;
+  lines.forEach((count, row) => {
+    const y = lines.length === 1 ? (back + front) / 2 : back - ((back - front) * row) / (lines.length - 1);
+    const step = 100 / (count + 1);
+    for (let i = 0; i < count; i += 1) spots.push({ x: step * (i + 1), y });
+  });
+  return spots;
+}
+
+// Puts the starting XI (in its current order) into a system. Players past
+// the eleven spots keep where they were.
+export function applyFormation(starters: LineupPlayer[], lines: number[]): LineupPlayer[] {
+  const spots = formationPositions(lines);
+  return starters.map((p, i) => (spots[i] ? { ...p, x: spots[i].x, y: spots[i].y } : p));
+}
 
 // The pitch label is tight — the surname alone reads better than a cramped,
 // truncated full name.
@@ -199,7 +230,9 @@ export function currentMatchMinute(match: {
   } else {
     elapsedMs = (ended ?? Date.now()) - started;
   }
-  return Math.max(0, Math.floor(elapsedMs / 60000));
+  // Football counts from 1: a goal at 0:35 is in the 1st minute, one at
+  // 45:20 in the 46th.
+  return Math.max(0, Math.floor(elapsedMs / 60000)) + 1;
 }
 
 // Bakes in the pitch's own default-computed slot for every starting player

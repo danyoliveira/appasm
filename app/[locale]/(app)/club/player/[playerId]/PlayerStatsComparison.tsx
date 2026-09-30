@@ -254,7 +254,7 @@ export default function PlayerStatsComparison({
               <div className="mt-0.5 truncate text-[10px] uppercase tracking-wide text-muted">{t(field.labelKey)}</div>
               {external != null && (
                 <div
-                  className={`mt-1 text-[10px] tabular-nums ${
+                  className={`mt-1 whitespace-nowrap text-[10px] tabular-nums ${
                     value == null ? "text-muted" : external === value ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"
                   }`}
                 >

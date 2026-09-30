@@ -205,6 +205,29 @@ export async function getLiveSquadByToken(token: string): Promise<LiveSquadPlaye
   ).map((p) => ({ id: p.id, name: p.name, number: p.number, photo: p.photo || null, position: p.position }));
 }
 
+// The opponent's squad for the match sheet — same picker and "Preencher com
+// o plantel" as our own side, instead of typing 18 names by hand. Empty for
+// an opponent that isn't in API-Football.
+export async function getLiveOpponentSquadByToken(token: string): Promise<LiveSquadPlayer[]> {
+  const admin = createAdminClient();
+  const { data: session } = await admin
+    .from("live_match_sessions")
+    .select("team_id, preparation_key")
+    .or(`member_token.eq.${token},viewer_token.eq.${token},gk_token.eq.${token}`)
+    .maybeSingle();
+  if (!session) return [];
+  const teams = await resolveLiveMatchTeams(session.preparation_key, session.team_id as number).catch(() => null);
+  if (!teams?.opponentTeamId) return [];
+  const squad = await getSquad(teams.opponentTeamId).catch(() => []);
+  return orderSquadLikeGeneralTab(squad[0]?.players ?? [], new Map()).map((p) => ({
+    id: p.id,
+    name: p.name,
+    number: p.number,
+    photo: p.photo || null,
+    position: p.position,
+  }));
+}
+
 export async function addLiveEntryByToken(token: string, input: LiveEntryInput, authorLabel: string) {
   const sessionId = await requireSessionIdByMemberToken(token);
   const admin = createAdminClient();

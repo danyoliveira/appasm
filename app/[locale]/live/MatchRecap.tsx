@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useTranslations } from "next-intl";
+import TeamCrest from "@/components/TeamCrest";
 import LiveFeedList from "./LiveFeedList";
 import LiveFormationTeam from "./LiveFormationTeam";
 import CollectiveStatsPanel from "./CollectiveStatsPanel";
@@ -16,6 +17,7 @@ import {
   type GkStatsSide,
   type LineupPlayer,
   type LiveEntryRow,
+  lastName,
 } from "./liveStatsShared";
 
 // Everything gathered during Modo Jogo, read-only, in one place — shared by
@@ -40,12 +42,19 @@ export default function MatchRecap({
   ourGkStatsByPlayer,
   ourTeamName,
   statConfig,
+  tokenColors,
+  homeLogo,
+  awayLogo,
 }: {
   preparationKey: string;
   homeName: string;
   awayName: string;
   homePlayers: LineupPlayer[];
   awayPlayers: LineupPlayer[];
+  homeLogo?: string | null;
+  awayLogo?: string | null;
+  // Each club's colour for its pitch tokens.
+  tokenColors?: { home: { background: string; text: string }; away: { background: string; text: string } };
   // Same array as homePlayers or awayPlayers, whichever is our own club —
   // passed separately since only the caller (member/viewer token vs.
   // dashboard) knows which side that is here.
@@ -93,16 +102,58 @@ export default function MatchRecap({
 
       {tab === "internal" ? (
         <div className="space-y-6">
-          <div className="rounded-2xl border border-border bg-gradient-to-br from-accent/10 via-surface to-surface p-6 text-center shadow-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-              {t("liveStatsFinalScoreLabel")}
-            </p>
-            <div className="mt-2 flex items-center justify-center gap-4">
-              <span className="max-w-[100px] truncate text-sm font-medium sm:max-w-[160px]">{homeName}</span>
-              <span className="text-3xl font-bold tabular-nums">
-                {countGoals(entries, "home")} – {countGoals(entries, "away")}
-              </span>
-              <span className="max-w-[100px] truncate text-sm font-medium sm:max-w-[160px]">{awayName}</span>
+          {/* Final score: crests, the result, and who scored under each side. */}
+          <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+            {tokenColors && (
+              <div aria-hidden className="flex h-1.5">
+                <div className="flex-1" style={{ backgroundColor: tokenColors.home.background }} />
+                <div className="flex-1" style={{ backgroundColor: tokenColors.away.background }} />
+              </div>
+            )}
+            <div className="p-5">
+              <p className="text-center text-[11px] font-semibold uppercase tracking-wide text-muted">
+                {t("liveStatsFinalScoreLabel")}
+              </p>
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-3 sm:gap-6">
+                {(["home", "away"] as const).map((side) => {
+                  const goals = [...entries]
+                    .reverse()
+                    .filter((e) => e.eventType === "goal" && e.teamSide === side);
+                  const team = (
+                    <div
+                      key={side}
+                      className={`flex min-w-0 flex-col gap-1.5 ${side === "home" ? "items-end text-right" : "items-start text-left"}`}
+                    >
+                      <div className={`flex items-center gap-2 ${side === "home" ? "flex-row-reverse" : ""}`}>
+                        <TeamCrest logo={side === "home" ? homeLogo : awayLogo} className="h-9 w-9" />
+                        <span className="min-w-0 truncate text-sm font-semibold">
+                          {side === "home" ? homeName : awayName}
+                        </span>
+                      </div>
+                      {goals.length > 0 && (
+                        <ul className="space-y-0.5 text-xs text-muted">
+                          {goals.map((g) => (
+                            <li key={g.id}>
+                              ⚽ {g.playerName ? lastName(g.playerName) : "—"}
+                              {g.minute != null && <span className="tabular-nums"> {g.minute}&apos;</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                  return side === "home" ? (
+                    <Fragment key={side}>
+                      {team}
+                      <span className="pt-0.5 text-4xl font-bold tabular-nums leading-none">
+                        {countGoals(entries, "home")} – {countGoals(entries, "away")}
+                      </span>
+                    </Fragment>
+                  ) : (
+                    team
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -111,7 +162,9 @@ export default function MatchRecap({
               {t("liveStatsEventsListTitle")}
             </h3>
             <div className="mt-2">
-              <LiveFeedList entries={entries} homeName={homeName} awayName={awayName} />
+              {/* The live feed is newest-first (handy mid-match); a summary
+                  reads from kick-off to the final whistle. */}
+              <LiveFeedList entries={[...entries].reverse()} homeName={homeName} awayName={awayName} />
             </div>
           </div>
 
@@ -126,6 +179,7 @@ export default function MatchRecap({
                 substitutes={homePlayers.filter((p) => !p.starting)}
                 canEdit={false}
                 eventIcons={eventIconsByName(entries, "home")}
+                tokenColor={tokenColors?.home}
               />
               <LiveFormationTeam
                 teamName={awayName}
@@ -133,11 +187,13 @@ export default function MatchRecap({
                 substitutes={awayPlayers.filter((p) => !p.starting)}
                 canEdit={false}
                 eventIcons={eventIconsByName(entries, "away")}
+                tokenColor={tokenColors?.away}
               />
             </div>
           </div>
 
           <CollectiveStatsPanel
+            tokenColors={tokenColors}
             stats={collectiveStats}
             homeName={homeName}
             awayName={awayName}

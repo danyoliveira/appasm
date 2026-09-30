@@ -96,3 +96,9 @@ export function fixtureStatusLabel(status: { short: string; long: string }, t: (
   const key = STATUS_KEYS[status.short];
   return key ? t(key) : status.long;
 }
+
+// API-Football names club friendlies "Friendlies Clubs" — say it in the
+// app's language; real competitions keep their own name.
+export function leagueLabel(name: string, t: (key: string) => string): string {
+  return /^friendlies/i.test(name) ? t("manualMatchFriendly") : name;
+}

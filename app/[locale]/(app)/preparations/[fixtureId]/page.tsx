@@ -1,6 +1,5 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
-import { Link } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentStintId } from "@/lib/coachingStints";
 import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
@@ -26,8 +25,8 @@ import EditManualPreparation from "../EditManualPreparation";
 import PreparationTabs from "../PreparationTabs";
 import BackLink from "../../BackLink";
 import Countdown from "../../Countdown";
-import { matchResult, translateRound } from "../../club/fixtureHelpers";
-import { isNonInjuryReason, translateInjuryType, shortenPlayerName } from "../../club/playerShared";
+import { translateRound } from "../../club/fixtureHelpers";
+import { isNonInjuryReason, shortenPlayerName } from "../../club/playerShared";
 import { getVideoEmbedUrl } from "@/lib/videoEmbed";
 import { type PreparationVideoRow } from "../PreparationVideoList";
 import PreGameAnalysis from "../PreGameAnalysis";
@@ -37,8 +36,10 @@ import type { GameSubmoment, VideoCategory } from "../videoCategories";
 import LiveStatsPanel from "../LiveStatsPanel";
 import LiveMatchRecapSection from "../LiveMatchRecapSection";
 import FinishPreparationBar from "../FinishPreparationBar";
+import PostGameNotes from "../PostGameNotes";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
 import TeamCrest from "@/components/TeamCrest";
+import OpponentScouting from "../../OpponentScouting";
 import { loadLiveScores, withLiveScore } from "@/lib/liveScores";
 
 interface PreparationMatch {
@@ -95,6 +96,9 @@ export default async function PreparationDetailPage({
   let match: PreparationMatch | null = null;
   // Set once the preparation is finished (Concluída) — read-only from then.
   let finishedAt: string | null = null;
+  // A game the coach hasn't started preparing: nobody else gets in (they
+  // only ever enter preparations that are already open).
+  let notOpenedYet = false;
   // Manual games only — what the edit form prefills.
   let manualDetails: ManualMatchDetails | undefined;
 
@@ -186,11 +190,16 @@ export default async function PreparationDetailPage({
     ]);
     // No API-Football score yet → the ASM Live Mode one.
     const fixture = fixtureResult[0] ? withLiveScore(fixtureResult[0], liveScores) : null;
+    // A fixture our club isn't part of (an old link opened after changing
+    // club) is not ours to prepare — it used to be filed as a preparation
+    // against the home side.
     const opponent =
       fixture && teamId
         ? fixture.teams.home.id === teamId
           ? fixture.teams.away
-          : fixture.teams.home
+          : fixture.teams.away.id === teamId
+            ? fixture.teams.home
+            : null
         : null;
 
     if (fixture && opponent) {
@@ -232,13 +241,36 @@ export default async function PreparationDetailPage({
           .eq("fixture_id", fixtureId)
           .maybeSingle();
         finishedAt = preparationRow?.finished_at ?? null;
+        if (!isCoach && !preparationRow) {
+          notOpenedYet = true;
+          match = null;
+        }
       }
     }
   }
 
   let liveSession: LiveSessionInfo | null = null;
+  // The coach's post-match analysis. Read on its own (not added to the
+  // queries above) so the page still opens if the column isn't there yet.
+  let postGameNotes: string | null = null;
   if (match) {
-    liveSession = await getLiveSession(fixtureIdParam);
+    const notesQuery = fixtureIdParam.startsWith("manual-")
+      ? supabase
+          .from("manual_preparations")
+          .select("post_game_notes")
+          .eq("id", fixtureIdParam.slice("manual-".length))
+          .maybeSingle()
+      : teamId
+        ? supabase
+            .from("fixture_preparations")
+            .select("post_game_notes")
+            .eq("team_id", teamId)
+            .eq("fixture_id", Number(fixtureIdParam))
+            .maybeSingle()
+        : null;
+    const [session, notesResult] = await Promise.all([getLiveSession(fixtureIdParam), notesQuery]);
+    liveSession = session;
+    postGameNotes = (notesResult?.data as { post_game_notes?: string | null } | null)?.post_game_notes ?? null;
   }
 
   // Finished preparations are read-only for everyone until reopened.
@@ -314,21 +346,6 @@ export default async function PreparationDetailPage({
     }
   }
 
-  const opponentLastResult =
-    opponentLastFixture && opponentId != null ? matchResult(opponentLastFixture, opponentId) : null;
-  const opponentLastOpponent =
-    opponentLastFixture && opponentId != null
-      ? opponentLastFixture.teams.home.id === opponentId
-        ? opponentLastFixture.teams.away
-        : opponentLastFixture.teams.home
-      : null;
-  const opponentNextOpponent =
-    opponentNextFixture && opponentId != null
-      ? opponentNextFixture.teams.home.id === opponentId
-        ? opponentNextFixture.teams.away
-        : opponentNextFixture.teams.home
-      : null;
-
   let opponentSquad: {
     id: number;
     name: string;
@@ -401,6 +418,7 @@ export default async function PreparationDetailPage({
             team?: "us" | "opponent";
             moment?: VideoCategory | null;
             submoment?: GameSubmoment | null;
+            player?: { id: number; name: string } | null;
           }
         | null;
       const isLegacyArray = Array.isArray(raw);
@@ -420,6 +438,7 @@ export default async function PreparationDetailPage({
         arrows: isLegacyArray ? [] : (raw?.arrows ?? []),
         moment: isLegacyArray ? null : (raw?.moment ?? null),
         submoment: isLegacyArray ? null : (raw?.submoment ?? null),
+        player: isLegacyArray ? null : (raw?.player ?? null),
         notes: row.notes,
         videoUrl: row.video_url,
         videoEmbedUrl: row.video_url ? getVideoEmbedUrl(row.video_url) : null,
@@ -482,210 +501,19 @@ export default async function PreparationDetailPage({
         {t("preparationCustomOpponentScoutingHint")}
       </div>
     ) : (
-    <div>
-      <div className="mt-6">
-        <h3 className="text-sm font-semibold text-muted">{t("injuriesTitle")}</h3>
-        {opponentInjuries.length === 0 ? (
-          <p className="mt-2 text-sm text-muted">{t("noInjuriesFound")}</p>
-        ) : (
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {opponentInjuries.map((injury) => (
-              <Link
-                key={injury.player.id}
-                href={`/club/player/${injury.player.id}`}
-                className="flex items-start gap-3 rounded-lg border border-border bg-surface p-2.5 transition-colors hover:border-accent"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={injury.player.photo}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded-full object-cover"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{shortenPlayerName(injury.player.name)}</div>
-                  <div className="line-clamp-2 text-xs text-muted">
-                    {translateInjuryType(injury.player.reason, locale)}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {opponentUnavailable.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-muted">{t("unavailableTitle")}</h3>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {opponentUnavailable.map((injury) => (
-              <Link
-                key={injury.player.id}
-                href={`/club/player/${injury.player.id}`}
-                className="flex items-start gap-3 rounded-lg border border-border bg-surface p-2.5 transition-colors hover:border-accent"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={injury.player.photo}
-                  alt=""
-                  className="h-8 w-8 shrink-0 rounded-full object-cover"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{shortenPlayerName(injury.player.name)}</div>
-                  <div className="line-clamp-2 text-xs text-muted">
-                    {translateInjuryType(injury.player.reason, locale)}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {headToHead.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-muted">{t("headToHeadTitle")}</h3>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {headToHead.map((fx) => (
-              <div
-                key={fx.fixture.id}
-                className="rounded-lg border border-border bg-surface p-2.5 text-sm"
-              >
-                <Link
-                  href={`/club/fixture/${fx.fixture.id}`}
-                  className="flex items-center gap-1 text-xs text-muted hover:text-accent"
-                >
-                  <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
-                  <span>·</span>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
-                  <span className="truncate">{fx.league.name}</span>
-                </Link>
-                <div className="mt-0.5 font-medium">
-                  <Link href={`/club/${fx.teams.home.id}`} className="hover:text-accent">
-                    {fx.teams.home.name}
-                  </Link>{" "}
-                  <Link href={`/club/fixture/${fx.fixture.id}`} className="hover:text-accent">
-                    {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                  </Link>{" "}
-                  <Link href={`/club/${fx.teams.away.id}`} className="hover:text-accent">
-                    {fx.teams.away.name}
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(opponentLastFixture || opponentNextFixture) && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-muted">{t("opponentScheduleTitle")}</h3>
-          <div className="mt-2 space-y-2">
-            {opponentLastFixture && opponentLastOpponent && (
-              <Link
-                href={`/club/fixture/${opponentLastFixture.fixture.id}`}
-                className="block rounded-lg border border-border bg-surface p-2.5 text-sm transition-colors hover:border-accent"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="shrink-0 text-xs text-muted">{t("opponentLastMatchLabel")}</span>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {opponentLastResult && (
-                      <span
-                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
-                          opponentLastResult === "W"
-                            ? "bg-green-600"
-                            : opponentLastResult === "L"
-                              ? "bg-red-500"
-                              : "bg-muted"
-                        }`}
-                      >
-                        {opponentLastResult}
-                      </span>
-                    )}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={opponentLastOpponent.logo}
-                      alt=""
-                      className="h-4 w-4 shrink-0 object-contain"
-                    />
-                    <span className="truncate">{opponentLastOpponent.name}</span>
-                    <span className="shrink-0 font-medium">
-                      {opponentLastFixture.goals.home ?? "-"} - {opponentLastFixture.goals.away ?? "-"}
-                    </span>
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={opponentLastFixture.league.logo}
-                    alt=""
-                    className="h-3 w-3 shrink-0 object-contain"
-                  />
-                  <span className="truncate">{opponentLastFixture.league.name}</span>
-                </div>
-              </Link>
-            )}
-            {opponentNextFixture && opponentNextOpponent && (
-              <div className="rounded-lg border border-border bg-surface p-2.5 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="shrink-0 text-xs text-muted">{t("opponentNextMatchLabel")}</span>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={opponentNextOpponent.logo}
-                      alt=""
-                      className="h-4 w-4 shrink-0 object-contain"
-                    />
-                    <span className="truncate">{opponentNextOpponent.name}</span>
-                    <span className="shrink-0 text-xs text-muted">
-                      {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale)}
-                    </span>
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={opponentNextFixture.league.logo}
-                    alt=""
-                    className="h-3 w-3 shrink-0 object-contain"
-                  />
-                  <span className="truncate">{opponentNextFixture.league.name}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {opponentStats && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-muted">{t("seasonStatsTitle")}</h3>
-          <div className="mt-2 space-y-1 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted">{t("statPlayed")}</span>
-              <span className="font-semibold">{opponentStats.fixtures.played.total}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">{t("statRecord")}</span>
-              <span className="font-semibold">
-                {opponentStats.fixtures.wins.total}-{opponentStats.fixtures.draws.total}-
-                {opponentStats.fixtures.loses.total}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">{t("statGoals")}</span>
-              <span className="font-semibold">
-                {opponentStats.goals.for.total.total}:{opponentStats.goals.against.total.total}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">{t("statCleanSheets")}</span>
-              <span className="font-semibold">{opponentStats.clean_sheet.total}</span>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    <OpponentScouting
+      t={t}
+      locale={locale}
+      teamId={teamId}
+      opponentId={opponentId}
+      injuries={opponentInjuries}
+      unavailable={opponentUnavailable}
+      headToHead={headToHead}
+      lastFixture={opponentLastFixture}
+      nextFixture={opponentNextFixture}
+      stats={opponentStats}
+      showEmptyAbsences
+    />
     )
   );
 
@@ -701,7 +529,9 @@ export default async function PreparationDetailPage({
         ourLogo={match?.ourTeamLogo}
         opponentLogo={match?.opponentLogo}
         isCoach={canEdit}
-        readOnly={finishedAt != null}
+        // Anyone but the coach only gets what was saved — no board to
+        // draw on, same as a finished preparation.
+        readOnly={finishedAt != null || !isCoach}
         sideBySide={sideBySide}
         tacticalRows={tacticalSnapshots}
         videoRows={videoRows}
@@ -711,6 +541,9 @@ export default async function PreparationDetailPage({
 
   function renderInGameContent() {
     if (!match) return null;
+    // Without the coach's controls there is nothing here until the Live
+    // Mode game exists — then it's the links to it.
+    if (!isCoach && !liveSession) return null;
     return (
       <LiveStatsPanel
         preparationKey={fixtureIdParam}
@@ -733,6 +566,10 @@ export default async function PreparationDetailPage({
     return (
       <>
         {finishBar}
+        {/* Only once there is a game to write about. */}
+        {gameOver && (
+          <PostGameNotes preparationKey={fixtureIdParam} initialNotes={postGameNotes} canEdit={canEdit} />
+        )}
         {renderPostGameBody()}
       </>
     );
@@ -747,7 +584,7 @@ export default async function PreparationDetailPage({
       // "match not finished yet" message.
       return (
         <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
-          {t("preparationPostGameNoSessionHint")}
+          {isCoach ? t("preparationPostGameNoSessionHint") : t("preparationPostGameNoSessionViewerHint")}
         </div>
       );
     }
@@ -771,7 +608,7 @@ export default async function PreparationDetailPage({
 
       {!match ? (
         <p className="mt-6 rounded-lg border border-dashed border-border bg-surface p-4 text-sm text-muted">
-          {t("preparationNoUpcomingFixture")}
+          {notOpenedYet ? t("preparationNotOpenedYet") : t("preparationNoUpcomingFixture")}
         </p>
       ) : (
         <>
@@ -885,11 +722,26 @@ export default async function PreparationDetailPage({
               liveSession={liveSession}
               finished={match.finished}
               locked={finishedAt != null}
+              hideInGame={!isCoach && !liveSession}
+              canFocus={isCoach}
               ourLogo={match.ourTeamLogo}
               opponentLogo={match.opponentLogo}
               ourTeamName={match.ourTeamName}
               tacticalRows={tacticalSnapshots}
               videoRows={videoRows}
+              postGamePdf={
+                liveSession?.endedAt
+                  ? {
+                      sessionId: liveSession.id,
+                      competition: match.competition
+                        ? [match.competition.name, translateRound(match.competition.round, t)]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : null,
+                      notes: postGameNotes,
+                    }
+                  : null
+              }
             />
           </div>
         </>

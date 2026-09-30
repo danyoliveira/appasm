@@ -366,7 +366,7 @@ export default function GkStatsPanel({
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("gkStatsTitle")}</h3>
         <p className="mt-2 rounded-2xl border border-border bg-background p-4 text-sm text-muted">
-          {t("gkNoSelectionHint")}
+          {t("gkNoStatsHint")}
         </p>
       </div>
     );

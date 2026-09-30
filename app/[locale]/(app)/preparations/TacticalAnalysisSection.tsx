@@ -3,6 +3,7 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslations } from "next-intl";
 import TacticalBoard, {
+  withSnapshotCustomPlayers,
   type BenchOption,
   type OpponentSquadOption,
   type OurSquadOption,
@@ -77,11 +78,13 @@ export default function TacticalAnalysisSection({
         onEdit={(row) => {
           setDuplicateSeed(null);
           setEditingId(row.id);
+          onCustomPlayersChange((prev) => withSnapshotCustomPlayers(prev, row, ourSquad, opponentSquad));
           onActiveTeamChange(row.team);
         }}
         onDuplicate={(row) => {
           setEditingId(null);
           setDuplicateSeed(row);
+          onCustomPlayersChange((prev) => withSnapshotCustomPlayers(prev, row, ourSquad, opponentSquad));
           onActiveTeamChange(row.team);
         }}
         teamColors={teamColors}

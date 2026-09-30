@@ -4,15 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { addPreparationVideo } from "../actions";
-import {
-  VIDEO_CATEGORIES,
-  submomentsFor,
-  type GameSubmoment,
-  type VideoCategory,
-  type VideoPlayerOption,
-} from "./videoCategories";
-import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
+import type { VideoPlayerOption } from "./videoCategories";
 import type { Team } from "./TacticalBoard";
+import VideoForm, { type VideoFormValues } from "./VideoForm";
 
 export default function AddPreparationVideo({
   preparationKey,
@@ -26,44 +20,29 @@ export default function AddPreparationVideo({
   const t = useTranslations("dashboard");
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [notes, setNotes] = useState("");
-  const [category, setCategory] = useState("");
-  const [submoment, setSubmoment] = useState("");
-  const [playerId, setPlayerId] = useState("");
+  // Bumped after a save so the next form opens empty.
+  const [formKey, setFormKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startSaving] = useTransition();
-  const submomentOptions = submomentsFor(category as VideoCategory | "");
 
-  function handleCategoryChange(value: string) {
-    setCategory(value);
-    setSubmoment("");
-    setPlayerId("");
-  }
-
-  function handleSubmit() {
-    if (!url.trim()) return;
+  function handleSubmit(values: VideoFormValues) {
     setError(null);
     startSaving(async () => {
       try {
         await addPreparationVideo(
           preparationKey,
-          url.trim(),
-          notes,
-          (category || null) as VideoCategory | null,
-          (submoment || null) as GameSubmoment | null,
-          playerId ? Number(playerId) : null,
+          values.url,
+          values.notes,
+          values.category,
+          values.submoment,
+          values.playerId,
           team,
         );
-        setUrl("");
-        setNotes("");
-        setCategory("");
-        setSubmoment("");
-        setPlayerId("");
+        setFormKey((k) => k + 1);
         setIsOpen(false);
         router.refresh();
       } catch {
-        setError(t("videoInvalidUrl"));
+        setError(t("liveConfigSaveError"));
       }
     });
   }
@@ -81,103 +60,19 @@ export default function AddPreparationVideo({
   }
 
   return (
-    <div className="mt-3 rounded-2xl border border-border bg-background p-4">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold">{t("videoAddButton")}</h4>
-        <button
-          type="button"
-          onClick={() => setIsOpen(false)}
-          className="text-xs text-muted hover:text-foreground"
-        >
-          {t("cancelButton")}
-        </button>
-      </div>
-
-      <div className="mt-3 flex flex-col gap-3">
-        <div>
-          <label className="mb-1 block text-xs text-muted">{t("videoUrlLabel")}</label>
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=..."
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-muted">{t("videoNotesLabel")}</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-xs text-muted">{t("videoCategoryLabel")}</label>
-            <select
-              value={category}
-              onChange={(e) => handleCategoryChange(e.target.value)}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-            >
-              <option value="">{t("videoCategoryNone")}</option>
-              {VIDEO_CATEGORIES.map((key) => (
-                <option key={key} value={key}>
-                  {t(CATEGORY_LABEL_KEYS[key])}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {submomentOptions && (
-            <div>
-              <label className="mb-1 block text-xs text-muted">{t("videoSubmomentLabel")}</label>
-              <select
-                value={submoment}
-                onChange={(e) => setSubmoment(e.target.value)}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-              >
-                <option value="">{t("videoSubmomentNone")}</option>
-                {submomentOptions.map((key) => (
-                  <option key={key} value={key}>
-                    {t(SUBMOMENT_LABEL_KEYS[key])}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {category === "player" && players.length > 0 && (
-            <div>
-              <label className="mb-1 block text-xs text-muted">{t("videoPlayerLabel")}</label>
-              <select
-                value={playerId}
-                onChange={(e) => setPlayerId(e.target.value)}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-              >
-                <option value="">{t("videoPlayerNone")}</option>
-                {players.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        <button
-          type="button"
-          disabled={!url.trim() || isSaving}
-          onClick={handleSubmit}
-          className="self-start rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {isSaving ? t("savingClub") : t("videoSaveButton")}
-        </button>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-      </div>
+    <div className="mt-3">
+      <VideoForm
+        key={formKey}
+        title={t("videoAddButton")}
+        players={players}
+        isSaving={isSaving}
+        error={error}
+        onSubmit={handleSubmit}
+        onCancel={() => {
+          setError(null);
+          setIsOpen(false);
+        }}
+      />
     </div>
   );
 }

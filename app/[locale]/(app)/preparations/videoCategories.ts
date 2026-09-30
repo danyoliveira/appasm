@@ -27,4 +27,6 @@ export function submomentsFor(category: VideoCategory | ""): readonly GameSubmom
 export interface VideoPlayerOption {
   id: number;
   name: string;
+  number?: number | null;
+  position?: string | null;
 }

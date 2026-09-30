@@ -17,6 +17,7 @@ export default function LiveFormationPitch({
   onChange,
   onPlayerClick,
   eventIcons,
+  tokenColor,
 }: {
   players: LineupPlayer[];
   onChange: (players: LineupPlayer[]) => void;
@@ -26,7 +27,10 @@ export default function LiveFormationPitch({
   onPlayerClick?: (player: LineupPlayer, index: number) => void;
   // Icons for events already logged, keyed by player name.
   eventIcons?: Record<string, string[]>;
+  // The club's colour on the tokens (dark slate when not given).
+  tokenColor?: { background: string; text: string };
 }) {
+  const tokenStyle = tokenColor ? { backgroundColor: tokenColor.background, color: tokenColor.text } : undefined;
   const pitchRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
 
@@ -93,7 +97,10 @@ export default function LiveFormationPitch({
             style={{ left: `${pos.x}%`, top: `${pos.y}%`, visibility: drag?.index === i ? "hidden" : "visible" }}
           >
             <div className="relative">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow ring-2 ring-white/40">
+              <div
+                style={tokenStyle}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow ring-2 ring-white/40"
+              >
                 {p.number ?? "-"}
               </div>
               {onPlayerClick && (
@@ -131,7 +138,10 @@ export default function LiveFormationPitch({
           className="pointer-events-none fixed z-[60] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
           style={{ left: drag.clientX, top: drag.clientY }}
         >
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow-lg ring-2 ring-accent">
+          <div
+            style={tokenStyle}
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow-lg ring-2 ring-accent"
+          >
             {players[drag.index]?.number ?? "-"}
           </div>
           <span className="mt-1 max-w-[80px] truncate rounded bg-black/60 px-1.5 py-0.5 text-center text-[11px] font-medium text-white">

@@ -38,47 +38,19 @@ function RankedPlayerRow({ rank, scorer, value }: { rank: number; scorer: TopSco
     </div>
   );
 }
-import Icon, { type IconName } from "@/components/Icon";
+import Icon from "@/components/Icon";
 import TeamCrest from "@/components/TeamCrest";
-import SeasonStatsGrid from "../SeasonStatsGrid";
+import OpponentScouting, { SectionHeading } from "../OpponentScouting";
 import Countdown from "../Countdown";
 import NextFixturePrepareButton from "../NextFixturePrepareButton";
 import ClubHeaderAccent from "../ClubHeaderAccent";
 import FixtureHeroAccent from "../FixtureHeroAccent";
 import {
   isNonInjuryReason,
-  translateInjuryType,
-  shortenPlayerName,
 } from "../club/playerShared";
 import RecentNotesPanel from "../notes/RecentNotesPanel";
 import { loadTeamNotes } from "../notes/loadTeamNotes";
-import { matchResult } from "../club/fixtureHelpers";
 import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
-
-// Same heading on every dashboard card: a small tinted icon tile, the
-// title, and an optional count.
-function SectionHeading({ icon, title, count }: { icon: IconName; title: string; count?: number }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-        <Icon name={icon} className="h-4 w-4" />
-      </span>
-      <h2 className="text-base font-semibold">{title}</h2>
-      {count != null && (
-        <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium tabular-nums text-muted ring-1 ring-border">
-          {count}
-        </span>
-      )}
-    </div>
-  );
-}
-
-const RESULT_TONE: Record<"W" | "D" | "L", string> = {
-  W: "bg-green-600 text-white",
-  D: "bg-border text-foreground",
-  L: "bg-red-500 text-white",
-};
-
 
 export default async function DashboardOverviewPage({
   params,
@@ -261,21 +233,6 @@ export default async function DashboardOverviewPage({
       : nextFixture.teams.home
     : null;
 
-  const opponentLastResult =
-    opponentLastFixture && opponent ? matchResult(opponentLastFixture, opponent.id) : null;
-  const opponentLastOpponent =
-    opponentLastFixture && opponent
-      ? opponentLastFixture.teams.home.id === opponent.id
-        ? opponentLastFixture.teams.away
-        : opponentLastFixture.teams.home
-      : null;
-  const opponentNextOpponent =
-    opponentNextFixture && opponent
-      ? opponentNextFixture.teams.home.id === opponent.id
-        ? opponentNextFixture.teams.away
-        : opponentNextFixture.teams.home
-      : null;
-
   return (
     <div>
       <ClubHeaderAccent
@@ -406,17 +363,21 @@ export default async function DashboardOverviewPage({
                         live: t("countdownLive"),
                       }}
                     />
-                    <NextFixturePrepareButton
-                      fixtureId={nextFixture.fixture.id}
-                      isPrepared={isNextFixturePrepared}
-                      opponentName={opponent.name}
-                      labels={{
-                        prepareAction: t("preparationStartButton"),
-                        inProgressAction: t("preparationInProgressButton"),
-                        confirmStart: t("preparationConfirmStart"),
-                        cancel: t("cancelButton"),
-                      }}
-                    />
+                    {/* Only the coach starts a preparation; everyone else
+                        gets the button once it is open. */}
+                    {(isCoach || isNextFixturePrepared) && (
+                      <NextFixturePrepareButton
+                        fixtureId={nextFixture.fixture.id}
+                        isPrepared={isNextFixturePrepared}
+                        opponentName={opponent.name}
+                        labels={{
+                          prepareAction: t("preparationStartButton"),
+                          inProgressAction: isCoach ? t("preparationInProgressButton") : t("preparationViewButton"),
+                          confirmStart: t("preparationConfirmStart"),
+                          cancel: t("cancelButton"),
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               );
@@ -428,156 +389,19 @@ export default async function DashboardOverviewPage({
       {/* Scouting content for that same match, split into its own cards
           instead of one long scroll inside the hero — each is skipped
           entirely when there's nothing to show. */}
-      {(opponentInjuries.length > 0 || opponentUnavailable.length > 0) && (
-        <section className="mt-6 rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-6">
-          <SectionHeading
-            icon="users"
-            title={t("opponentAbsencesTitle")}
-            count={opponentInjuries.length + opponentUnavailable.length}
-          />
-          <div className="mt-4 grid gap-5 lg:grid-cols-2">
-            {[
-              { title: t("injuriesTitle"), list: opponentInjuries, dot: "bg-red-500" },
-              { title: t("unavailableTitle"), list: opponentUnavailable, dot: "bg-amber-500" },
-            ]
-              .filter((group) => group.list.length > 0 || group.title === t("injuriesTitle"))
-              .map((group) => (
-                <div key={group.title}>
-                  <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                    <span className={`h-1.5 w-1.5 rounded-full ${group.dot}`} />
-                    {group.title}
-                    <span className="tabular-nums">· {group.list.length}</span>
-                  </h3>
-                  {group.list.length === 0 ? (
-                    <p className="mt-2 text-sm text-muted">{t("noInjuriesFound")}</p>
-                  ) : (
-                    <div className="mt-2 divide-y divide-border rounded-xl border border-border bg-background">
-                      {group.list.map((injury) => (
-                        <Link
-                          key={injury.player.id}
-                          href={`/club/player/${injury.player.id}`}
-                          className="flex items-center gap-3 px-3 py-2 transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={injury.player.photo} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                            {shortenPlayerName(injury.player.name)}
-                          </span>
-                          <span className="max-w-[45%] truncate text-xs text-muted">
-                            {translateInjuryType(injury.player.reason, locale)}
-                          </span>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-          </div>
-        </section>
-      )}
-
-      {(headToHead.length > 0 || opponentLastFixture || opponentNextFixture || opponentStats) && (
-        <section className="mt-6 rounded-2xl border border-border bg-surface p-5 shadow-sm sm:p-6">
-          <div
-            className={`grid gap-6 ${
-              headToHead.length > 0 && (opponentLastFixture || opponentNextFixture || opponentStats)
-                ? "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-0 lg:divide-x lg:divide-border lg:[&>*:first-child]:pr-6 lg:[&>*:last-child]:pl-6"
-                : ""
-            }`}
-          >
-            {(opponentLastFixture || opponentNextFixture || opponentStats) && (
-              <div className="min-w-0">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("opponentFormTitle")}</h3>
-                {(opponentLastFixture || opponentNextFixture) && (
-                  <div className="mt-2 divide-y divide-border rounded-xl border border-border bg-background">
-                    {opponentLastFixture && opponentLastOpponent && (
-                      <Link
-                        href={`/club/fixture/${opponentLastFixture.fixture.id}`}
-                        className="flex items-center gap-2 rounded-t-xl px-3 py-2 text-sm transition-colors last:rounded-b-xl hover:bg-surface"
-                      >
-                        <span className="w-16 shrink-0 text-[11px] text-muted">{t("opponentLastMatchLabel")}</span>
-                        <TeamCrest logo={opponentLastOpponent.logo} className="h-4 w-4" />
-                        <span className="min-w-0 flex-1 truncate">{opponentLastOpponent.name}</span>
-                        <span
-                          className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
-                            opponentLastResult ? RESULT_TONE[opponentLastResult] : "bg-border text-foreground"
-                          }`}
-                        >
-                          {opponentLastFixture.goals.home ?? "-"} - {opponentLastFixture.goals.away ?? "-"}
-                        </span>
-                      </Link>
-                    )}
-                    {opponentNextFixture && opponentNextOpponent && (
-                      <div className="flex items-center gap-2 px-3 py-2 text-sm">
-                        <span className="w-16 shrink-0 text-[11px] text-muted">{t("opponentNextMatchLabel")}</span>
-                        <TeamCrest logo={opponentNextOpponent.logo} className="h-4 w-4" />
-                        <span className="min-w-0 flex-1 truncate">{opponentNextOpponent.name}</span>
-                        <span className="shrink-0 text-xs text-muted">
-                          {new Date(opponentNextFixture.fixture.date).toLocaleDateString(locale, {
-                            day: "numeric",
-                            month: "short",
-                          })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {opponentStats && (
-                  <div className="mt-4">
-                    <SeasonStatsGrid t={t} stats={opponentStats} />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {headToHead.length > 0 && (
-              <div className="min-w-0">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("headToHeadTitle")}</h3>
-                <div className="mt-2 space-y-0.5">
-                  {headToHead.map((fx) => {
-                    const result = teamId ? matchResult(fx, teamId) : null;
-                    return (
-                      <Link
-                        key={fx.fixture.id}
-                        href={`/club/fixture/${fx.fixture.id}`}
-                        className="block rounded-xl px-2.5 py-2 transition-colors hover:bg-background"
-                      >
-                        <div className="flex items-center gap-1 text-[10px] text-muted">
-                          <span>{new Date(fx.fixture.date).toLocaleDateString(locale)}</span>
-                          <span>·</span>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={fx.league.logo} alt="" className="h-3 w-3 shrink-0 object-contain" />
-                          <span className="truncate">{fx.league.name}</span>
-                        </div>
-                        <div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
-                          <span className="flex min-w-0 items-center justify-end gap-1.5">
-                            <span className={`truncate ${fx.teams.home.id === teamId ? "font-semibold" : ""}`}>
-                              {fx.teams.home.name}
-                            </span>
-                            <TeamCrest logo={fx.teams.home.logo} className="h-4 w-4" />
-                          </span>
-                          <span
-                            className={`rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
-                              result ? RESULT_TONE[result] : "bg-border text-foreground"
-                            }`}
-                          >
-                            {fx.goals.home ?? "-"} - {fx.goals.away ?? "-"}
-                          </span>
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <TeamCrest logo={fx.teams.away.logo} className="h-4 w-4" />
-                            <span className={`truncate ${fx.teams.away.id === teamId ? "font-semibold" : ""}`}>
-                              {fx.teams.away.name}
-                            </span>
-                          </span>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+      {opponent && (
+        <OpponentScouting
+          t={t}
+          locale={locale}
+          teamId={teamId}
+          opponentId={opponent.id}
+          injuries={opponentInjuries}
+          unavailable={opponentUnavailable}
+          headToHead={headToHead}
+          lastFixture={opponentLastFixture}
+          nextFixture={opponentNextFixture}
+          stats={opponentStats}
+        />
       )}
 
       {/* General league reference, lowest priority for day-to-day use — one

@@ -14,6 +14,7 @@ import {
 } from "@/lib/api-football/client";
 import { getTeamsByCountry, getSquad, forgetCachedTeamData } from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
+import { isDetailedPosition, isPreferredFoot } from "./club/playerProfile";
 import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
 import { parseLiveStatConfig, type LiveStatConfig } from "../live/liveStatConfig";
 import type { GameSubmoment, VideoCategory } from "./preparations/videoCategories";
@@ -252,6 +253,40 @@ export async function setPreparationFinished(preparationKey: string, finished: b
   revalidatePath("/", "layout");
 }
 
+// The coach's written analysis after the game (Pós-Jogo tab).
+export async function savePostGameNotes(preparationKey: string, notes: string) {
+  const { supabase } = await requireCoach();
+  const value = notes.trim() || null;
+
+  if (preparationKey.startsWith("manual-")) {
+    const { data, error } = await supabase
+      .from("manual_preparations")
+      .update({ post_game_notes: value })
+      .eq("id", preparationKey.slice("manual-".length))
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!data?.length) throw new Error("Preparation not updated");
+  } else {
+    const { data: coachProfile } = await supabase
+      .from("profiles")
+      .select("api_football_team_id")
+      .eq("role", "coach")
+      .maybeSingle();
+    const teamId = coachProfile?.api_football_team_id;
+    if (!teamId) throw new Error("No club selected yet");
+
+    const { error } = await supabase
+      .from("fixture_preparations")
+      .upsert(
+        { team_id: teamId, fixture_id: Number(preparationKey), post_game_notes: value },
+        { onConflict: "team_id,fixture_id" },
+      );
+    if (error) throw new Error(error.message);
+  }
+
+  revalidatePath("/", "layout");
+}
+
 export async function deleteManualPreparation(id: string) {
   const supabase = await createClient();
   const {
@@ -425,6 +460,9 @@ export interface TacticalSnapshotData {
   // tagging. Optional: missing on snapshots saved before moments existed.
   moment?: VideoCategory | null;
   submoment?: GameSubmoment | null;
+  // The "Jogador" category's subject — name kept alongside the id so it
+  // still reads right if they later leave the squad.
+  player?: { id: number; name: string } | null;
 }
 
 // Each save is a new, separately-kept snapshot (like preparation_videos) —
@@ -585,7 +623,9 @@ export async function createInvite(
   formData: FormData,
 ): Promise<InviteState> {
   const email = (formData.get("email") as string)?.trim();
-  const role = (formData.get("role") as string) === "viewer" ? "viewer" : "member";
+  // Every invite is view-only for now ("Edição" is hidden until it has
+  // permissions of its own), whatever the form sends.
+  const role = "viewer";
   const locale = (formData.get("locale") as string) || "pt";
   if (!email) return { error: "invalid-email" };
 
@@ -606,6 +646,20 @@ export async function createInvite(
   if (error) return { error: error.message };
 
   return { invitePath: `/${locale}/register?token=${token}` };
+}
+
+// Cancels an invite that hasn't been used yet (the link stops working).
+export async function cancelInvite(inviteId: string) {
+  const { supabase, coachId } = await requireCoach();
+  const { data, error } = await supabase
+    .from("invites")
+    .update({ status: "revoked" })
+    .eq("id", inviteId)
+    .eq("invited_by", coachId)
+    .eq("status", "pending")
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error("Invite not cancelled");
 }
 
 export async function signOut() {
@@ -992,6 +1046,25 @@ export async function mergeManualPlayer(manualPlayerId: number, apiPlayerId: num
     p_api_id: apiPlayerId,
   });
   if (error) throw new Error(error.message);
+
+  // The preferred foot lives outside the merge function's tables: hand it
+  // over too (the manual player's wins, like the rest of the merge).
+  const { data: manualTraits } = await supabase
+    .from("player_traits")
+    .select("preferred_foot")
+    .eq("player_id", manualPlayerId)
+    .maybeSingle();
+  if (manualTraits) {
+    if (manualTraits.preferred_foot) {
+      await supabase
+        .from("player_traits")
+        .upsert(
+          { player_id: apiPlayerId, preferred_foot: manualTraits.preferred_foot, updated_at: new Date().toISOString() },
+          { onConflict: "player_id" },
+        );
+    }
+    await supabase.from("player_traits").delete().eq("player_id", manualPlayerId);
+  }
   revalidatePath("/", "layout");
 }
 
@@ -1058,6 +1131,20 @@ export async function addDossierFile(teamId: number, input: DossierFileInput) {
     await supabase.storage.from("team-dossier").remove([input.storagePath]);
     throw new Error(error.message);
   }
+}
+
+// Arquivo → "Apagar período". The database function removes the spell and
+// everything tied to it in one go (see migration 0055) and hands back the
+// dossier files it dropped, whose actual files are removed here.
+export async function deleteArchivedStint(stintId: string) {
+  const { supabase } = await requireCoach();
+
+  const { data, error } = await supabase.rpc("delete_archived_stint", { p_stint_id: stintId });
+  if (error) throw new Error(error.message);
+
+  const paths = (data as string[] | null) ?? [];
+  if (paths.length > 0) await supabase.storage.from("team-dossier").remove(paths);
+  revalidatePath("/", "layout");
 }
 
 export async function deleteDossierFile(fileId: string) {
@@ -1288,6 +1375,50 @@ export async function setPlayerHeight(teamId: number, playerId: number, heightCm
   );
 
   if (error) throw new Error(error.message);
+}
+
+// The coach's own read of a player. Positions go with the current spell
+// (same row as the height); the preferred foot goes with the player, for
+// good — no team, no spell.
+export async function setPlayerProfile(
+  teamId: number,
+  playerId: number,
+  input: { primaryPosition: string | null; secondaryPosition: string | null; preferredFoot: string | null },
+) {
+  const { supabase, coachId } = await requireCoach();
+
+  const primary = isDetailedPosition(input.primaryPosition) ? input.primaryPosition : null;
+  const secondary =
+    primary && isDetailedPosition(input.secondaryPosition) && input.secondaryPosition !== primary
+      ? input.secondaryPosition
+      : null;
+  const foot = isPreferredFoot(input.preferredFoot) ? input.preferredFoot : null;
+  const now = new Date().toISOString();
+  const stintId = await getCurrentStintId(supabase, teamId);
+
+  const { error: positionError } = await supabase.from("player_body_metrics").upsert(
+    {
+      team_id: teamId,
+      player_id: playerId,
+      stint_id: stintId,
+      primary_position: primary,
+      secondary_position: secondary,
+      updated_at: now,
+      updated_by: coachId,
+    },
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+  if (positionError) throw new Error(positionError.message);
+
+  const { error: footError } = await supabase
+    .from("player_traits")
+    .upsert(
+      { player_id: playerId, preferred_foot: foot, updated_at: now, updated_by: coachId },
+      { onConflict: "player_id" },
+    );
+  if (footError) throw new Error(footError.message);
+
+  revalidatePath("/", "layout");
 }
 
 export async function addPlayerWeightEntry(

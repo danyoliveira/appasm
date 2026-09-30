@@ -49,7 +49,7 @@ export default function PlayerEventMenu({
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-xl"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col rounded-2xl border border-border bg-surface p-5 shadow-xl"
       >
         {mode === "menu" ? (
           <>
@@ -90,24 +90,27 @@ export default function PlayerEventMenu({
             <p className="mt-1 text-sm font-medium">
               {t("liveStatsSubstituteOutLabel", { name: lastName(playerName) })}
             </p>
-            <div className="mt-4 flex flex-col gap-2">
+            {/* A long bench (a whole squad listed as substitutes) scrolls
+                inside the dialog — it used to run off both ends of the
+                screen, hiding the title and the buttons. */}
+            <div className="-mr-2 mt-4 grid min-h-0 flex-1 grid-cols-2 content-start gap-2 overflow-y-auto pr-2">
               {benchPlayers.map((p, i) => (
                 <button
                   key={i}
                   type="button"
                   disabled={isPending}
                   onClick={() => onConfirmSubstitute(p)}
-                  className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-medium transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                  className="flex min-w-0 items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-medium transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                 >
-                  <span className="w-5 shrink-0 text-xs text-muted">{p.number ?? ""}</span>
-                  {lastName(p.name)}
+                  <span className="w-5 shrink-0 text-xs tabular-nums text-muted">{p.number ?? ""}</span>
+                  <span className="min-w-0 truncate">{lastName(p.name)}</span>
                 </button>
               ))}
             </div>
             <button
               type="button"
               onClick={onBack}
-              className="mt-4 w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:border-accent hover:text-foreground"
+              className="mt-4 w-full shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:border-accent hover:text-foreground"
             >
               ← {t("liveStatsBackButton")}
             </button>
@@ -116,7 +119,7 @@ export default function PlayerEventMenu({
         <button
           type="button"
           onClick={onCancel}
-          className="mt-2 w-full rounded-full px-4 py-2 text-center text-xs font-medium text-muted hover:underline"
+          className="mt-2 w-full shrink-0 rounded-full px-4 py-2 text-center text-xs font-medium text-muted hover:underline"
         >
           {t("cancelButton")}
         </button>

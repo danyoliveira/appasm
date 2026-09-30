@@ -55,6 +55,26 @@ export function findCountryForNationality<C extends Pick<Country, "name">>(
   return countries.find((c) => normalize(c.name) === target) ?? null;
 }
 
+// A nationality in the app's language ("Sweden" → "Suécia"), via the
+// country's ISO code from /countries; falls back to the API's English name.
+export function localizedNationality(
+  countries: Pick<Country, "name" | "code">[],
+  nationality: string | null | undefined,
+  locale: string,
+): string | null {
+  if (!nationality) return null;
+  const code = findCountryForNationality(countries, nationality)?.code;
+  if (code && /^[A-Z]{2}$/.test(code)) {
+    try {
+      const name = new Intl.DisplayNames([locale], { type: "region" }).of(code);
+      if (name && name !== code) return name;
+    } catch {
+      // Unknown region code — keep the API name.
+    }
+  }
+  return countryDisplayName(nationality);
+}
+
 // "Costa-Rica" → "Costa Rica" for display.
 export function countryDisplayName(name: string) {
   return name.replace(/-/g, " ");

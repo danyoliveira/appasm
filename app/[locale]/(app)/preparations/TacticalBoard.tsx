@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import MomentFields from "./MomentFields";
 import { createClient } from "@/lib/supabase/client";
 import { cropToSquare } from "@/lib/cropToSquare";
 import {
@@ -16,13 +17,7 @@ import {
 import { translatePosition, STATUS_DOT } from "../club/playerShared";
 import type { TacticalSnapshotRow } from "./TacticalSnapshotList";
 import type { TeamColors } from "./useTeamColors";
-import {
-  VIDEO_CATEGORIES,
-  submomentsFor,
-  type GameSubmoment,
-  type VideoCategory,
-} from "./videoCategories";
-import { CATEGORY_LABEL_KEYS, SUBMOMENT_LABEL_KEYS } from "./gameMomentLabels";
+import type { GameSubmoment, VideoCategory } from "./videoCategories";
 
 // Fixed, team-independent color for the generic marker ("boneco") — team
 // pins are now derived from club crests, which can land on almost any
@@ -88,9 +83,10 @@ const POSITION_GROUPS = ["Goalkeeper", "Defender", "Midfielder", "Attacker"] as 
 // drawn in an SVG viewBox of the same ratio to avoid skewing their angle.
 const PITCH_VIEWBOX_WIDTH = 75;
 
-let nextCustomId = -1;
-let nextMarkerId = 1;
-let nextArrowId = 1;
+// New ids continue from what is already there — a module counter restarted
+// at 1 on every page load and clashed with the ids of a saved analysis being
+// edited (duplicate React keys, two arrows sharing one delete button).
+const nextId = (items: { id: number }[]) => Math.max(0, ...items.map((i) => i.id)) + 1;
 
 // Adds only the entries not already present (by id) — used when restoring a
 // snapshot's custom players into the shared, whole-session list instead of
@@ -101,6 +97,31 @@ function mergeCustomPlayers(prev: BenchOption[], restored: BenchOption[]): Bench
     if (!merged.some((m) => m.id === p.id)) merged.push(p);
   }
   return merged;
+}
+
+// A saved snapshot's hand-added players (not in either squad), merged into
+// the shared list when it's opened for editing or duplicating. Called from
+// the click handler — updating the parent's state while the board renders
+// is what React warned about ("Cannot update a component while rendering").
+export function withSnapshotCustomPlayers(
+  prev: BenchOption[],
+  snapshot: TacticalSnapshotRow,
+  ourSquad: OurSquadOption[],
+  opponentSquad: OpponentSquadOption[],
+): BenchOption[] {
+  return mergeCustomPlayers(
+    prev,
+    snapshot.positions
+      .filter((p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId))
+      .map((p) => ({
+        id: p.playerId,
+        name: p.name,
+        number: p.number,
+        photo: p.photo,
+        position: "Midfielder" as const,
+        team: p.team ?? "opponent",
+      })),
+  );
 }
 
 export default function TacticalBoard({
@@ -143,8 +164,13 @@ export default function TacticalBoard({
   const [arrows, setArrows] = useState<TacticalArrow[]>(editingSnapshot?.arrows ?? []);
   const [activeTool, setActiveTool] = useState<"select" | "arrow" | "line">("select");
   const [drawingArrow, setDrawingArrow] = useState<DrawingArrow | null>(null);
+  // Which arrow/line shows its delete button: hovered (mouse) or tapped
+  // (touch) — not every arrow's × all the time.
+  const [hoveredArrowId, setHoveredArrowId] = useState<number | null>(null);
+  const [selectedArrowId, setSelectedArrowId] = useState<number | null>(null);
   const [moment, setMoment] = useState<VideoCategory | "">(editingSnapshot?.moment ?? "");
   const [submoment, setSubmoment] = useState<GameSubmoment | "">(editingSnapshot?.submoment ?? "");
+  const [subjectPlayerId, setSubjectPlayerId] = useState<number | "">(editingSnapshot?.player?.id ?? "");
   const [notes, setNotes] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const pinStyle = (team: Team) => ({
@@ -178,28 +204,9 @@ export default function TacticalBoard({
     setArrows(editingSnapshot.arrows);
     setMoment(editingSnapshot.moment ?? "");
     setSubmoment(editingSnapshot.submoment ?? "");
+    setSubjectPlayerId(editingSnapshot.player?.id ?? "");
     setNotes(editingSnapshot.notes ?? "");
     setVideoUrl(editingSnapshot.videoUrl ?? "");
-    // Merge in (rather than replace) — customPlayers is now shared across
-    // the whole preparation session, so restoring one snapshot's custom
-    // players shouldn't drop ones added for a different analysis.
-    setCustomPlayers((prev) =>
-      mergeCustomPlayers(
-        prev,
-        editingSnapshot.positions
-          .filter(
-            (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
-          )
-          .map((p) => ({
-            id: p.playerId,
-            name: p.name,
-            number: p.number,
-            photo: p.photo,
-            position: "Midfielder" as const,
-            team: p.team ?? "opponent",
-          })),
-      ),
-    );
   } else if (!editingSnapshot && appliedEditingId !== null) {
     setAppliedEditingId(null);
   }
@@ -216,25 +223,9 @@ export default function TacticalBoard({
     setArrows(duplicateSeed.arrows);
     setMoment(duplicateSeed.moment ?? "");
     setSubmoment(duplicateSeed.submoment ?? "");
+    setSubjectPlayerId(duplicateSeed.player?.id ?? "");
     setNotes(duplicateSeed.notes ?? "");
     setVideoUrl("");
-    setCustomPlayers((prev) =>
-      mergeCustomPlayers(
-        prev,
-        duplicateSeed.positions
-          .filter(
-            (p) => !opponentSquad.some((s) => s.id === p.playerId) && !ourSquad.some((s) => s.id === p.playerId),
-          )
-          .map((p) => ({
-            id: p.playerId,
-            name: p.name,
-            number: p.number,
-            photo: p.photo,
-            position: "Midfielder" as const,
-            team: p.team ?? "opponent",
-          })),
-      ),
-    );
   } else if (!duplicateSeed && appliedDuplicateId !== null) {
     setAppliedDuplicateId(null);
   }
@@ -316,7 +307,7 @@ export default function TacticalBoard({
             const markerId = current.id;
             setMarkers((prev) => prev.map((m) => (m.id === markerId ? { ...m, x, y } : m)));
           } else {
-            setMarkers((prev) => [...prev, { id: nextMarkerId++, x, y }]);
+            setMarkers((prev) => [...prev, { id: nextId(prev), x, y }]);
           }
         } else if (!current.fromToolbox) {
           // Dropped outside the pitch while repositioning an already-placed
@@ -356,7 +347,7 @@ export default function TacticalBoard({
         if (current) {
           const dist = Math.hypot(current.x2 - current.x1, current.y2 - current.y1);
           if (dist > 3) {
-            setArrows((prev) => [...prev, { id: nextArrowId++, ...current }]);
+            setArrows((prev) => [...prev, { id: nextId(prev), ...current }]);
           }
         }
         return null;
@@ -385,8 +376,19 @@ export default function TacticalBoard({
     });
   }
 
+  const isDrawingTool = activeTool === "arrow" || activeTool === "line";
+
+  // With Seta/Linha on, pressing a player (or the ball, or a marker) starts
+  // the arrow from its centre — it used to pick the player up and move it.
+  function startArrowAt(x: number, y: number, e: React.PointerEvent) {
+    e.stopPropagation();
+    setSelectedArrowId(null);
+    setDrawingArrow({ x1: x, y1: y, x2: x, y2: y, style: activeTool === "line" ? "line" : "arrow" });
+  }
+
   function startDragFromPitch(pos: TacticalPosition, e: React.PointerEvent) {
     if (!isCoach) return;
+    if (isDrawingTool) return startArrowAt(pos.x, pos.y, e);
     e.stopPropagation();
     setDrag({
       playerId: pos.playerId,
@@ -402,12 +404,14 @@ export default function TacticalBoard({
 
   function startBallDrag(e: React.PointerEvent, fromToolbox: boolean) {
     if (!isCoach) return;
+    if (isDrawingTool && !fromToolbox && ball) return startArrowAt(ball.x, ball.y, e);
     e.stopPropagation();
     setSimpleDrag({ kind: "ball", id: null, fromToolbox, clientX: e.clientX, clientY: e.clientY });
   }
 
   function startMarkerDrag(e: React.PointerEvent, marker: TacticalMarker | null) {
     if (!isCoach) return;
+    if (isDrawingTool && marker) return startArrowAt(marker.x, marker.y, e);
     e.stopPropagation();
     setSimpleDrag({
       kind: "marker",
@@ -419,6 +423,7 @@ export default function TacticalBoard({
   }
 
   function handlePitchPointerDown(e: React.PointerEvent) {
+    setSelectedArrowId(null);
     if (!isCoach || (activeTool !== "arrow" && activeTool !== "line")) return;
     const rect = pitchRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -429,6 +434,8 @@ export default function TacticalBoard({
 
   function removeArrow(id: number) {
     setArrows((prev) => prev.filter((a) => a.id !== id));
+    setSelectedArrowId(null);
+    setHoveredArrowId(null);
   }
 
   async function handleNewPlayerPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -462,7 +469,8 @@ export default function TacticalBoard({
   function handleAddCustomPlayer() {
     if (!newName.trim()) return;
     const player: BenchOption = {
-      id: nextCustomId--,
+      // Hand-added players use negative ids, below every one already known.
+      id: Math.min(0, ...customPlayers.map((p) => p.id)) - 1,
       name: newName.trim(),
       number: newNumber.trim() ? Number(newNumber.trim()) : null,
       photo: newPhoto,
@@ -476,7 +484,15 @@ export default function TacticalBoard({
     setIsAddingPlayer(false);
   }
 
-  const hasContent = positions.length > 0 || ball !== null || markers.length > 0 || arrows.length > 0;
+  // Something drawn, or at least a note / video (e.g. a "Jogador" analysis
+  // that's only words about one player) — not just an empty board.
+  const hasContent =
+    positions.length > 0 ||
+    ball !== null ||
+    markers.length > 0 ||
+    arrows.length > 0 ||
+    notes.trim() !== "" ||
+    videoUrl.trim() !== "";
 
   function resetBoard() {
     setPositions([]);
@@ -485,6 +501,7 @@ export default function TacticalBoard({
     setArrows([]);
     setMoment("");
     setSubmoment("");
+    setSubjectPlayerId("");
     setNotes("");
     setVideoUrl("");
     // customPlayers is intentionally left as-is — it's now shared for the
@@ -495,7 +512,20 @@ export default function TacticalBoard({
   function handleMomentChange(value: VideoCategory | "") {
     setMoment(value);
     setSubmoment("");
+    setSubjectPlayerId("");
   }
+
+  // "Jogador" category: who the analysis is about — the active team's
+  // squad (placed on the pitch or not) plus players added by hand.
+  const subjectOptions = useMemo(() => {
+    const squad: BenchOption[] =
+      activeTeam === "us"
+        ? ourSquad.map((p) => ({ ...p, team: "us" as const }))
+        : opponentSquad.map((p) => ({ ...p, team: "opponent" as const }));
+    return [...squad, ...customPlayers.filter((p) => p.team === activeTeam)];
+  }, [activeTeam, ourSquad, opponentSquad, customPlayers]);
+  const subjectPlayer =
+    subjectPlayerId === "" ? null : (subjectOptions.find((p) => p.id === subjectPlayerId) ?? null);
 
   function handleSave() {
     startSaving(async () => {
@@ -507,6 +537,13 @@ export default function TacticalBoard({
         team: activeTeam,
         moment: moment || null,
         submoment: submoment || null,
+        player:
+          moment === "player" && subjectPlayerId !== ""
+            ? {
+                id: subjectPlayerId,
+                name: subjectPlayer?.name ?? editingSnapshot?.player?.name ?? duplicateSeed?.player?.name ?? "",
+              }
+            : null,
       };
       if (editingSnapshot) {
         await updateTacticalSnapshot(editingSnapshot.id, data, notes, videoUrl);
@@ -565,7 +602,13 @@ export default function TacticalBoard({
           )}
         </h4>
       )}
-      <div className={sideBySide ? "grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start" : ""}>
+      {/* Pitch and squad side by side on wide screens — the squad used to sit
+          under the pitch, a long scroll away from where players are dropped. */}
+      <div
+        className={`grid gap-4 lg:items-start ${
+          sideBySide ? "lg:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]"
+        }`}
+      >
       <div>
       {isCoach && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -656,7 +699,9 @@ export default function TacticalBoard({
                   stroke="transparent"
                   strokeWidth={4}
                   className="pointer-events-auto cursor-pointer"
-                  onClick={() => removeArrow(a.id)}
+                  onMouseEnter={() => setHoveredArrowId(a.id)}
+                  onMouseLeave={() => setHoveredArrowId((id) => (id === a.id ? null : id))}
+                  onClick={() => setSelectedArrowId(a.id)}
                 />
               )}
               <line
@@ -685,10 +730,15 @@ export default function TacticalBoard({
         </svg>
 
         {isCoach &&
-          arrows.map((a) => (
+          arrows
+            .filter((a) => a.id === hoveredArrowId || a.id === selectedArrowId)
+            .map((a) => (
             <button
               key={`del-${a.id}`}
               type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseEnter={() => setHoveredArrowId(a.id)}
+              onMouseLeave={() => setHoveredArrowId((id) => (id === a.id ? null : id))}
               onClick={() => removeArrow(a.id)}
               title={t("deleteButton")}
               className="absolute z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white shadow-md hover:bg-red-500"
@@ -794,18 +844,25 @@ export default function TacticalBoard({
       )}
 
       {isCoach && (
-        <div className="mt-4">
-          <div className="flex items-center gap-2">
+        <div
+          className={`mt-4 flex flex-col rounded-xl border border-border bg-background lg:mt-0 ${
+            sideBySide ? "lg:max-h-[40rem]" : "lg:max-h-[29rem]"
+          }`}
+        >
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
             <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
               style={{ backgroundColor: activeTeam === "us" ? teamColors.usColor : teamColors.opponentColor }}
             />
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            <h4 className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-wide text-muted">
               {t("tacticalBenchTitle")} —{" "}
               {activeTeam === "us" ? t("tacticalOurTeamTab") : t("preparationOpponentLabel")}
             </h4>
+            <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium tabular-nums text-muted ring-1 ring-border">
+              {Array.from(benchByPosition.values()).reduce((n, list) => n + list.length, 0)}
+            </span>
           </div>
-          <div className="mt-2 space-y-3">
+          <div className="max-h-80 min-h-0 flex-1 space-y-3 overflow-y-auto p-3 lg:max-h-none">
             {POSITION_GROUPS.map((group) => {
               const players = benchByPosition.get(group);
               if (!players || players.length === 0) return null;
@@ -814,25 +871,37 @@ export default function TacticalBoard({
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted/70">
                     {translatePosition(group, t)}
                   </p>
-                  <div className="mt-1 flex flex-wrap gap-2">
+                  <div
+                    className={`mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3 ${
+                      sideBySide ? "lg:grid-cols-2 xl:grid-cols-3" : "lg:grid-cols-2"
+                    }`}
+                  >
                     {players.map((player) => (
                       <div
                         key={player.id}
                         onPointerDown={(e) => startDragFromBench(player, e)}
-                        className="flex cursor-grab touch-none items-center gap-2 rounded-full border border-border bg-surface px-2 py-1 text-xs active:cursor-grabbing"
+                        title={player.name}
+                        className="flex min-w-0 cursor-grab touch-none items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs transition-colors hover:border-accent active:cursor-grabbing"
                       >
+                        <span className="w-4 shrink-0 text-center text-[10px] font-semibold tabular-nums text-muted">
+                          {player.number ?? ""}
+                        </span>
                         <span className="relative shrink-0">
-                          {player.photo ? (
+                          {/* Initial underneath — shows through when there is no
+                              photo or it fails to load (manual players). */}
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/20 text-[9px] font-semibold text-accent">
+                            {player.name.charAt(0).toUpperCase()}
+                          </span>
+                          {player.photo && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={player.photo}
                               alt=""
-                              className="h-5 w-5 rounded-full object-cover"
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                              className="absolute inset-0 h-5 w-5 rounded-full object-cover"
                             />
-                          ) : (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/20 text-[9px] font-semibold text-accent">
-                              {player.name.charAt(0).toUpperCase()}
-                            </span>
                           )}
                           {player.status && player.status !== "available" && (
                             <span
@@ -840,7 +909,7 @@ export default function TacticalBoard({
                             />
                           )}
                         </span>
-                        <span className="truncate">{player.name}</span>
+                        <span className="min-w-0 truncate font-medium">{player.name}</span>
                       </div>
                     ))}
                   </div>
@@ -852,8 +921,9 @@ export default function TacticalBoard({
             )}
           </div>
 
+          <div className="border-t border-border p-3">
           {isAddingPlayer ? (
-            <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-border bg-background p-3">
+            <div className="flex flex-wrap items-end gap-2">
               <div>
                 <label className="mb-1 block text-[10px] text-muted">{t("addPhoto")}</label>
                 <button
@@ -934,98 +1004,72 @@ export default function TacticalBoard({
             <button
               type="button"
               onClick={() => setIsAddingPlayer(true)}
-              className="mt-3 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+              className="w-full rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
             >
               + {t("tacticalAddPlayerButton")}
             </button>
           )}
-        </div>
-      )}
-      </div>
-
-      {isCoach && (
-        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
-              {t("videoCategoryLabel")}
-            </label>
-            <select
-              value={moment}
-              onChange={(e) => handleMomentChange(e.target.value as VideoCategory | "")}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-            >
-              <option value="">{t("videoCategoryNone")}</option>
-              {VIDEO_CATEGORIES.map((key) => (
-                <option key={key} value={key}>
-                  {t(CATEGORY_LABEL_KEYS[key])}
-                </option>
-              ))}
-            </select>
           </div>
-
-          {submomentsFor(moment) && (
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
-                {t("videoSubmomentLabel")}
-              </label>
-              <select
-                value={submoment}
-                onChange={(e) => setSubmoment(e.target.value as GameSubmoment | "")}
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
-              >
-                <option value="">{t("videoSubmomentNone")}</option>
-                {submomentsFor(moment)!.map((key) => (
-                  <option key={key} value={key}>
-                    {t(SUBMOMENT_LABEL_KEYS[key])}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
       )}
-
-      <div className="mt-4">
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
-          {t("videoNotesLabel")}
-        </label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          disabled={!isCoach}
-          rows={3}
-          className="w-full select-text resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent disabled:opacity-70"
-        />
       </div>
 
-      {isCoach && (
-        <div className="mt-3">
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
-            {t("videoUrlLabel")}
+      {/* What the snapshot is about — category chips, notes, an optional
+          video link and Guardar — in one tidy panel under the board. */}
+      <div className="mt-5 space-y-4 rounded-xl border border-border bg-background p-4">
+        {isCoach && (
+          <MomentFields
+            category={moment}
+            onCategoryChange={handleMomentChange}
+            submoment={submoment}
+            onSubmomentChange={setSubmoment}
+            players={subjectOptions}
+            playerId={subjectPlayerId}
+            onPlayerChange={setSubjectPlayerId}
+          />
+        )}
+
+        <div>
+          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+            {t("videoNotesLabel")}
           </label>
-          <input
-            type="url"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=..."
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            disabled={!isCoach}
+            rows={3}
+            className="w-full select-text resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent disabled:opacity-70"
           />
         </div>
-      )}
 
-      {isCoach && (
-        <div className="mt-3 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || !hasContent}
-            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {isSaving ? t("savingClub") : t("videoSaveButton")}
-          </button>
-          {saved && <span className="text-sm text-green-600">✓</span>}
-        </div>
-      )}
+        {isCoach && (
+          <div>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+              {t("videoUrlLabel")}
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                type="url"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=..."
+                className="min-w-0 flex-1 select-text rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving || !hasContent}
+                  className="w-full rounded-lg bg-accent px-5 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50 sm:w-auto"
+                >
+                  {isSaving ? t("savingClub") : t("videoSaveButton")}
+                </button>
+                {saved && <span className="text-sm text-green-600">✓</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

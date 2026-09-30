@@ -13,9 +13,12 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 
 const PRESENCE_POLL_MS = 5000;
 
+// One shareable link as a row: who it's for, how many have it open right
+// now, and Abrir / Copiar / Novo link.
 function CopyableLink({
   icon,
   label,
+  hint,
   path,
   onlineCount,
   onRegenerate,
@@ -23,9 +26,12 @@ function CopyableLink({
 }: {
   icon: string;
   label: string;
+  hint: string;
   path: string;
   onlineCount: number | null;
-  onRegenerate: () => void;
+  // Omitted for view-only access: the link is there to open or copy, not
+  // to replace.
+  onRegenerate?: () => void;
   isRegenerating: boolean;
 }) {
   const t = useTranslations("dashboard");
@@ -40,57 +46,72 @@ function CopyableLink({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-background p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold text-muted">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[11px]">
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-base">
           {icon}
         </span>
-        {label}
-        {onlineCount !== null && (
-          <span
-            title={t("liveStatsOnlineCountLabel", { count: onlineCount })}
-            className="ml-auto flex items-center gap-1 text-[11px] font-normal text-muted"
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${onlineCount > 0 ? "bg-green-500" : "bg-muted"}`} />
-            {onlineCount}
-          </span>
-        )}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="text-sm font-semibold">{label}</span>
+            {onlineCount !== null && (
+              <span
+                title={t("liveStatsOnlineCountLabel", { count: onlineCount })}
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  onlineCount > 0
+                    ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                    : "bg-background text-muted ring-1 ring-border"
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${onlineCount > 0 ? "bg-green-500" : "bg-muted/60"}`} />
+                {t("liveStatsOnlineShort", { count: onlineCount })}
+              </span>
+            )}
+          </div>
+          <p className="truncate text-xs text-muted">{hint}</p>
+        </div>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <input
-          readOnly
-          value={url}
-          onFocus={(e) => e.target.select()}
-          className="w-full truncate rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-foreground outline-none"
-        />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground transition-opacity hover:opacity-90"
+        >
+          {t("liveStatsOpenButton")} ↗
+        </a>
         <button
           type="button"
           onClick={handleCopy}
-          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
             copied
               ? "bg-green-600 text-white"
-              : "border border-border text-muted hover:border-accent hover:text-accent"
+              : "border border-border bg-surface text-foreground hover:border-accent hover:text-accent"
           }`}
         >
           {copied ? `✓ ${t("liveStatsCopiedLabel")}` : t("liveStatsCopyButton")}
         </button>
-        <button
-          type="button"
-          disabled={isRegenerating}
-          onClick={onRegenerate}
-          title={t("liveStatsRegenerateButton")}
-          className="shrink-0 rounded-full border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-red-500 hover:text-red-500 disabled:opacity-50"
-        >
-          {t("liveStatsRegenerateButton")}
-        </button>
+        {onRegenerate && (
+          <button
+            type="button"
+            disabled={isRegenerating}
+            onClick={onRegenerate}
+            title={t("liveStatsRegenerateButton")}
+            className="rounded-full px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-red-500 disabled:opacity-50"
+          >
+            {t("liveStatsRegenerateButton")}
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
 // The ficha/formação/notas wizard only ever runs through the guest links —
-// this dashboard tab is just session control: create it, share the two
-// links, start/end the match.
+// this dashboard tab is just session control: create it, share the
+// links, start/end the match. Anyone but the coach gets the links alone
+// (they record through them like any other holder of the link): no
+// creating, ending, replacing a link or seeing who is online.
 export default function LiveStatsPanel({
   preparationKey,
   isManager,
@@ -110,12 +131,16 @@ export default function LiveStatsPanel({
   const [memberOnline, setMemberOnline] = useState<number | null>(null);
   const [viewerOnline, setViewerOnline] = useState<number | null>(null);
   const [gkOnline, setGkOnline] = useState<number | null>(null);
+  // "Terminar jogo" can't be undone from here (only from the input link's
+  // Reiniciar) — always confirm.
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [isEnding, setIsEnding] = useState(false);
 
   // Lets the coach notice a link problem (regenerated, or nobody ever
   // opened it) within seconds instead of finding out mid-match — see
   // getLiveSessionPresence for how "online" is defined.
   useEffect(() => {
-    if (!session) return;
+    if (!session || !isManager) return;
     const sessionId = session.id;
     let cancelled = false;
 
@@ -137,7 +162,7 @@ export default function LiveStatsPanel({
     // — not on every session field update (e.g. after ending the match),
     // which would just reset the interval's timer for no reason.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id]);
+  }, [session?.id, isManager]);
 
   async function handleCreate() {
     setIsCreating(true);
@@ -151,8 +176,14 @@ export default function LiveStatsPanel({
 
   async function handleEnd() {
     if (!session) return;
-    await setLiveSessionStatus(session.id, "end");
-    setSession({ ...session, endedAt: new Date().toISOString() });
+    setIsEnding(true);
+    try {
+      await setLiveSessionStatus(session.id, "end");
+      setSession({ ...session, endedAt: new Date().toISOString() });
+    } finally {
+      setIsEnding(false);
+      setConfirmEnd(false);
+    }
   }
 
   async function handleConfirmRegenerate() {
@@ -189,8 +220,6 @@ export default function LiveStatsPanel({
     );
   }
 
-  if (!isManager) return null;
-
   const isEnded = Boolean(session.endedAt);
   const isLive = Boolean(session.startedAt && !isEnded);
 
@@ -203,15 +232,16 @@ export default function LiveStatsPanel({
           </span>
           <div>
             <h3 className="text-sm font-semibold">{t("liveModeCardTitle")}</h3>
-            <p className="text-xs text-muted">
+            <p className="flex items-center gap-1.5 text-xs text-muted">
+              {isLive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />}
               {isEnded ? t("liveStatsEnded") : isLive ? t("countdownLive") : t("liveStatsNotStarted")}
             </p>
           </div>
         </div>
-        {isLive && (
+        {isLive && isManager && (
           <button
             type="button"
-            onClick={handleEnd}
+            onClick={() => setConfirmEnd(true)}
             className="shrink-0 rounded-full bg-red-500 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
             {t("liveStatsEndButton")}
@@ -219,29 +249,36 @@ export default function LiveStatsPanel({
         )}
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <p className="mt-3 text-xs text-muted">
+        {isEnded ? t("liveStatsEndedHint") : isManager ? t("liveStatsLinksHint") : t("liveStatsLinksViewerHint")}
+      </p>
+
+      <div className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
         <CopyableLink
           icon="✎"
           label={t("liveStatsMemberLinkLabel")}
+          hint={t("liveStatsMemberLinkHint")}
           path={session.memberLink}
           onlineCount={memberOnline}
-          onRegenerate={() => setConfirmTarget("member")}
+          onRegenerate={isManager ? () => setConfirmTarget("member") : undefined}
           isRegenerating={regenerating === "member"}
         />
         <CopyableLink
           icon="👁"
           label={t("liveStatsViewerLinkLabel")}
+          hint={t("liveStatsViewerLinkHint")}
           path={session.viewerLink}
           onlineCount={viewerOnline}
-          onRegenerate={() => setConfirmTarget("viewer")}
+          onRegenerate={isManager ? () => setConfirmTarget("viewer") : undefined}
           isRegenerating={regenerating === "viewer"}
         />
         <CopyableLink
           icon="🧤"
           label={t("liveStatsGkLinkLabel")}
+          hint={t("liveStatsGkLinkHint")}
           path={session.gkLink}
           onlineCount={gkOnline}
-          onRegenerate={() => setConfirmTarget("gk")}
+          onRegenerate={isManager ? () => setConfirmTarget("gk") : undefined}
           isRegenerating={regenerating === "gk"}
         />
       </div>
@@ -259,6 +296,14 @@ export default function LiveStatsPanel({
         confirmLabel={t("liveStatsRegenerateButton")}
         onConfirm={handleConfirmRegenerate}
         onCancel={() => setConfirmTarget(null)}
+      />
+      <ConfirmDialog
+        open={confirmEnd}
+        message={t("liveStatsEndConfirm")}
+        isPending={isEnding}
+        confirmLabel={t("liveStatsEndButton")}
+        onConfirm={handleEnd}
+        onCancel={() => setConfirmEnd(false)}
       />
     </div>
   );

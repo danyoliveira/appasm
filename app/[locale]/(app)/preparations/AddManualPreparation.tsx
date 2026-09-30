@@ -37,7 +37,7 @@ export default function AddManualPreparation({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="mt-4 rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-accent hover:text-accent"
       >
         + {t("preparationAddManualButton")}
       </button>
@@ -45,7 +45,7 @@ export default function AddManualPreparation({
   }
 
   return (
-    <div className="mt-4 rounded-2xl border border-border bg-surface p-4">
+    <div className="w-full basis-full rounded-2xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">{t("preparationAddManualTitle")}</h3>
         <button

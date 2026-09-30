@@ -5,8 +5,9 @@ import type { PreparationVideoRow } from "./PreparationVideoList";
 import type { TeamColors } from "./useTeamColors";
 import type { GameSubmoment, VideoCategory } from "./videoCategories";
 import type { Team } from "./TacticalBoard";
+import { PDF_FONT } from "@/lib/pdfFonts";
 
-// Same reasoning as PlayerProgressionPdf: react-pdf renders this tree
+// react-pdf renders this tree
 // outside the app's React context (via pdf(<.../>), not mounted in the
 // page), so every string arrives pre-translated instead of calling
 // useTranslations() in here.
@@ -24,24 +25,28 @@ export interface PreGamePdfLabels {
   videoPlayerPrefix: string;
   videoTagLabel: string;
   footerNote: string;
+  matchDateLabel: string;
 }
 
 export interface PreGameReportData {
   ourTeamName: string;
   opponentName: string;
+  // ISO kick-off date, shown in the header.
+  matchDate?: string | null;
   tacticalRows: TacticalSnapshotRow[];
   videoRows: PreparationVideoRow[];
 }
 
-const PITCH_W = 210;
+const PITCH_W = 156;
 const PITCH_H = Math.round((PITCH_W * 4) / 3);
 
 const styles = StyleSheet.create({
-  page: { padding: 40, paddingBottom: 56, fontSize: 10, fontFamily: "Helvetica", color: "#1f2937" },
+  page: { padding: 40, paddingBottom: 56, fontSize: 10, fontFamily: PDF_FONT, color: "#1f2937" },
   header: { marginBottom: 18, paddingBottom: 14, borderBottomWidth: 2, borderBottomColor: "#1f2937" },
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   title: { fontSize: 18, fontWeight: 700 },
-  subtitle: { fontSize: 11, color: "#4b5563", marginTop: 2 },
+  subtitle: { fontSize: 11, color: "#4b5563", marginTop: 3 },
+  matchDate: { fontSize: 9, color: "#6b7280", marginTop: 3 },
   generatedOn: { fontSize: 8, color: "#6b7280", textAlign: "right", marginTop: 2 },
   sectionTitle: {
     fontSize: 12,
@@ -54,7 +59,10 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  teamTitle: { fontSize: 10, fontWeight: 700, marginTop: 10, marginBottom: 6 },
+  teamTitleRow: { flexDirection: "row", alignItems: "center", marginTop: 10, marginBottom: 6 },
+  teamDot: { width: 7, height: 7, borderRadius: 4, marginRight: 5 },
+  teamTitle: { fontSize: 10, fontWeight: 700 },
+  teamCount: { fontSize: 8, color: "#6b7280", marginLeft: 5 },
   muted: { fontSize: 9, color: "#6b7280" },
   card: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 6, padding: 10, marginBottom: 10 },
   cardRow: { flexDirection: "row", gap: 12 },
@@ -65,7 +73,7 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 700,
     color: "#ffffff",
-    backgroundColor: "#4f46e5",
+    backgroundColor: "#1f2937",
     borderRadius: 3,
     paddingHorizontal: 5,
     paddingVertical: 2,
@@ -83,8 +91,20 @@ const styles = StyleSheet.create({
     marginRight: 4,
     marginBottom: 3,
   },
-  notes: { fontSize: 9, marginTop: 4, lineHeight: 1.4 },
-  link: { fontSize: 8, color: "#2563eb", textDecoration: "underline", marginTop: 4 },
+  badgeOutline: {
+    fontSize: 8,
+    fontWeight: 700,
+    color: "#1f2937",
+    borderWidth: 1,
+    borderColor: "#9ca3af",
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginRight: 4,
+    marginBottom: 3,
+  },
+  notes: { fontSize: 9, marginTop: 2, lineHeight: 1.45 },
+  link: { fontSize: 7.5, color: "#2563eb", marginTop: 5 },
   videoTag: {
     flexDirection: "row",
     alignItems: "center",
@@ -123,7 +143,7 @@ function PdfTacticalPitch({ row, teamColors }: { row: TacticalSnapshotRow; teamC
   const h = PITCH_H;
   const x = (pct: number) => (pct / 100) * w;
   const y = (pct: number) => (pct / 100) * h;
-  const tokenR = 8;
+  const tokenR = 7;
 
   return (
     <View style={{ position: "relative", width: w, height: h }}>
@@ -201,7 +221,7 @@ function PdfTacticalPitch({ row, teamColors }: { row: TacticalSnapshotRow; teamC
       </Svg>
 
       {/* Player number/name labels as plain (non-SVG) Text, overlaid — same
-          reasoning as PlayerProgressionPdf's chart labels: SVG Text only
+          reason: SVG Text only
           accepts SVG presentation attributes, not fontSize/fontWeight. */}
       {row.positions.map((pos) => (
         <Fragment key={pos.playerId}>
@@ -209,9 +229,9 @@ function PdfTacticalPitch({ row, teamColors }: { row: TacticalSnapshotRow; teamC
             style={{
               position: "absolute",
               left: x(pos.x) - tokenR,
-              top: y(pos.y) - 4,
+              top: y(pos.y) - 3.6,
               width: tokenR * 2,
-              fontSize: 7,
+              fontSize: 6,
               fontWeight: 700,
               textAlign: "center",
               color: pos.team === "us" ? teamColors.usTextColor : teamColors.opponentTextColor,
@@ -222,10 +242,10 @@ function PdfTacticalPitch({ row, teamColors }: { row: TacticalSnapshotRow; teamC
           <Text
             style={{
               position: "absolute",
-              left: x(pos.x) - 24,
+              left: x(pos.x) - 21,
               top: y(pos.y) + tokenR + 1,
-              width: 48,
-              fontSize: 6,
+              width: 42,
+              fontSize: 5,
               textAlign: "center",
               color: "#ffffff",
               backgroundColor: "rgba(0,0,0,0.55)",
@@ -259,24 +279,49 @@ function VideoTag({ url, label }: { url: string; label: string }) {
 function MomentBadges({
   moment,
   submoment,
+  playerName,
   videoUrl,
   labels,
 }: {
   moment: VideoCategory | null;
   submoment: GameSubmoment | null;
+  // The "Jogador" category's subject.
+  playerName?: string | null;
   // Shown alongside the category/sub-moment tags instead of on its own
   // line, so a card reads as one row of tags ("Defesa | Pressão alta |
   // Vídeo") rather than the video getting visually separated from the rest.
   videoUrl?: string | null;
   labels: PreGamePdfLabels;
 }) {
-  if (!moment && !submoment && !videoUrl) return null;
+  if (!moment && !submoment && !playerName && !videoUrl) return null;
   return (
     <View style={styles.badgeRow}>
       {moment && <Text style={styles.badge}>{labels.categoryLabels[moment]}</Text>}
       {submoment && <Text style={styles.badgeMuted}>{labels.submomentLabels[submoment]}</Text>}
+      {playerName && <Text style={styles.badgeOutline}>{playerName}</Text>}
       {videoUrl && <VideoTag url={videoUrl} label={labels.videoTagLabel} />}
     </View>
+  );
+}
+
+// "● Nossa Equipa · 2" — the dot is that team's colour on the pitches.
+function TeamHeading({ label, color, count }: { label: string; color: string; count: number }) {
+  return (
+    <View style={styles.teamTitleRow}>
+      <View style={[styles.teamDot, { backgroundColor: color }]} />
+      <Text style={styles.teamTitle}>{label}</Text>
+      {count > 0 && <Text style={styles.teamCount}>· {count}</Text>}
+    </View>
+  );
+}
+
+// The on-screen link is a small tag; on paper only the address itself is
+// any use, so it is printed too.
+function PrintedLink({ url }: { url: string }) {
+  return (
+    <Link src={url} style={styles.link}>
+      {url}
+    </Link>
   );
 }
 
@@ -293,17 +338,30 @@ function TacticalTeamSection({
   teamColors: TeamColors;
   labels: PreGamePdfLabels;
 }) {
-  const teamRows = rows.filter((r) => r.team === team);
+  // Rows arrive newest first; a report reads better in the order they were
+  // built (#1, #2, …).
+  const teamRows = rows.filter((r) => r.team === team).reverse();
+  const color = team === "us" ? teamColors.usColor : teamColors.opponentColor;
 
   function renderCard(row: TacticalSnapshotRow) {
+    // Words-only analyses (e.g. about one player) skip the empty pitch.
+    const hasDrawing =
+      row.positions.length > 0 || row.ball != null || row.markers.length > 0 || row.arrows.length > 0;
     return (
       <View key={row.id} style={styles.card} wrap={false}>
         <View style={styles.cardRow}>
-          <PdfTacticalPitch row={row} teamColors={teamColors} />
+          {hasDrawing && <PdfTacticalPitch row={row} teamColors={teamColors} />}
           <View style={styles.cardBody}>
             <Text style={styles.cardTitle}>{row.title}</Text>
-            <MomentBadges moment={row.moment} submoment={row.submoment} videoUrl={row.videoUrl} labels={labels} />
+            <MomentBadges
+              moment={row.moment}
+              submoment={row.submoment}
+              playerName={row.player?.name}
+              videoUrl={row.videoUrl}
+              labels={labels}
+            />
             {row.notes && <Text style={styles.notes}>{row.notes}</Text>}
+            {row.videoUrl && <PrintedLink url={row.videoUrl} />}
           </View>
         </View>
       </View>
@@ -312,8 +370,8 @@ function TacticalTeamSection({
 
   if (teamRows.length === 0) {
     return (
-      <View>
-        <Text style={styles.teamTitle}>{teamLabel}</Text>
+      <View wrap={false}>
+        <TeamHeading label={teamLabel} color={color} count={0} />
         <Text style={styles.muted}>{labels.noTacticalSnapshots}</Text>
       </View>
     );
@@ -325,7 +383,7 @@ function TacticalTeamSection({
           break can strand "Adversário" alone at the bottom of a page with
           every one of its snapshots starting fresh on the next. */}
       <View wrap={false}>
-        <Text style={styles.teamTitle}>{teamLabel}</Text>
+        <TeamHeading label={teamLabel} color={color} count={teamRows.length} />
         {renderCard(teamRows[0])}
       </View>
       {teamRows.slice(1).map(renderCard)}
@@ -337,33 +395,38 @@ function VideoTeamSection({
   team,
   teamLabel,
   rows,
+  teamColors,
   labels,
 }: {
   team: Team;
   teamLabel: string;
   rows: PreparationVideoRow[];
+  teamColors: TeamColors;
   labels: PreGamePdfLabels;
 }) {
-  const teamRows = rows.filter((r) => r.team === team);
+  const teamRows = rows.filter((r) => r.team === team).reverse();
+  const color = team === "us" ? teamColors.usColor : teamColors.opponentColor;
 
   function renderCard(row: PreparationVideoRow) {
     return (
       <View key={row.id} style={styles.card} wrap={false}>
-        <MomentBadges moment={row.category} submoment={row.submoment} videoUrl={row.url} labels={labels} />
-        {row.player && (
-          <Text style={styles.muted}>
-            {labels.videoPlayerPrefix} {row.player.name}
-          </Text>
-        )}
+        <MomentBadges
+          moment={row.category}
+          submoment={row.submoment}
+          playerName={row.player?.name}
+          videoUrl={row.url}
+          labels={labels}
+        />
         {row.notes && <Text style={styles.notes}>{row.notes}</Text>}
+        <PrintedLink url={row.url} />
       </View>
     );
   }
 
   if (teamRows.length === 0) {
     return (
-      <View>
-        <Text style={styles.teamTitle}>{teamLabel}</Text>
+      <View wrap={false}>
+        <TeamHeading label={teamLabel} color={color} count={0} />
         <Text style={styles.muted}>{labels.noVideos}</Text>
       </View>
     );
@@ -372,7 +435,7 @@ function VideoTeamSection({
   return (
     <View>
       <View wrap={false}>
-        <Text style={styles.teamTitle}>{teamLabel}</Text>
+        <TeamHeading label={teamLabel} color={color} count={teamRows.length} />
         {renderCard(teamRows[0])}
       </View>
       {teamRows.slice(1).map(renderCard)}
@@ -385,12 +448,24 @@ export default function PreGamePdf({
   labels,
   teamColors,
   generatedAt,
+  locale,
 }: {
   data: PreGameReportData;
   labels: PreGamePdfLabels;
   teamColors: TeamColors;
   generatedAt: Date;
+  locale: string;
 }) {
+  const matchDate = data.matchDate
+    ? new Date(data.matchDate).toLocaleString(locale, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
   return (
     <Document>
       <Page size="A4" style={styles.page} wrap>
@@ -401,14 +476,22 @@ export default function PreGamePdf({
                 {data.ourTeamName} vs {data.opponentName}
               </Text>
               <Text style={styles.subtitle}>{labels.title}</Text>
+              {matchDate && (
+                <Text style={styles.matchDate}>
+                  {labels.matchDateLabel}: {matchDate}
+                </Text>
+              )}
             </View>
             <Text style={styles.generatedOn}>
-              {labels.generatedOn} {generatedAt.toLocaleDateString()}
+              {labels.generatedOn} {generatedAt.toLocaleDateString(locale)}
             </Text>
           </View>
         </View>
 
-        <Text style={[styles.sectionTitle, { color: teamColors.usColor, borderBottomColor: teamColors.usColor }]}>
+        <Text
+          minPresenceAhead={140}
+          style={[styles.sectionTitle, { color: teamColors.usColor, borderBottomColor: teamColors.usColor }]}
+        >
           {labels.tacticalSectionTitle}
         </Text>
         <TacticalTeamSection
@@ -426,11 +509,26 @@ export default function PreGamePdf({
           labels={labels}
         />
 
-        <Text style={[styles.sectionTitle, { color: teamColors.usColor, borderBottomColor: teamColors.usColor }]}>
+        <Text
+          minPresenceAhead={140}
+          style={[styles.sectionTitle, { color: teamColors.usColor, borderBottomColor: teamColors.usColor }]}
+        >
           {labels.videoSectionTitle}
         </Text>
-        <VideoTeamSection team="us" teamLabel={labels.ourTeamLabel} rows={data.videoRows} labels={labels} />
-        <VideoTeamSection team="opponent" teamLabel={labels.opponentLabel} rows={data.videoRows} labels={labels} />
+        <VideoTeamSection
+          team="us"
+          teamLabel={labels.ourTeamLabel}
+          rows={data.videoRows}
+          teamColors={teamColors}
+          labels={labels}
+        />
+        <VideoTeamSection
+          team="opponent"
+          teamLabel={labels.opponentLabel}
+          rows={data.videoRows}
+          teamColors={teamColors}
+          labels={labels}
+        />
 
         <View style={styles.footer} fixed>
           <Text>{labels.footerNote}</Text>

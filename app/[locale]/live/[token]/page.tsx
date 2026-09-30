@@ -1,6 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import type { Locale } from "@/i18n/routing";
-import { getLiveFeedByToken, getLiveSquadByToken } from "../actions";
+import { getLiveFeedByToken, getLiveOpponentSquadByToken, getLiveSquadByToken } from "../actions";
 import LiveGuestView from "../LiveGuestView";
 
 export default async function LiveGuestPage({
@@ -12,7 +12,11 @@ export default async function LiveGuestPage({
   setRequestLocale(locale);
   const t = await getTranslations("dashboard");
 
-  const [feed, ourSquad] = await Promise.all([getLiveFeedByToken(token), getLiveSquadByToken(token)]);
+  const [feed, ourSquad, opponentSquad] = await Promise.all([
+    getLiveFeedByToken(token),
+    getLiveSquadByToken(token),
+    getLiveOpponentSquadByToken(token),
+  ]);
 
   if (!feed) {
     return (
@@ -22,5 +26,5 @@ export default async function LiveGuestPage({
     );
   }
 
-  return <LiveGuestView token={token} initialFeed={feed} ourSquad={ourSquad} />;
+  return <LiveGuestView token={token} initialFeed={feed} ourSquad={ourSquad} opponentSquad={opponentSquad} />;
 }

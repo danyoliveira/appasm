@@ -12,6 +12,9 @@ export interface LiveMatchTeams {
   // the fixture says, not necessarily "us", so anything scoped to our own
   // team only (e.g. Modo GK) needs this to know which side to use.
   ourSide: "home" | "away";
+  // The opponent's API-Football id — null for a club typed by hand (no
+  // squad to offer in the match sheet).
+  opponentTeamId: number | null;
 }
 
 // Shared by the authenticated dashboard path and the token-based guest path
@@ -47,6 +50,7 @@ export async function resolveLiveMatchTeams(
       awayName: away.name,
       awayLogo: away.logo,
       ourSide: manualRow.is_home ? "home" : "away",
+      opponentTeamId: manualRow.opponent_team_id ?? null,
     };
   }
 
@@ -61,5 +65,6 @@ export async function resolveLiveMatchTeams(
     awayName: fixture.teams.away.name,
     awayLogo: fixture.teams.away.logo,
     ourSide: fixture.teams.home.id === teamId ? "home" : "away",
+    opponentTeamId: fixture.teams.home.id === teamId ? fixture.teams.away.id : fixture.teams.home.id,
   };
 }

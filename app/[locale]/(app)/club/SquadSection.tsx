@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   setPlayerAvailability,
   setPlayerExcluded,
@@ -21,11 +22,14 @@ import {
   POSITION_ORDER,
   compareSquadDefault,
   StatusControl,
-  InjuryConfirmBanner,
+  InjuryPendingChip,
   type AvailabilityInfo,
   type PendingInjury,
   type PlayerSeasonStat,
 } from "./playerShared";
+import { EMPTY_PLAYER_PROFILE, type PlayerProfile } from "./playerProfile";
+import { FootIndicator, PositionChips } from "./PlayerProfileBadges";
+import PlayerProfileEditor from "./PlayerProfileEditor";
 import InjuryDetailsModal, { InjuryReturnBanner } from "./InjuryTracking";
 import ManualPlayerDialog, { type ManualPlayerInfo } from "./ManualPlayerDialog";
 import MergeSuggestions, { type MergeSuggestionView } from "./MergeSuggestions";
@@ -166,6 +170,7 @@ export default function SquadSection({
   dueReturnByPlayerId,
   statsByPlayerId: externalStatsByPlayerId,
   internalStatsByPlayerId = new Map(),
+  profileByPlayerId = {},
   flagUrlByPlayerId,
   isCoach,
   manualPlayers = [],
@@ -182,6 +187,8 @@ export default function SquadSection({
   statsByPlayerId: Map<number, PlayerSeasonStat>;
   // Coach-entered numbers ("interna").
   internalStatsByPlayerId?: Map<number, SquadStat>;
+  // The coach's specific position(s) and preferred foot, where set.
+  profileByPlayerId?: Record<number, PlayerProfile>;
   flagUrlByPlayerId: Map<number, string | null>;
   isCoach: boolean;
   // Hand-added players (they're also in `players`) — badge + edit.
@@ -201,6 +208,20 @@ export default function SquadSection({
     | null
   >(null);
   const [nameFilter, setNameFilter] = useState("");
+  // Injuries the external source reports that the coach hasn't answered yet
+  // — gathered in one panel above the squad instead of a big yellow box in
+  // every affected row.
+  const pendingInjuries = useMemo(
+    () =>
+      players.flatMap((player) => {
+        const injury = injuriesByPlayerId.get(player.id);
+        if (!injury || injury.key === availabilityByPlayerId.get(player.id)?.lastSeenInjuryKey) return [];
+        return [{ player, injury }];
+      }),
+    [players, injuriesByPlayerId, availabilityByPlayerId],
+  );
+  const [injuriesPanelOpen, setInjuriesPanelOpen] = useState(true);
+  const [confirmDismissAll, setConfirmDismissAll] = useState(false);
   // External (API) is the more reliable default; players created from
   // scratch have no external data, so they always show their internal one.
   const [statSource, setStatSource] = useState<StatSource>("external");
@@ -385,6 +406,15 @@ export default function SquadSection({
     });
   }
 
+  function handleDismissAllInjuries() {
+    const list = pendingInjuries;
+    startTransition(async () => {
+      await Promise.all(list.map(({ player, injury }) => dismissApiInjury(teamId, player.id, player.name, injury.key)));
+      setConfirmDismissAll(false);
+      router.refresh();
+    });
+  }
+
   function handleInjuryModalSubmit(description: string, expectedReturnAt: string | null) {
     if (!injuryModal) return;
     const { player } = injuryModal;
@@ -434,7 +464,7 @@ export default function SquadSection({
           t={t}
         />
         {isCoach && needsConfirmation && pendingInjury && (
-          <InjuryConfirmBanner
+          <InjuryPendingChip
             pendingInjury={pendingInjury}
             isPending={isPending}
             onResolve={(isReal) => handleResolveInjury(player, pendingInjury.key, isReal, pendingInjury.reason)}
@@ -473,6 +503,17 @@ export default function SquadSection({
             {showExcluded ? "+" : "×"}
           </button>
         )}
+        {isCoach && (
+          <span className="absolute right-10 top-2 flex h-6 items-center">
+            <PlayerProfileEditor
+              variant="icon"
+              teamId={teamId}
+              playerId={player.id}
+              playerName={shortenPlayerName(player.name)}
+              profile={profileByPlayerId[player.id] ?? EMPTY_PLAYER_PROFILE}
+            />
+          </span>
+        )}
         <div className="flex items-center gap-3">
           <div className="relative shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -489,7 +530,8 @@ export default function SquadSection({
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
+            {/* Room on the right for the edit / exclude buttons. */}
+            <div className={`flex min-w-0 items-center gap-1.5 ${isCoach ? "pr-12" : ""}`}>
               <Link
                 href={`/club/player/${player.id}`}
                 className="block truncate text-sm font-semibold hover:text-accent hover:underline"
@@ -498,9 +540,18 @@ export default function SquadSection({
               </Link>
               {renderManualTag(player)}
             </div>
-            <span className="mt-1 block w-fit rounded-full bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-              {translatePosition(player.position, t)}
-            </span>
+            {/* The coach's specific position(s) once set, the external group
+                ("Defesa") until then — and the preferred foot. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <PositionChips
+                profile={profileByPlayerId[player.id]}
+                fallbackPosition={player.position}
+                t={t}
+                size="md"
+                full
+              />
+              <FootIndicator foot={profileByPlayerId[player.id]?.preferredFoot} t={t} />
+            </div>
           </div>
         </div>
 
@@ -571,6 +622,9 @@ export default function SquadSection({
                     onSort={onSort}
                   />
                 )}
+                <th className="px-2 py-2 text-left" title={t("preferredFootLabel")}>
+                  {t("preferredFootShortLabel")}
+                </th>
                 <SortableHeader
                   label={t("playerStatAppearances")}
                   sortKey="appearances"
@@ -601,7 +655,7 @@ export default function SquadSection({
                 />
                 <th className="px-2 py-2 text-left">{t("squadColumnStatus")}</th>
                 {isCoach && (
-                  <th className="w-8 px-1 py-2 text-left">
+                  <th className="w-14 px-1 py-2 text-left">
                     <span className="sr-only">{t("squadColumnActions")}</span>
                   </th>
                 )}
@@ -650,11 +704,16 @@ export default function SquadSection({
                     </td>
                     {!isGoalkeeperTable && (
                       <td className="px-2 py-2">
-                        <span className="inline-block rounded-full bg-background px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
-                          {translatePosition(player.position, t)}
-                        </span>
+                        <PositionChips
+                          profile={profileByPlayerId[player.id]}
+                          fallbackPosition={player.position}
+                          t={t}
+                        />
                       </td>
                     )}
+                    <td className="px-2 py-2">
+                      <FootIndicator foot={profileByPlayerId[player.id]?.preferredFoot} t={t} />
+                    </td>
                     <td className="px-2 py-2 text-center">{stats?.appearances ?? "-"}</td>
                     <td className="px-2 py-2 text-center font-semibold">
                       {stats?.minutes ?? "-"}
@@ -668,15 +727,24 @@ export default function SquadSection({
                     <td className="px-2 py-2">{renderStatusCell(player)}</td>
                     {isCoach && (
                       <td className="px-1 py-2">
-                        <button
-                          type="button"
-                          disabled={isPending}
-                          onClick={() => handleExcludeToggle(player, !showExcluded)}
-                          title={showExcluded ? t("restorePlayerButton") : t("excludePlayerButton")}
-                          className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs leading-none text-muted transition-colors hover:border-red-500 hover:text-red-500 disabled:opacity-50"
-                        >
-                          {showExcluded ? "+" : "×"}
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <PlayerProfileEditor
+                            variant="icon"
+                            teamId={teamId}
+                            playerId={player.id}
+                            playerName={shortenPlayerName(player.name)}
+                            profile={profileByPlayerId[player.id] ?? EMPTY_PLAYER_PROFILE}
+                          />
+                          <button
+                            type="button"
+                            disabled={isPending}
+                            onClick={() => handleExcludeToggle(player, !showExcluded)}
+                            title={showExcluded ? t("restorePlayerButton") : t("excludePlayerButton")}
+                            className="flex h-5 w-5 items-center justify-center rounded-full border border-border text-xs leading-none text-muted transition-colors hover:border-red-500 hover:text-red-500 disabled:opacity-50"
+                          >
+                            {showExcluded ? "+" : "×"}
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -692,6 +760,93 @@ export default function SquadSection({
   return (
     <div>
       {isCoach && <MergeSuggestions suggestions={mergeSuggestions} />}
+
+      {isCoach && pendingInjuries.length > 0 && (
+        <div className="mb-5 overflow-hidden rounded-2xl border border-amber-500/30 bg-amber-500/5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-sm text-amber-700 dark:text-amber-400">
+              ⚠
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                {t("injuriesPendingTitle")}
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium tabular-nums text-amber-800 dark:text-amber-400">
+                  {pendingInjuries.length}
+                </span>
+              </h3>
+              <p className="text-xs text-muted">{t("injuriesPendingHint")}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {pendingInjuries.length > 1 && (
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => setConfirmDismissAll(true)}
+                  className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:opacity-50"
+                >
+                  {t("injuriesDismissAll")}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setInjuriesPanelOpen((v) => !v)}
+                aria-expanded={injuriesPanelOpen}
+                className="rounded-full px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+              >
+                {injuriesPanelOpen ? t("matchTimelineShowLessShort") : t("matchTimelineShowAllShort")}
+              </button>
+            </div>
+          </div>
+          {injuriesPanelOpen && (
+            <div className="grid gap-2 border-t border-amber-500/20 p-3 sm:grid-cols-2">
+              {pendingInjuries.map(({ player, injury }) => (
+                <div
+                  key={player.id}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={player.photo || "/player-placeholder.svg"}
+                    alt=""
+                    className="h-9 w-9 shrink-0 rounded-full bg-background object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{shortenPlayerName(player.name)}</div>
+                    <div className="truncate text-xs text-amber-800 dark:text-amber-400">{injury.reason}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => handleResolveInjury(player, injury.key, true, injury.reason)}
+                      className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {t("confirmInjuryButton")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => handleResolveInjury(player, injury.key, false, injury.reason)}
+                      className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                      {t("dismissInjuryButton")}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <ConfirmDialog
+            open={confirmDismissAll}
+            tone="accent"
+            message={t("injuriesDismissAllConfirm", { count: pendingInjuries.length })}
+            confirmLabel={t("injuriesDismissAll")}
+            isPending={isPending}
+            onConfirm={handleDismissAllInjuries}
+            onCancel={() => setConfirmDismissAll(false)}
+          />
+        </div>
+      )}
 
       <div className="mb-5 rounded-2xl border border-border bg-surface p-3 shadow-sm">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

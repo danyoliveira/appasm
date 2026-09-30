@@ -72,7 +72,6 @@ export function shortenPlayerName(name: string): string {
 // covered (better than nothing, not guaranteed complete).
 const INJURY_TYPE_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
   "Missing Fixture": { pt: "Jogo em falta", es: "Partido no disputado", fr: "Match manqué" },
-  Suspended: { pt: "Suspenso", es: "Sancionado", fr: "Suspendu" },
   Illness: { pt: "Doença", es: "Enfermedad", fr: "Maladie" },
   Injured: { pt: "Lesionado", es: "Lesionado", fr: "Blessé" },
   Knock: { pt: "Pancada", es: "Golpe", fr: "Coup" },
@@ -95,7 +94,21 @@ const INJURY_TYPE_TRANSLATIONS: Record<string, { pt: string; es: string; fr: str
   "Not In Squad": { pt: "Fora do plantel", es: "Fuera de la plantilla", fr: "Hors groupe" },
   "Coach Decision": { pt: "Decisão técnica", es: "Decisión técnica", fr: "Décision technique" },
   "National Team": { pt: "Seleção nacional", es: "Selección nacional", fr: "Sélection nacional" },
+  "Red Card": { pt: "Suspenso (vermelho)", es: "Sancionado (roja)", fr: "Suspendu (rouge)" },
+  "Yellow Cards": { pt: "Acumulação de amarelos", es: "Acumulación de amarillas", fr: "Accumulation de jaunes" },
+  Suspended: { pt: "Suspenso", es: "Sancionado", fr: "Suspendu" },
+  "Lacking Match Fitness": { pt: "Falta de ritmo competitivo", es: "Falta de ritmo de competición", fr: "Manque de rythme" },
+  "Match Fitness": { pt: "Falta de ritmo competitivo", es: "Falta de ritmo de competición", fr: "Manque de rythme" },
+  Rest: { pt: "Descanso", es: "Descanso", fr: "Repos" },
+  "Loan Agreement": { pt: "Acordo de empréstimo", es: "Acuerdo de cesión", fr: "Accord de prêt" },
+  Unknown: { pt: "Motivo desconhecido", es: "Motivo desconocido", fr: "Motif inconnu" },
 };
+
+// The source is inconsistent about casing ("Coach's decision" vs
+// "Coach's Decision"), so exact matches ignore it.
+const INJURY_TYPE_BY_LOWER = new Map(
+  Object.entries(INJURY_TYPE_TRANSLATIONS).map(([key, value]) => [key.toLowerCase(), value]),
+);
 
 const BODY_PART_TRANSLATIONS: Record<string, { pt: string; es: string; fr: string }> = {
   Muscle: { pt: "muscular", es: "muscular", fr: "musculaire" },
@@ -126,7 +139,7 @@ const INJURY_WORD: Record<"pt" | "es" | "fr", string> = {
 export function translateInjuryType(type: string, locale: string): string {
   if (locale !== "pt" && locale !== "es" && locale !== "fr") return type;
 
-  const exact = INJURY_TYPE_TRANSLATIONS[type];
+  const exact = INJURY_TYPE_BY_LOWER.get(type.trim().toLowerCase());
   if (exact) return exact[locale];
 
   const match = type.match(/^(.+?)\s+Injury$/i);
@@ -159,6 +172,10 @@ const NON_INJURY_KEYWORDS = [
   "inactive",
   "quota",
   "missing fixture",
+  "red card",
+  "yellow card",
+  "fitness",
+  "loan",
 ];
 
 export function isNonInjuryReason(reason: string): boolean {
@@ -274,6 +291,51 @@ export function StatusControl({
   );
 }
 
+// The squad list's version of the prompt below: one line — what was
+// reported, then confirm / dismiss — so a row keeps its height even when
+// half the squad has something pending. The full list with names sits in
+// the "Lesões por confirmar" panel above the squad.
+export function InjuryPendingChip({
+  pendingInjury,
+  isPending,
+  onResolve,
+  t,
+}: {
+  pendingInjury: PendingInjury;
+  isPending: boolean;
+  onResolve: (isReal: boolean) => void;
+  t: (key: string, values?: Record<string, string>) => string;
+}) {
+  return (
+    <div
+      title={t("apiInjuryPrompt", { reason: pendingInjury.reason })}
+      className="flex w-fit max-w-full items-center gap-1 rounded-full bg-amber-500/15 py-0.5 pl-2 pr-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-400"
+    >
+      <span className="min-w-0 truncate">⚠ {pendingInjury.reason}</span>
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => onResolve(true)}
+        title={t("confirmInjuryButton")}
+        aria-label={t("confirmInjuryButton")}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-[10px] text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        ✓
+      </button>
+      <button
+        type="button"
+        disabled={isPending}
+        onClick={() => onResolve(false)}
+        title={t("dismissInjuryButton")}
+        aria-label={t("dismissInjuryButton")}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-[10px] text-muted transition-colors hover:text-foreground disabled:opacity-50"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 export function InjuryConfirmBanner({
   pendingInjury,
   isPending,
@@ -286,8 +348,8 @@ export function InjuryConfirmBanner({
   t: (key: string, values?: Record<string, string>) => string;
 }) {
   return (
-    <div className="rounded-xl bg-yellow-500/10 p-2.5 text-xs">
-      <p className="text-yellow-700 dark:text-yellow-500">
+    <div className="rounded-xl bg-amber-500/10 p-2.5 text-xs">
+      <p className="text-amber-800 dark:text-amber-400">
         {t("apiInjuryPrompt", { reason: pendingInjury.reason })}
       </p>
       <div className="mt-2 flex gap-2">

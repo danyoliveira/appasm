@@ -3,7 +3,13 @@
 import { useTranslations } from "next-intl";
 import StaticTacticalPitch from "../(app)/preparations/StaticTacticalPitch";
 import LiveFormationPitch from "./LiveFormationPitch";
-import { defaultFormationPosition, lastName, type LineupPlayer } from "./liveStatsShared";
+import {
+  FORMATION_PRESETS,
+  applyFormation,
+  defaultFormationPosition,
+  lastName,
+  type LineupPlayer,
+} from "./liveStatsShared";
 
 // Controlled — the wizard/Match Mode owns the starting-XI array so saves can
 // be batched (Seguinte) or immediate (a drag in Match Mode), whichever fits.
@@ -16,6 +22,8 @@ export default function LiveFormationTeam({
   onPlayerClick,
   eventIcons,
   saving = false,
+  showPresets = false,
+  tokenColor,
 }: {
   teamName: string;
   players: LineupPlayer[];
@@ -29,13 +37,45 @@ export default function LiveFormationTeam({
   eventIcons?: Record<string, string[]>;
   // A drag is still being stored — blocks the next one until it is.
   saving?: boolean;
+  // The pre-game formation step: one-tap systems (4-3-3, 4-4-2, …) above
+  // the pitch. Off in Match Mode, where a stray tap would move everyone.
+  showPresets?: boolean;
+  // The club's colour for this side's tokens, so the two pitches tell the
+  // teams apart at a glance.
+  tokenColor?: { background: string; text: string };
 }) {
   const t = useTranslations("dashboard");
   const namedSubs = substitutes?.filter((p) => p.name.trim()) ?? [];
 
   return (
     <div className="rounded-2xl border border-border bg-background p-4">
-      <h4 className="text-sm font-semibold">{teamName}</h4>
+      <h4 className="flex items-center gap-2 text-sm font-semibold">
+        {tokenColor && (
+          <span
+            aria-hidden
+            className="h-3 w-3 shrink-0 rounded-full ring-1 ring-black/15"
+            style={{ backgroundColor: tokenColor.background }}
+          />
+        )}
+        {teamName}
+      </h4>
+      {showPresets && canEdit && onChange && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+            {t("liveFormationPresetLabel")}
+          </span>
+          {FORMATION_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => onChange(applyFormation(players, preset.lines))}
+              className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-medium tabular-nums text-muted transition-colors hover:border-accent hover:text-accent"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="relative mt-3">
         {canEdit && onChange ? (
           <>
@@ -44,6 +84,7 @@ export default function LiveFormationTeam({
               onChange={onChange}
               onPlayerClick={onPlayerClick}
               eventIcons={eventIcons}
+              tokenColor={tokenColor}
             />
             {saving && (
               <div className="absolute inset-0 flex items-start justify-center rounded-lg bg-black/10 pt-3">
@@ -57,6 +98,16 @@ export default function LiveFormationTeam({
         ) : (
           <StaticTacticalPitch
             size="lg"
+            teamColors={
+              tokenColor
+                ? {
+                    usColor: tokenColor.background,
+                    usTextColor: tokenColor.text,
+                    opponentColor: tokenColor.background,
+                    opponentTextColor: tokenColor.text,
+                  }
+                : undefined
+            }
             positions={players
               .map((p, i) => ({ p, i }))
               .filter(({ p }) => p.name.trim())

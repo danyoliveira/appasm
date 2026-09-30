@@ -83,6 +83,8 @@ export default async function PreparationListPage({
             isHome: fx.teams.home.id === teamId,
             isPrepared: preparedFixtureIds.has(fx.fixture.id),
             isFinished: finishedFixtureIds.has(fx.fixture.id),
+            goalsFor: fx.teams.home.id === teamId ? fx.goals.home : fx.goals.away,
+            goalsAgainst: fx.teams.home.id === teamId ? fx.goals.away : fx.goals.home,
           };
         };
         // Past games only show up once actually prepared (i.e. someone
@@ -115,7 +117,7 @@ export default async function PreparationListPage({
     const { data: manualRows } = await supabase
       .from("manual_preparations")
       .select(
-        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_name, competition_logo, is_home, finished_at",
+        "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_name, competition_logo, is_home, finished_at, goals_for, goals_against",
       )
       .eq("team_id", teamId)
       .order("match_date", { ascending: true });
@@ -133,6 +135,8 @@ export default async function PreparationListPage({
         isHome: row.is_home,
         isPrepared: true,
         isFinished: row.finished_at != null,
+        goalsFor: row.goals_for,
+        goalsAgainst: row.goals_against,
         isManual: true,
       }));
       pastFixtureRows = [
@@ -150,10 +154,15 @@ export default async function PreparationListPage({
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("navPreparation")}</h1>
-      <p className="mt-2 text-sm text-muted">{t("preparationPickFixtureSubtitle")}</p>
-
-      {isCoach && <AddManualPreparation competitions={competitionOptions} />}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("navPreparation")}</h1>
+          <p className="mt-2 text-sm text-muted">
+            {isCoach ? t("preparationPickFixtureSubtitle") : t("preparationPickFixtureViewerSubtitle")}
+          </p>
+        </div>
+        {isCoach && <AddManualPreparation competitions={competitionOptions} />}
+      </div>
 
       <PreparationFixtureList
         past={pastFixtureRows}
@@ -181,7 +190,7 @@ export default async function PreparationListPage({
           finishedBadge: t("preparationFinishedBadge"),
           viewAction: t("preparationViewButton"),
           sectionInProgress: t("prepSectionInProgress"),
-          sectionInProgressHint: t("prepSectionInProgressHint"),
+          sectionInProgressHint: isCoach ? t("prepSectionInProgressHint") : t("prepSectionInProgressViewerHint"),
           sectionUpcoming: t("prepSectionUpcoming"),
           sectionFinished: t("prepSectionFinished"),
           toFinishBadge: t("prepToFinishBadge"),

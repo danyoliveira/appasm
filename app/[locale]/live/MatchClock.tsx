@@ -75,7 +75,7 @@ export default function MatchClock({
       <button
         type="button"
         onClick={onKickoff}
-        className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
+        className="whitespace-nowrap rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-foreground shadow-sm transition-opacity hover:opacity-90"
       >
         🏁 {t("liveStatsKickoffButton")}
       </button>
@@ -106,15 +106,22 @@ export default function MatchClock({
 
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-accent">
+      <span
+        className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+          phase === "ended" ? "bg-background text-muted ring-1 ring-border" : "bg-accent/10 text-accent"
+        }`}
+      >
+        {(phase === "first-half" || phase === "second-half") && (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+        )}
         {t(phaseLabelKey[phase])}
       </span>
-      <span className="text-lg font-semibold tabular-nums">{formatClock(elapsedMs)}</span>
+      <span className="text-2xl font-bold tabular-nums leading-tight">{formatClock(elapsedMs)}</span>
       {canControl && phase === "first-half" && (
         <button
           type="button"
           onClick={onHalftime}
-          className="mt-1 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent"
+          className="mt-1 whitespace-nowrap rounded-full border border-border bg-background px-4 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-accent hover:text-accent"
         >
           {t("liveStatsHalftimeButton")}
         </button>
@@ -123,7 +130,7 @@ export default function MatchClock({
         <button
           type="button"
           onClick={onSecondHalf}
-          className="mt-1 rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground transition-opacity hover:opacity-90"
+          className="mt-1 whitespace-nowrap rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground transition-opacity hover:opacity-90"
         >
           {t("liveStatsSecondHalfButton")}
         </button>
@@ -132,7 +139,7 @@ export default function MatchClock({
         <button
           type="button"
           onClick={onFullTime}
-          className="mt-1 rounded-full bg-red-500 px-3 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+          className="mt-1 whitespace-nowrap rounded-full bg-red-500 px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
         >
           {t("liveStatsFullTimeButton")}
         </button>
@@ -141,7 +148,7 @@ export default function MatchClock({
         <button
           type="button"
           onClick={onRestart}
-          className="mt-0.5 text-[11px] font-medium text-muted hover:text-red-500 hover:underline"
+          className="mt-0.5 whitespace-nowrap text-[11px] font-medium text-muted hover:text-red-500 hover:underline"
         >
           ↺ {t("liveStatsRestartButton")}
         </button>
