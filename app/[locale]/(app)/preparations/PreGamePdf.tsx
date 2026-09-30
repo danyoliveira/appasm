@@ -356,7 +356,7 @@ function TacticalTeamSection({
             <MomentBadges
               moment={row.moment}
               submoment={row.submoment}
-              playerName={row.player?.name}
+              playerName={[row.player?.name, row.player?.role].filter(Boolean).join(" · ") || null}
               videoUrl={row.videoUrl}
               labels={labels}
             />
@@ -413,7 +413,7 @@ function VideoTeamSection({
         <MomentBadges
           moment={row.category}
           submoment={row.submoment}
-          playerName={row.player?.name}
+          playerName={[row.player?.name, row.player?.role].filter(Boolean).join(" · ") || null}
           videoUrl={row.url}
           labels={labels}
         />

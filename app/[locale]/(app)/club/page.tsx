@@ -42,7 +42,7 @@ import { CLUB_NOTE_COLUMNS, clubNoteFromRow, type NoteItem } from "../notes/note
 import TeamDossier, { type DossierFile, type DossierPlayer } from "./TeamDossier";
 import { CLUB_DOSSIER_CATEGORIES } from "./dossierShared";
 import { loadDossierFiles } from "@/lib/dossier";
-import { loadPlayerProfiles } from "@/lib/playerProfiles";
+import { loadCopyablePositions, loadPlayerProfiles } from "@/lib/playerProfiles";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
 import { aggregateLivePlayerTotals } from "@/lib/livePlayerStats";
@@ -243,6 +243,19 @@ export default async function ClubPage({
     const flag = resolveFlagUrl(row.nationality);
     if (flag && !flagUrlByPlayerId.has(row.id)) flagUrlByPlayerId.set(row.id, flag);
   });
+
+  // Back at a club coached before: positions from the earlier spell that
+  // this one's squad is still missing, offered as a one-click copy.
+  const copySource =
+    isCoach && teamId && currentStintId
+      ? await loadCopyablePositions(supabase, { teamId, stintId: currentStintId, current: playerProfiles })
+      : null;
+  const currentSquadIds = new Set((squad?.[0]?.players ?? []).map((p) => p.id));
+  const copyableCount = copySource?.rows.filter((row) => currentSquadIds.has(row.playerId)).length ?? 0;
+  const copyablePositions =
+    copySource && copyableCount > 0
+      ? { count: copyableCount, startedAt: copySource.startedAt, endedAt: copySource.endedAt }
+      : null;
 
   const manualPlayerInfos: ManualPlayerInfo[] = manualRows.map((row) => ({
     id: row.id,
@@ -758,6 +771,7 @@ export default async function ClubPage({
             statsByPlayerId={playerStatsById}
             internalStatsByPlayerId={internalStatsById}
             profileByPlayerId={playerProfiles}
+            copyablePositions={copyablePositions}
             flagUrlByPlayerId={flagUrlByPlayerId}
             isCoach={isCoach}
             manualPlayers={manualPlayerInfos}

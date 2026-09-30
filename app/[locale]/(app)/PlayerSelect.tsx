@@ -10,12 +10,15 @@ export interface PlayerSelectOption {
   // API-Football position ("Goalkeeper", "Defender", …); anything else
   // (or missing) is listed under Médio.
   position?: string | null;
+  // The coach's specific position(s), already abbreviated ("DD · ED").
+  role?: string | null;
 }
 
 const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"] as const;
 
 // The app's player dropdown: grouped by position, shirt number first
-// ("8 · F. Aursnes"), numbers in order inside each group.
+// ("8 · F. Aursnes"), numbers in order inside each group — with the coach's
+// specific position after the name where there is one ("… (DD · ED)").
 export default function PlayerSelect({
   players,
   value,
@@ -58,6 +61,7 @@ export default function PlayerSelect({
             <option key={p.id} value={p.id}>
               {p.number != null ? `${p.number} · ` : ""}
               {p.name}
+              {p.role ? ` (${p.role})` : ""}
             </option>
           ))}
         </optgroup>

@@ -69,7 +69,7 @@ export default function PreGameAnalysis({
     return Array.from(byId.values());
   });
   const ourPlayers: VideoPlayerOption[] = [
-    ...ourSquad.map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),
+    ...ourSquad.map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position, role: p.role })),
     ...customPlayers
       .filter((p) => p.team === "us")
       .map((p) => ({ id: p.id, name: p.name, number: p.number, position: p.position })),

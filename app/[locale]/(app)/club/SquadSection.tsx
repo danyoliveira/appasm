@@ -27,7 +27,18 @@ import {
   type PendingInjury,
   type PlayerSeasonStat,
 } from "./playerShared";
-import { EMPTY_PLAYER_PROFILE, type PlayerProfile } from "./playerProfile";
+import {
+  DETAILED_POSITIONS,
+  EMPTY_PLAYER_PROFILE,
+  POSITION_GROUP,
+  PREFERRED_FEET,
+  positionLabel,
+  type CopyablePositionsSummary,
+  type DetailedPosition,
+  type PlayerProfile,
+  type PreferredFoot,
+} from "./playerProfile";
+import CopyPositionsBanner from "./CopyPositionsBanner";
 import { FootIndicator, PositionChips } from "./PlayerProfileBadges";
 import PlayerProfileEditor from "./PlayerProfileEditor";
 import InjuryDetailsModal, { InjuryReturnBanner } from "./InjuryTracking";
@@ -68,12 +79,18 @@ function sortValue(
   player: SquadPlayer,
   key: SortKey,
   stats: SquadStat | undefined,
+  profile: PlayerProfile | undefined,
 ): string | number {
   switch (key) {
     case "name":
       return player.name.toLowerCase();
-    case "position":
-      return POSITION_ORDER[player.position] ?? 99;
+    case "position": {
+      // Line first (defence → midfield → attack), then the coach's specific
+      // position inside it (right back before centre back…); players
+      // without one go last in their line.
+      const specific = profile?.primaryPosition ? DETAILED_POSITIONS.indexOf(profile.primaryPosition) : 99;
+      return (POSITION_ORDER[player.position] ?? 99) * 100 + specific;
+    }
     case "appearances":
       return stats?.appearances ?? 0;
     case "minutes":
@@ -94,6 +111,7 @@ function sortPlayers(
   sort: SortState,
   statsByPlayerId: Map<number, SquadStat>,
   isGoalkeeperTable: boolean,
+  profileByPlayerId: Record<number, PlayerProfile>,
 ): SquadPlayer[] {
   if (sort.key === null) {
     return [...list].sort((a, b) =>
@@ -101,8 +119,8 @@ function sortPlayers(
     );
   }
   const sorted = [...list].sort((a, b) => {
-    const va = sortValue(a, sort.key as SortKey, statsByPlayerId.get(a.id));
-    const vb = sortValue(b, sort.key as SortKey, statsByPlayerId.get(b.id));
+    const va = sortValue(a, sort.key as SortKey, statsByPlayerId.get(a.id), profileByPlayerId[a.id]);
+    const vb = sortValue(b, sort.key as SortKey, statsByPlayerId.get(b.id), profileByPlayerId[b.id]);
     if (typeof va === "string" && typeof vb === "string") return va.localeCompare(vb);
     return (va as number) - (vb as number);
   });
@@ -154,6 +172,8 @@ function useSortState() {
 
 type ViewMode = "cards" | "table";
 
+const NO_PROFILES: Record<number, PlayerProfile> = {};
+
 // One look for every toggle group in the toolbar.
 const segmentedClass = "flex rounded-lg border border-border bg-background p-0.5";
 const segmentClass = (active: boolean) =>
@@ -170,7 +190,8 @@ export default function SquadSection({
   dueReturnByPlayerId,
   statsByPlayerId: externalStatsByPlayerId,
   internalStatsByPlayerId = new Map(),
-  profileByPlayerId = {},
+  profileByPlayerId = NO_PROFILES,
+  copyablePositions = null,
   flagUrlByPlayerId,
   isCoach,
   manualPlayers = [],
@@ -189,6 +210,9 @@ export default function SquadSection({
   internalStatsByPlayerId?: Map<number, SquadStat>;
   // The coach's specific position(s) and preferred foot, where set.
   profileByPlayerId?: Record<number, PlayerProfile>;
+  // Positions set in an earlier spell at this club that this one is
+  // still missing — offered as a one-click copy.
+  copyablePositions?: CopyablePositionsSummary | null;
   flagUrlByPlayerId: Map<number, string | null>;
   isCoach: boolean;
   // Hand-added players (they're also in `players`) — badge + edit.
@@ -274,7 +298,15 @@ export default function SquadSection({
 
   const manualNameClass = (player: SquadPlayer) =>
     manualById.has(player.id) ? "text-sky-700 dark:text-sky-400" : "";
-  const [positionFilter, setPositionFilter] = useState<string | null>(null);
+  // Line ("Defesa"), then — inside a line — the coach's specific position
+  // ("Defesa esquerdo"), matched against the main or the second one.
+  const [positionFilter, setPositionFilterRaw] = useState<string | null>(null);
+  const [subPositionFilter, setSubPositionFilter] = useState<DetailedPosition | null>(null);
+  const [footFilter, setFootFilter] = useState<PreferredFoot | null>(null);
+  function setPositionFilter(position: string | null) {
+    setPositionFilterRaw(position);
+    setSubPositionFilter(null);
+  }
   const [showExcludedRaw, setShowExcluded] = useState(false);
   const [view, setViewState] = useState<ViewMode>("table");
   // The coach's last choice is remembered; without one, phones start on
@@ -348,10 +380,38 @@ export default function SquadSection({
       const isExcluded = availabilityByPlayerId.get(p.id)?.excluded ?? false;
       if (isExcluded !== showExcluded) return false;
       const matchesName = !needle || p.name.toLowerCase().includes(needle);
-      const matchesPosition = !positionFilter || p.position === positionFilter;
-      return matchesName && matchesPosition;
+      const profile = profileByPlayerId[p.id];
+      // A specific position wins over its line: "Extremo direito" also finds
+      // the full-back who plays there as a second position.
+      const matchesPosition = subPositionFilter != null || !positionFilter || p.position === positionFilter;
+      const matchesSubPosition =
+        !subPositionFilter ||
+        profile?.primaryPosition === subPositionFilter ||
+        profile?.secondaryPosition === subPositionFilter;
+      const matchesFoot = !footFilter || profile?.preferredFoot === footFilter;
+      return matchesName && matchesPosition && matchesSubPosition && matchesFoot;
     });
-  }, [players, nameFilter, positionFilter, showExcluded, availabilityByPlayerId]);
+  }, [
+    players,
+    nameFilter,
+    positionFilter,
+    subPositionFilter,
+    footFilter,
+    showExcluded,
+    availabilityByPlayerId,
+    profileByPlayerId,
+  ]);
+
+  // The specific positions of the selected line (none for goalkeepers —
+  // there is only one).
+  const subPositions =
+    positionFilter && positionFilter !== "Goalkeeper"
+      ? DETAILED_POSITIONS.filter((p) => POSITION_GROUP[p] === positionFilter)
+      : [];
+  const anyFootSet = useMemo(
+    () => players.some((p) => profileByPlayerId[p.id]?.preferredFoot),
+    [players, profileByPlayerId],
+  );
 
   const outfieldPlayers = useMemo(
     () =>
@@ -360,8 +420,9 @@ export default function SquadSection({
         outfieldSort,
         statsByPlayerId,
         false,
+        profileByPlayerId,
       ),
-    [filteredPlayers, outfieldSort, statsByPlayerId],
+    [filteredPlayers, outfieldSort, statsByPlayerId, profileByPlayerId],
   );
 
   const goalkeepers = useMemo(
@@ -371,8 +432,9 @@ export default function SquadSection({
         gkSort,
         statsByPlayerId,
         true,
+        profileByPlayerId,
       ),
-    [filteredPlayers, gkSort, statsByPlayerId],
+    [filteredPlayers, gkSort, statsByPlayerId, profileByPlayerId],
   );
 
   function handleStatusChange(player: SquadPlayer, status: PlayerStatus) {
@@ -759,6 +821,8 @@ export default function SquadSection({
 
   return (
     <div>
+      {isCoach && copyablePositions && <CopyPositionsBanner teamId={teamId} summary={copyablePositions} />}
+
       {isCoach && <MergeSuggestions suggestions={mergeSuggestions} />}
 
       {isCoach && pendingInjuries.length > 0 && (
@@ -849,8 +913,9 @@ export default function SquadSection({
       )}
 
       <div className="mb-5 rounded-2xl border border-border bg-surface p-3 shadow-sm">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
+        {/* Line 1 — find a player, how the list is shown, add one. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[12rem] flex-1">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
               <Icon name="search" />
             </span>
@@ -861,6 +926,37 @@ export default function SquadSection({
               placeholder={t("squadFilterPlaceholder")}
               className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground outline-none transition-colors focus:border-accent"
             />
+          </div>
+          <div className={segmentedClass} title={t("squadStatSourceHint")}>
+            <span className="self-center px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              {t("squadStatSourceLabel")}
+            </span>
+            {(["external", "internal"] as const).map((source) => (
+              <button
+                key={source}
+                type="button"
+                onClick={() => setStatSource(source)}
+                aria-pressed={statSource === source}
+                className={segmentClass(statSource === source)}
+              >
+                {source === "external" ? t("squadStatSourceExternal") : t("squadStatSourceInternal")}
+              </button>
+            ))}
+          </div>
+          <div className={segmentedClass}>
+            {(["cards", "table"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setView(mode)}
+                aria-pressed={view === mode}
+                aria-label={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
+                title={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
+                className={`${segmentClass(view === mode)} flex items-center`}
+              >
+                <Icon name={mode === "cards" ? "grid" : "list"} className="h-3.5 w-3.5" />
+              </button>
+            ))}
           </div>
           {isCoach && (
             <button
@@ -874,78 +970,95 @@ export default function SquadSection({
           )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={segmentedClass}>
-              {[null, ...orderedPositions].map((pos) => (
+        {/* Filters — one labelled line each, so they read as a list instead
+            of a pile of buttons: line (with its specific positions right
+            under it once one is picked), then foot. */}
+        <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2.5 border-t border-border pt-3">
+          <span className="pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            {t("squadColumnPosition")}
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className={`${segmentedClass} flex-wrap`}>
+                {[null, ...orderedPositions].map((pos) => (
+                  <button
+                    key={pos ?? "all"}
+                    type="button"
+                    onClick={() => setPositionFilter(pos)}
+                    aria-pressed={positionFilter === pos}
+                    className={segmentClass(positionFilter === pos)}
+                  >
+                    {pos ? translatePosition(pos, t) : t("allPositions")}
+                  </button>
+                ))}
+              </div>
+              {isCoach && (excludedCount > 0 || showExcluded) && (
                 <button
-                  key={pos ?? "all"}
                   type="button"
-                  onClick={() => setPositionFilter(pos)}
-                  aria-pressed={positionFilter === pos}
-                  className={segmentClass(positionFilter === pos)}
+                  onClick={() => {
+                    // The badge always shows the full excluded count, ignoring
+                    // the name/position filters — carrying one of those over
+                    // when switching views made the list look like it was
+                    // missing players that the count promised were there.
+                    setPositionFilter(null);
+                    setFootFilter(null);
+                    setNameFilter("");
+                    setShowExcluded((v) => !v);
+                  }}
+                  aria-pressed={showExcluded}
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    showExcluded
+                      ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
+                      : "border-border text-muted hover:text-foreground"
+                  }`}
                 >
-                  {pos ? translatePosition(pos, t) : t("allPositions")}
+                  {t("excludedPlayersFilter", { count: excludedCount })}
                 </button>
-              ))}
+              )}
             </div>
-            {isCoach && (excludedCount > 0 || showExcluded) && (
-              <button
-                type="button"
-                onClick={() => {
-                  // The badge always shows the full excluded count, ignoring
-                  // the name/position filters — carrying one of those over
-                  // when switching views made the list look like it was
-                  // missing players that the count promised were there.
-                  setPositionFilter(null);
-                  setNameFilter("");
-                  setShowExcluded((v) => !v);
-                }}
-                aria-pressed={showExcluded}
-                className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  showExcluded
-                    ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400"
-                    : "border-border text-muted hover:text-foreground"
-                }`}
-              >
-                {t("excludedPlayersFilter", { count: excludedCount })}
-              </button>
+            {subPositions.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
+                {[null, ...subPositions].map((pos) => (
+                  <button
+                    key={pos ?? "all"}
+                    type="button"
+                    onClick={() => setSubPositionFilter(pos)}
+                    aria-pressed={subPositionFilter === pos}
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                      subPositionFilter === pos
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-background text-muted ring-1 ring-border hover:text-foreground"
+                    }`}
+                  >
+                    {pos ? positionLabel(pos, t) : t("allPositions")}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className={segmentedClass} title={t("squadStatSourceHint")}>
-              <span className="self-center px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                {t("squadStatSourceLabel")}
+          {anyFootSet && (
+            <>
+              <span className="pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                {t("preferredFootShortLabel")}
               </span>
-              {(["external", "internal"] as const).map((source) => (
-                <button
-                  key={source}
-                  type="button"
-                  onClick={() => setStatSource(source)}
-                  aria-pressed={statSource === source}
-                  className={segmentClass(statSource === source)}
-                >
-                  {source === "external" ? t("squadStatSourceExternal") : t("squadStatSourceInternal")}
-                </button>
-              ))}
-            </div>
-            <div className={segmentedClass}>
-              {(["cards", "table"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setView(mode)}
-                  aria-pressed={view === mode}
-                  aria-label={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
-                  title={mode === "cards" ? t("squadViewCards") : t("squadViewTable")}
-                  className={`${segmentClass(view === mode)} flex items-center`}
-                >
-                  <Icon name={mode === "cards" ? "grid" : "list"} className="h-3.5 w-3.5" />
-                </button>
-              ))}
-            </div>
-          </div>
+              <div>
+                <div className={`${segmentedClass} w-fit flex-wrap`}>
+                  {[null, ...PREFERRED_FEET].map((foot) => (
+                    <button
+                      key={foot ?? "all"}
+                      type="button"
+                      onClick={() => setFootFilter(foot)}
+                      aria-pressed={footFilter === foot}
+                      className={segmentClass(footFilter === foot)}
+                    >
+                      {foot ? t(`preferredFoot_${foot}`) : t("allFeet")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

@@ -30,6 +30,8 @@ export interface OpponentSquadOption {
   number: number | null;
   photo: string;
   position: string;
+  // The coach's specific position(s), abbreviated ("DD · ED") — ours only.
+  role?: string | null;
 }
 
 export interface OurSquadOption extends OpponentSquadOption {
@@ -47,6 +49,7 @@ export interface BenchOption {
   number: number | null;
   photo: string;
   position: string;
+  role?: string | null;
   team: Team;
   status?: PlayerStatus;
 }
@@ -880,7 +883,7 @@ export default function TacticalBoard({
                       <div
                         key={player.id}
                         onPointerDown={(e) => startDragFromBench(player, e)}
-                        title={player.name}
+                        title={player.role ? `${player.name} · ${player.role}` : player.name}
                         className="flex min-w-0 cursor-grab touch-none items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs transition-colors hover:border-accent active:cursor-grabbing"
                       >
                         <span className="w-4 shrink-0 text-center text-[10px] font-semibold tabular-nums text-muted">
@@ -909,7 +912,12 @@ export default function TacticalBoard({
                             />
                           )}
                         </span>
-                        <span className="min-w-0 truncate font-medium">{player.name}</span>
+                        <span className="min-w-0 flex-1 truncate font-medium">{player.name}</span>
+                        {player.role && (
+                          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-muted">
+                            {player.role}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

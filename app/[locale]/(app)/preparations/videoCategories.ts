@@ -29,4 +29,6 @@ export interface VideoPlayerOption {
   name: string;
   number?: number | null;
   position?: string | null;
+  // The coach's specific position(s), abbreviated ("DD · ED").
+  role?: string | null;
 }

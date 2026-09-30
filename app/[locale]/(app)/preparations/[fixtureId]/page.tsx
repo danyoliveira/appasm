@@ -37,6 +37,8 @@ import LiveStatsPanel from "../LiveStatsPanel";
 import LiveMatchRecapSection from "../LiveMatchRecapSection";
 import FinishPreparationBar from "../FinishPreparationBar";
 import PostGameNotes from "../PostGameNotes";
+import { loadPlayerProfiles } from "@/lib/playerProfiles";
+import { positionsShort } from "../../club/playerProfile";
 import { getLiveSession, type LiveSessionInfo } from "../liveStatsActions";
 import TeamCrest from "@/components/TeamCrest";
 import OpponentScouting from "../../OpponentScouting";
@@ -360,6 +362,7 @@ export default async function PreparationDetailPage({
     photo: string;
     position: string;
     status: PlayerStatus;
+    role: string | null;
   }[] = [];
   let tacticalSnapshots: TacticalSnapshotRow[] = [];
   if (match) {
@@ -393,6 +396,9 @@ export default async function PreparationDetailPage({
       (availabilityRows ?? []).map((row) => [row.player_id, row]),
     );
     const ourSquadResult = withManualPlayers(ourApiSquad, ourManualRows);
+    // The coach's specific positions for this spell ("DD · ED"), shown next
+    // to our players on the board, in the pickers and in the PDF.
+    const ourProfiles = teamId ? await loadPlayerProfiles(supabase, { teamId, stintId: currentStintId }) : {};
     ourSquad = (ourSquadResult[0]?.players ?? [])
       .filter((p) => !availabilityByPlayerId.get(p.id)?.excluded)
       .map((p) => ({
@@ -402,7 +408,9 @@ export default async function PreparationDetailPage({
         photo: p.photo,
         position: p.position,
         status: (availabilityByPlayerId.get(p.id)?.status as PlayerStatus) ?? "available",
+        role: positionsShort(ourProfiles[p.id], t),
       }));
+    const roleOf = (playerId: number) => ourSquad.find((p) => p.id === playerId)?.role ?? null;
     type LegacyPosition = Omit<TacticalPosition, "team"> & { team?: "us" | "opponent" };
     const totalSnapshots = tacticsRows?.length ?? 0;
     tacticalSnapshots = (tacticsRows ?? []).map((row, i) => {
@@ -438,7 +446,8 @@ export default async function PreparationDetailPage({
         arrows: isLegacyArray ? [] : (raw?.arrows ?? []),
         moment: isLegacyArray ? null : (raw?.moment ?? null),
         submoment: isLegacyArray ? null : (raw?.submoment ?? null),
-        player: isLegacyArray ? null : (raw?.player ?? null),
+        player:
+          isLegacyArray || !raw?.player ? null : { ...raw.player, role: roleOf(raw.player.id) },
         notes: row.notes,
         videoUrl: row.video_url,
         videoEmbedUrl: row.video_url ? getVideoEmbedUrl(row.video_url) : null,
@@ -486,7 +495,9 @@ export default async function PreparationDetailPage({
         embedUrl: getVideoEmbedUrl(row.url),
         category: row.category,
         submoment: row.submoment,
-        player: player ? { id: player.id, name: player.name, photo: player.photo } : null,
+        player: player
+          ? { id: player.id, name: player.name, photo: player.photo, role: ourSquadById.get(player.id)?.role ?? null }
+          : null,
         team: (row.team as "us" | "opponent") ?? "opponent",
       };
     });

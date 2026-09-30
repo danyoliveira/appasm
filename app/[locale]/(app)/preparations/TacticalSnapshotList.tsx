@@ -27,7 +27,8 @@ export interface TacticalSnapshotRow {
   moment: VideoCategory | null;
   submoment: GameSubmoment | null;
   // Set when the category is "Jogador".
-  player?: { id: number; name: string } | null;
+  // `role`: the coach's specific position(s) for that player ("DD · ED").
+  player?: { id: number; name: string; role?: string | null } | null;
   notes: string | null;
   videoUrl: string | null;
   videoEmbedUrl: string | null;
@@ -95,6 +96,7 @@ export default function TacticalSnapshotList({
                 {row.player && (
                   <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-border">
                     {row.player.name}
+                    {row.player.role && <span className="text-muted"> · {row.player.role}</span>}
                   </span>
                 )}
               </div>

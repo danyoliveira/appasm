@@ -18,7 +18,7 @@ export interface PreparationVideoRow {
   embedUrl: string | null;
   category: VideoCategory | null;
   submoment: GameSubmoment | null;
-  player: { id: number; name: string; photo: string } | null;
+  player: { id: number; name: string; photo: string; role?: string | null } | null;
   team: Team;
 }
 
@@ -160,6 +160,7 @@ export default function PreparationVideoList({
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={row.player.photo} alt="" className="h-3.5 w-3.5 rounded-full object-cover" />
                   {row.player.name}
+                  {row.player.role && <span className="text-muted">· {row.player.role}</span>}
                 </Link>
               )}
             </div>

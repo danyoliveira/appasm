@@ -28,6 +28,39 @@ export interface PlayerProfile {
   preferredFoot: PreferredFoot | null;
 }
 
+// One player's positions as stored for a given spell.
+export interface StoredPositions {
+  stintId: string;
+  playerId: number;
+  primaryPosition: DetailedPosition;
+  secondaryPosition: DetailedPosition | null;
+}
+
+// What the squad list needs to offer the copy.
+export interface CopyablePositionsSummary {
+  // How many players of the current squad would get a position.
+  count: number;
+  startedAt: string;
+  endedAt: string;
+}
+
+// Positions are kept per spell, so a coach back at a club starts without
+// them. This picks what can be brought over: from the most recent earlier
+// spell that has any, the players who have no main position yet in the
+// current one (nothing already set is ever overwritten).
+export function pickPositionsToCopy(
+  // Earlier spells at the club, most recent first.
+  previousStintIds: string[],
+  stored: StoredPositions[],
+  current: Record<number, PlayerProfile>,
+): StoredPositions[] {
+  for (const stintId of previousStintIds) {
+    const rows = stored.filter((row) => row.stintId === stintId && !current[row.playerId]?.primaryPosition);
+    if (rows.length > 0) return rows;
+  }
+  return [];
+}
+
 export const EMPTY_PLAYER_PROFILE: PlayerProfile = {
   primaryPosition: null,
   secondaryPosition: null,

@@ -15,6 +15,7 @@ import {
 import { getTeamsByCountry, getSquad, forgetCachedTeamData } from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
 import { isDetailedPosition, isPreferredFoot } from "./club/playerProfile";
+import { loadCopyablePositions, loadPlayerProfiles } from "@/lib/playerProfiles";
 import { getManualPlayers, withManualPlayers } from "@/lib/manualPlayers";
 import { parseLiveStatConfig, type LiveStatConfig } from "../live/liveStatConfig";
 import type { GameSubmoment, VideoCategory } from "./preparations/videoCategories";
@@ -1419,6 +1420,37 @@ export async function setPlayerProfile(
   if (footError) throw new Error(footError.message);
 
   revalidatePath("/", "layout");
+}
+
+// Brings the positions of the last spell at this club into the current one
+// — only for players who have none yet here. Worked out again on the
+// server, so it can't copy more than the banner promised.
+export async function copyPreviousPositions(teamId: number): Promise<number> {
+  const { supabase, coachId } = await requireCoach();
+  const stintId = await getCurrentStintId(supabase, teamId);
+  if (!stintId) return 0;
+
+  const current = await loadPlayerProfiles(supabase, { teamId, stintId });
+  const source = await loadCopyablePositions(supabase, { teamId, stintId, current });
+  if (!source) return 0;
+
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("player_body_metrics").upsert(
+    source.rows.map((row) => ({
+      team_id: teamId,
+      player_id: row.playerId,
+      stint_id: stintId,
+      primary_position: row.primaryPosition,
+      secondary_position: row.secondaryPosition,
+      updated_at: now,
+      updated_by: coachId,
+    })),
+    { onConflict: "team_id,player_id,stint_id" },
+  );
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/", "layout");
+  return source.rows.length;
 }
 
 export async function addPlayerWeightEntry(
