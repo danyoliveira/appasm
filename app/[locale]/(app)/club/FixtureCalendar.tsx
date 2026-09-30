@@ -24,6 +24,9 @@ export interface CalendarRow {
   manualKey?: string;
   // The game's preparation was finished (Concluída).
   preparationFinished?: boolean;
+  // Still to be played but without a real date (postponed, or past its
+  // kick-off with no result) — listed after the dated ones, as "Adiado".
+  postponed?: boolean;
 }
 
 const PAGE_SIZE = 5;
@@ -174,7 +177,8 @@ export default function FixtureCalendar({
     return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day");
   };
 
-  const next = future[0] ?? null;
+  // A postponed game is never "the next one".
+  const next = future[0] && !future[0].postponed ? future[0] : null;
   const upcoming = future.slice(next ? 1 : 0, futureCount + 1);
   const recent = past.slice(0, pastCount);
   const form = past
@@ -274,6 +278,11 @@ export default function FixtureCalendar({
                 ✓
               </span>
             )}
+            {row.postponed && (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-800 dark:text-amber-400">
+                {t("fixturePostponedBadge")}
+              </span>
+            )}
             {row.manualKey && (
               <span
                 className="shrink-0 rounded-full bg-sky-500/10 px-1.5 py-px text-[10px] font-medium text-sky-700 dark:text-sky-400"
@@ -304,7 +313,9 @@ export default function FixtureCalendar({
             <div className="flex shrink-0 items-center gap-2 px-1.5 py-1">{score}</div>
           )
         ) : (
-          <span className="shrink-0 text-sm font-medium tabular-nums text-muted">{time(row.date)}</span>
+          <span className="shrink-0 text-sm font-medium tabular-nums text-muted">
+            {row.postponed ? "—" : time(row.date)}
+          </span>
         )}
       </div>
     );

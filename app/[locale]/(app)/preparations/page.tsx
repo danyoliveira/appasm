@@ -10,6 +10,8 @@ import PreparationFixtureList, {
   type PreparationFixtureRow,
 } from "./PreparationFixtureList";
 import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
+import { hasNoRealDate, upcomingFixtures } from "@/lib/api-football/fixtureStatus";
+import { leagueLabel } from "../club/fixtureHelpers";
 
 export default async function PreparationListPage({
   params,
@@ -78,11 +80,12 @@ export default async function PreparationListPage({
             date: fx.fixture.date,
             opponentName: opponent.name,
             opponentLogo: opponent.logo,
-            competitionName: fx.league.name,
+            competitionName: leagueLabel(fx.league.name, t),
             competitionLogo: fx.league.logo,
             isHome: fx.teams.home.id === teamId,
             isPrepared: preparedFixtureIds.has(fx.fixture.id),
             isFinished: finishedFixtureIds.has(fx.fixture.id),
+            isPostponed: hasNoRealDate(fx),
             goalsFor: fx.teams.home.id === teamId ? fx.goals.home : fx.goals.away,
             goalsAgainst: fx.teams.home.id === teamId ? fx.goals.away : fx.goals.home,
           };
@@ -99,10 +102,9 @@ export default async function PreparationListPage({
           )
           .sort((a, b) => new Date(b.fixture.date).getTime() - new Date(a.fixture.date).getTime())
           .map(toRow);
-        futureFixtureRows = seasonFixtures
-          .filter((fx) => fx.goals.home == null || fx.goals.away == null)
-          .sort((a, b) => new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime())
-          .map(toRow);
+        // Cancelled games are out and postponed ones go last — a friendly
+        // cancelled back in January used to head this list as the next game.
+        futureFixtureRows = upcomingFixtures(seasonFixtures).map(toRow);
       }
     } catch {
       // Bonus data — silently skip if unavailable.
@@ -146,7 +148,11 @@ export default async function PreparationListPage({
       futureFixtureRows = [
         ...futureFixtureRows,
         ...manualFixtureRows.filter((r) => new Date(r.date).getTime() >= now),
-      ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      ].sort(
+        (a, b) =>
+          Number(a.isPostponed ?? false) - Number(b.isPostponed ?? false) ||
+          new Date(a.date).getTime() - new Date(b.date).getTime(),
+      );
     }
   }
 
@@ -196,6 +202,7 @@ export default async function PreparationListPage({
           toFinishBadge: t("prepToFinishBadge"),
           finishAction: t("prepFinishShortButton"),
           finishConfirm: t("preparationFinishConfirm"),
+          postponedBadge: t("fixturePostponedBadge"),
         }}
       />
     </div>

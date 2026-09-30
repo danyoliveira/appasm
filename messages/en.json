@@ -39,6 +39,7 @@
     "navProfile": "Profile",
     "navArchive": "Archive",
     "archiveTitle": "Archive",
+    "fixturePostponedBadge": "Postponed",
     "allFeet": "All",
     "copyPositionsTitle": "Positions from the previous spell",
     "copyPositionsHint": "In the spell of {period} you had a position set for {count, plural, one {# player} other {# players}} of this squad. Bring them into this spell?",

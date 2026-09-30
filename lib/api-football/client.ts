@@ -119,7 +119,14 @@ export function fetchSquad(teamId: number) {
 }
 
 export interface Fixture {
-  fixture: { id: number; date: string; venue: { name: string | null } };
+  fixture: {
+    id: number;
+    date: string;
+    venue: { name: string | null };
+    // "NS" not started, "FT" finished, "PST" postponed, "CANC" cancelled…
+    // (see lib/api-football/fixtureStatus.ts).
+    status?: { short: string };
+  };
   league: { id: number; name: string; logo: string };
   teams: {
     home: { id: number; name: string; logo: string };

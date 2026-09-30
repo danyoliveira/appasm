@@ -1,5 +1,6 @@
 import { Link } from "@/i18n/navigation";
 import type { Fixture } from "@/lib/api-football/client";
+import { hasNoRealDate } from "@/lib/api-football/fixtureStatus";
 import type { CalendarRow } from "./FixtureCalendar";
 
 export function matchResult(fixture: Fixture, teamId: number): "W" | "D" | "L" | null {
@@ -13,19 +14,22 @@ export function matchResult(fixture: Fixture, teamId: number): "W" | "D" | "L" |
   return "D";
 }
 
-export function toCalendarRow(fx: Fixture, teamId: number): CalendarRow {
+// `t`, when given, puts the competition name in the app's language
+// ("Friendlies Clubs" → "Amigável").
+export function toCalendarRow(fx: Fixture, teamId: number, t?: (key: string) => string): CalendarRow {
   const isHome = fx.teams.home.id === teamId;
   const opponent = isHome ? fx.teams.away : fx.teams.home;
   return {
     id: fx.fixture.id,
     date: fx.fixture.date,
     opponent: { id: opponent.id, name: opponent.name, logo: opponent.logo },
-    competition: { name: fx.league.name, logo: fx.league.logo },
+    competition: { name: t ? leagueLabel(fx.league.name, t) : fx.league.name, logo: fx.league.logo },
     isHome,
     result: matchResult(fx, teamId),
     goalsFor: isHome ? fx.goals.home : fx.goals.away,
     goalsAgainst: isHome ? fx.goals.away : fx.goals.home,
     finished: fx.goals.home != null && fx.goals.away != null,
+    postponed: hasNoRealDate(fx),
   };
 }
 

@@ -21,6 +21,7 @@ import {
 import type { TeamStatistics } from "@/lib/api-football/client";
 import TransferList, { type TransferRow } from "./TransferList";
 import { toCalendarRow } from "../fixtureHelpers";
+import { upcomingFixtures } from "@/lib/api-football/fixtureStatus";
 import FixtureCalendar, { type CalendarRow } from "../FixtureCalendar";
 import OpponentSquadTable from "./OpponentSquadTable";
 import { buildFlagResolver } from "@/lib/api-football/flags";
@@ -103,11 +104,9 @@ export default async function ClubDetailPage({
     const pastFixtures = relevantFixtures
       .filter((fx) => fx.goals.home != null && fx.goals.away != null)
       .sort((a, b) => new Date(b.fixture.date).getTime() - new Date(a.fixture.date).getTime());
-    const futureFixtures = relevantFixtures
-      .filter((fx) => fx.goals.home == null || fx.goals.away == null)
-      .sort((a, b) => new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime());
-    pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId));
-    futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId));
+    const futureFixtures = upcomingFixtures(relevantFixtures);
+    pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId, t));
+    futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId, t));
   } catch {
     error = true;
   }

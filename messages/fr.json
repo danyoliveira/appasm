@@ -39,6 +39,7 @@
     "navProfile": "Profil",
     "navArchive": "Archives",
     "archiveTitle": "Archives",
+    "fixturePostponedBadge": "Reporté",
     "allFeet": "Tous",
     "copyPositionsTitle": "Postes de la période précédente",
     "copyPositionsHint": "Pendant la période du {period}, un poste était défini pour {count, plural, one {# joueur} other {# joueurs}} de cet effectif. Les reprendre pour cette période ?",

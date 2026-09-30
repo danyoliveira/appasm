@@ -50,6 +50,7 @@ import { computeLiveTeamStats } from "@/lib/liveTeamStats";
 import { loadTeamStatConfig } from "@/lib/liveStatConfigServer";
 import { DEFAULT_LIVE_STAT_CONFIG } from "../../live/liveStatConfig";
 import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
+import { upcomingFixtures } from "@/lib/api-football/fixtureStatus";
 import StatsSubTabs from "./StatsSubTabs";
 import LiveStatsExplorer from "./LiveStatsExplorer";
 import type { ManualPlayerInfo } from "./ManualPlayerDialog";
@@ -356,11 +357,10 @@ export default async function ClubPage({
       const pastFixtures = relevantAllFixtures
         .filter((fx) => fx.goals.home != null && fx.goals.away != null)
         .sort((a, b) => new Date(b.fixture.date).getTime() - new Date(a.fixture.date).getTime());
-      const futureFixtures = relevantAllFixtures
-        .filter((fx) => fx.goals.home == null || fx.goals.away == null)
-        .sort((a, b) => new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime());
-      pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId));
-      futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId));
+      // Cancelled games are out; postponed ones go last (see upcomingFixtures).
+      const futureFixtures = upcomingFixtures(relevantAllFixtures);
+      pastCalendarRows = pastFixtures.map((fx) => toCalendarRow(fx, teamId, t));
+      futureCalendarRows = futureFixtures.map((fx) => toCalendarRow(fx, teamId, t));
 
       // "All competitions" never includes friendlies — only real
       // competitions (League/Cup) get summed for the combined view.
@@ -703,7 +703,7 @@ export default async function ClubPage({
       calendarFuture = [
         ...futureCalendarRows,
         ...manualCalendarRows.filter((r) => new Date(r.date).getTime() >= now),
-      ].sort((a, b) => a.date.localeCompare(b.date));
+      ].sort((a, b) => Number(a.postponed ?? false) - Number(b.postponed ?? false) || a.date.localeCompare(b.date));
     }
   }
 

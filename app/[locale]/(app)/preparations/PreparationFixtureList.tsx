@@ -36,6 +36,9 @@ export interface PreparationFixtureRow {
   // API-Football entirely) rather than one pulled from the team's real
   // calendar — shown in the same table, just visually flagged.
   isManual?: boolean;
+  // Still to be played but without a real date (postponed, or past its
+  // kick-off with no result in the source).
+  isPostponed?: boolean;
 }
 
 const PAGE_SIZE = 5;
@@ -80,6 +83,7 @@ export default function PreparationFixtureList({
     toFinishBadge: string;
     finishAction: string;
     finishConfirm: string;
+    postponedBadge: string;
   };
 }) {
   const router = useRouter();
@@ -162,7 +166,7 @@ export default function PreparationFixtureList({
   const upcoming = future.filter((r) => !r.isPrepared);
   const finished = all.filter((r) => r.isFinished).sort((a, b) => b.date.localeCompare(a.date));
   const now = new Date().getTime();
-  const nextId = future[0]?.id;
+  const nextId = future.find((r) => !r.isPostponed)?.id;
   const pendingRow = all.find((r) => r.id === pendingFixtureId);
 
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
@@ -333,6 +337,11 @@ export default function PreparationFixtureList({
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-sm font-medium">{row.opponentName}</span>
             <span className="shrink-0 text-[11px] text-muted">({row.isHome ? labels.home : labels.away})</span>
+            {row.isPostponed && kind === "upcoming" && (
+              <span className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-400">
+                {labels.postponedBadge}
+              </span>
+            )}
             {isNext && (
               <span
                 className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide"
@@ -344,7 +353,9 @@ export default function PreparationFixtureList({
           </div>
           <div className="mt-0.5 flex items-center gap-2">
             {renderCompetition(row)}
-            <span className="shrink-0 text-xs text-muted">· {time(row.date)}</span>
+            {!(row.isPostponed && kind === "upcoming") && (
+              <span className="shrink-0 text-xs text-muted">· {time(row.date)}</span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">

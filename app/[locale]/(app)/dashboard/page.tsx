@@ -51,6 +51,7 @@ import {
 import RecentNotesPanel from "../notes/RecentNotesPanel";
 import { loadTeamNotes } from "../notes/loadTeamNotes";
 import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
+import { hasNoRealDate, upcomingFixtures } from "@/lib/api-football/fixtureStatus";
 
 export default async function DashboardOverviewPage({
   params,
@@ -114,7 +115,8 @@ export default async function DashboardOverviewPage({
       // API-Football's "next" fixtures endpoint can lag in marking a match as
       // finished — guard against picking one back up here by requiring it to
       // still have no final score, not just a future-looking date.
-      nextFixture = fixtures.find((fx) => fx.goals.home == null && fx.goals.away == null) ?? null;
+      // Nor a cancelled or postponed one.
+      nextFixture = upcomingFixtures(fixtures).find((fx) => !hasNoRealDate(fx)) ?? null;
       const cookieValue = store.get(COMPETITION_FILTER_COOKIE)?.value;
       const selectedCompetitionId = resolveSelectedCompetition(cookieValue, current.allCompetitions);
 

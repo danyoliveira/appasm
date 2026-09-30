@@ -39,6 +39,7 @@
     "navProfile": "Perfil",
     "navArchive": "Arquivo",
     "archiveTitle": "Arquivo",
+    "fixturePostponedBadge": "Adiado",
     "allFeet": "Todos",
     "copyPositionsTitle": "Posições do período anterior",
     "copyPositionsHint": "No período de {period} tinhas a posição definida para {count, plural, one {# jogador} other {# jogadores}} deste plantel. Queres trazê-las para este período?",

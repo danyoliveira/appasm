@@ -39,6 +39,7 @@
     "navProfile": "Perfil",
     "navArchive": "Archivo",
     "archiveTitle": "Archivo",
+    "fixturePostponedBadge": "Aplazado",
     "allFeet": "Todos",
     "copyPositionsTitle": "Posiciones del periodo anterior",
     "copyPositionsHint": "En el periodo de {period} tenías la posición definida para {count, plural, one {# jugador} other {# jugadores}} de esta plantilla. ¿Quieres traerlas a este periodo?",
