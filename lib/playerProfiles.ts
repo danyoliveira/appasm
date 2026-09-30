@@ -15,7 +15,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 // position(s) and height from the given coaching spell, the latest weigh-in
 // at the club, and what belongs to the player for good (foot, nationality,
 // birth date). Read defensively: a column that isn't there yet (migrations
-// 0056 / 0057 not run) just means nothing to show.
+// 0056 / 0058 not run) just means nothing to show.
 export async function loadPlayerProfiles(
   supabase: SupabaseServerClient,
   { teamId, stintId, playerIds }: { teamId: number; stintId: string | null; playerIds?: number[] },
@@ -51,7 +51,7 @@ export async function loadPlayerProfiles(
     weightQuery,
     traitsQuery("player_id, preferred_foot, nationality, birth_date, photo_url"),
   ]);
-  // Before migration 0057 the two newer columns don't exist — keep the foot.
+  // Before migration 0058 the newer columns don't exist — keep the foot.
   const traits = fullTraits.error ? await traitsQuery("player_id, preferred_foot") : fullTraits;
 
   const profiles: Record<number, PlayerProfile> = {};

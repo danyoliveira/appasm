@@ -11,8 +11,15 @@ import {
   searchPlayerProfiles,
   type TeamSearchResult,
   type ApiFootballReason,
+  type Country,
 } from "@/lib/api-football/client";
-import { getTeamsByCountry, getSquad, forgetCachedTeamData } from "@/lib/api-football/cache";
+import {
+  getTeamsByCountry,
+  getSquad,
+  forgetCachedTeamData,
+  getCountries,
+  getTeamInfo,
+} from "@/lib/api-football/cache";
 import { getCurrentStintId } from "@/lib/coachingStints";
 import { isDetailedPosition, isPreferredFoot } from "./club/playerProfile";
 import { loadCopyablePositions, loadPlayerProfiles } from "@/lib/playerProfiles";
@@ -37,6 +44,34 @@ export async function getClubsForCountry(country: string): Promise<ClubsResult> 
     }
     return { results: [], error: "unknown" };
   }
+}
+
+// What the opponent picker opens with: the country list and the country of
+// the coach's own club (most opponents are from the same one).
+export async function getOpponentPickerData(): Promise<{
+  countries: Country[];
+  defaultCountry: string | null;
+  // The coach's own club — never its own opponent.
+  ownTeamId: number | null;
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { countries: [], defaultCountry: null, ownTeamId: null };
+
+  const { data: coachProfile } = await supabase
+    .from("profiles")
+    .select("api_football_team_id")
+    .eq("role", "coach")
+    .maybeSingle();
+  const teamId = coachProfile?.api_football_team_id ?? null;
+
+  const [countries, teamInfo] = await Promise.all([
+    getCountries().catch(() => []),
+    teamId ? getTeamInfo(teamId).catch(() => []) : Promise.resolve([]),
+  ]);
+  return { countries, defaultCountry: teamInfo[0]?.team.country ?? null, ownTeamId: teamId };
 }
 
 // Ad-hoc, uncached search by name — used to pick an opponent for a
@@ -85,7 +120,7 @@ function manualMatchDetailsColumns(details: ManualMatchDetails) {
 }
 
 export async function createManualPreparation(
-  opponent: { teamId: number } | { name: string },
+  opponent: { teamId: number } | { name: string; logo?: string | null },
   matchDateIso: string,
   details?: ManualMatchDetails,
 ) {
@@ -109,6 +144,8 @@ export async function createManualPreparation(
       team_id: teamId,
       opponent_team_id: "teamId" in opponent ? opponent.teamId : null,
       opponent_name: "name" in opponent ? opponent.name : null,
+      // A club created by hand can come with its own crest.
+      opponent_logo: "name" in opponent ? (opponent.logo ?? null) : null,
       match_date: matchDateIso,
       created_by: user.id,
       ...(details ? manualMatchDetailsColumns(details) : {}),
@@ -126,7 +163,7 @@ export async function createManualPreparation(
 // (or typed) a different club.
 export async function updateManualPreparation(
   id: string,
-  opponent: { teamId: number } | { name: string } | null,
+  opponent: { teamId: number } | { name: string; logo?: string | null } | null,
   matchDateIso: string,
   details?: ManualMatchDetails,
 ) {
@@ -143,6 +180,7 @@ export async function updateManualPreparation(
   if (opponent) {
     update.opponent_team_id = "teamId" in opponent ? opponent.teamId : null;
     update.opponent_name = "name" in opponent ? opponent.name : null;
+    update.opponent_logo = "name" in opponent ? (opponent.logo ?? null) : null;
   }
 
   // .select() so a row RLS filtered out shows up as an error instead of a
@@ -1442,7 +1480,7 @@ export async function setPlayerProfile(
       { onConflict: "player_id" },
     );
   if (traitsError) {
-    // Before migration 0057 the newer columns don't exist — the foot still
+    // Before migration 0058 the newer columns don't exist — the foot still
     // has to save.
     const { error: footError } = await supabase
       .from("player_traits")

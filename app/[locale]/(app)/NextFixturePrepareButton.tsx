@@ -6,12 +6,13 @@ import { useRouter } from "@/i18n/navigation";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function NextFixturePrepareButton({
-  fixtureId,
+  preparationKey,
   isPrepared,
   opponentName,
   labels,
 }: {
-  fixtureId: number;
+  // A calendar fixture's id, or "manual-<uuid>" for a game added by hand.
+  preparationKey: number | string;
   isPrepared: boolean;
   opponentName: string;
   labels: {
@@ -27,7 +28,7 @@ export default function NextFixturePrepareButton({
   function handleClick() {
     if (isPrepared) {
       announceNavigation();
-      router.push(`/preparations/${fixtureId}`);
+      router.push(`/preparations/${preparationKey}`);
     } else {
       setConfirmOpen(true);
     }
@@ -35,7 +36,7 @@ export default function NextFixturePrepareButton({
 
   function handleConfirm() {
     announceNavigation();
-    router.push(`/preparations/${fixtureId}`);
+    router.push(`/preparations/${preparationKey}`);
     setConfirmOpen(false);
   }
 

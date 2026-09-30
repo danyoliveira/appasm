@@ -52,6 +52,8 @@ import RecentNotesPanel from "../notes/RecentNotesPanel";
 import { loadTeamNotes } from "../notes/loadTeamNotes";
 import { loadLiveScores, withLiveScores } from "@/lib/liveScores";
 import { hasNoRealDate, upcomingFixtures } from "@/lib/api-football/fixtureStatus";
+import { resolveManualOpponent } from "@/lib/manualOpponent";
+import { leagueLabel } from "../club/fixtureHelpers";
 
 export default async function DashboardOverviewPage({
   params,
@@ -99,6 +101,49 @@ export default async function DashboardOverviewPage({
   let isNextFixturePrepared = false;
   let ourLogo: string | null = null;
   let ourName: string | null = null;
+  // Set when the next game is one the coach added by hand: its preparation
+  // key ("manual-<uuid>").
+  let nextManualKey: string | null = null;
+
+  // The soonest game added by hand that is still to be played — the
+  // external source knows nothing about it, so the "next game" used to skip
+  // straight past it to the next one in its own calendar.
+  const STALE_AFTER_MS = 3 * 60 * 60 * 1000;
+  const manualNext = teamId
+    ? ((
+        await supabase
+          .from("manual_preparations")
+          .select(
+            "id, opponent_team_id, opponent_name, opponent_logo, match_date, competition_league_id, competition_name, competition_logo, is_home",
+          )
+          .eq("team_id", teamId)
+          .is("goals_for", null)
+          .gte("match_date", new Date(new Date().getTime() - STALE_AFTER_MS).toISOString())
+          .order("match_date", { ascending: true })
+          .limit(1)
+          .maybeSingle()
+      ).data ?? null)
+    : null;
+  // The same game in the shape the rest of the page reads. A club created
+  // by hand has no id in the external source — 0 marks "no club page, no
+  // scouting".
+  async function manualAsFixture(): Promise<Fixture | null> {
+    if (!manualNext || !teamId) return null;
+    const resolved = await resolveManualOpponent(manualNext);
+    const us = { id: teamId, name: ourName ?? "", logo: ourLogo ?? "" };
+    const them = { id: resolved.id ?? 0, name: resolved.name, logo: resolved.logo };
+    const isHome = manualNext.is_home !== false;
+    return {
+      fixture: { id: -1, date: manualNext.match_date, venue: { name: null }, status: { short: "NS" } },
+      league: {
+        id: manualNext.competition_league_id ?? 0,
+        name: manualNext.competition_name ?? "",
+        logo: manualNext.competition_logo ?? "",
+      },
+      teams: { home: isHome ? us : them, away: isHome ? them : us },
+      goals: { home: null, away: null },
+    };
+  }
 
   if (teamId) {
     try {
@@ -117,6 +162,14 @@ export default async function DashboardOverviewPage({
       // still have no final score, not just a future-looking date.
       // Nor a cancelled or postponed one.
       nextFixture = upcomingFixtures(fixtures).find((fx) => !hasNoRealDate(fx)) ?? null;
+      // A game added by hand that comes first is the next game.
+      if (
+        manualNext &&
+        (!nextFixture || new Date(manualNext.match_date).getTime() < new Date(nextFixture.fixture.date).getTime())
+      ) {
+        nextFixture = await manualAsFixture();
+        nextManualKey = `manual-${manualNext.id}`;
+      }
       const cookieValue = store.get(COMPETITION_FILTER_COOKIE)?.value;
       const selectedCompetitionId = resolveSelectedCompetition(cookieValue, current.allCompetitions);
 
@@ -138,9 +191,14 @@ export default async function DashboardOverviewPage({
         topScorers = topScorersData;
         topAssists = topAssistsData;
 
-        if (nextFixture) {
-          const opponentTeam =
-            nextFixture.teams.home.id === teamId ? nextFixture.teams.away : nextFixture.teams.home;
+        const nextOpponentTeam = nextFixture
+          ? nextFixture.teams.home.id === teamId
+            ? nextFixture.teams.away
+            : nextFixture.teams.home
+          : null;
+        // Scouting needs a club the external source knows.
+        if (nextFixture && nextOpponentTeam && nextOpponentTeam.id > 0) {
+          const opponentTeam = nextOpponentTeam;
           const opponentId = opponentTeam.id;
           const opponentCompetitions = await getCurrentCompetitions(opponentId);
           const opponentSeason = opponentCompetitions.defaultSeason ?? current.defaultSeason;
@@ -213,6 +271,14 @@ export default async function DashboardOverviewPage({
     } catch {
       // Cards below just fall back to their empty state.
     }
+    // The external source failed (or has nothing): the hand-added game
+    // still shows.
+    if (!nextFixture && manualNext) {
+      nextFixture = await manualAsFixture();
+      nextManualKey = `manual-${manualNext.id}`;
+    }
+    // A game added by hand is its own preparation — already open.
+    if (nextManualKey) isNextFixturePrepared = true;
   }
 
   // Notes across the club and its players (coach-only, same as the notes
@@ -294,12 +360,12 @@ export default async function DashboardOverviewPage({
             </h2>
             {nextFixture && opponent && (
               <>
-                <span className="flex min-w-0 items-center gap-1.5 text-muted">
+                <span className={`min-w-0 items-center gap-1.5 text-muted ${nextFixture.league.name ? "flex" : "hidden"}`}>
                   {nextFixture.league.logo && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={nextFixture.league.logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
                   )}
-                  <span className="truncate">{nextFixture.league.name}</span>
+                  <span className="truncate">{leagueLabel(nextFixture.league.name, t)}</span>
                 </span>
                 <span
                   className={`rounded-full px-2 py-0.5 font-medium ${
@@ -326,7 +392,9 @@ export default async function DashboardOverviewPage({
               const us = { id: teamId, name: ourName ?? "", logo: ourLogo ?? "" };
               const teamBlock = (team: { id: number; name: string; logo: string }, isUs: boolean, align: "left" | "right") => (
                 <Link
-                  href={isUs ? "/club" : `/club/${team.id}`}
+                  // A club created by hand has no page of its own — it opens
+                  // the game's preparation instead.
+                  href={isUs ? "/club" : team.id > 0 ? `/club/${team.id}` : `/preparations/${nextManualKey}`}
                   className={`group flex min-w-0 flex-col items-center gap-2 text-center sm:flex-row sm:gap-3 ${
                     align === "right" ? "sm:flex-row-reverse sm:text-right" : "sm:text-left"
                   }`}
@@ -369,7 +437,7 @@ export default async function DashboardOverviewPage({
                         gets the button once it is open. */}
                     {(isCoach || isNextFixturePrepared) && (
                       <NextFixturePrepareButton
-                        fixtureId={nextFixture.fixture.id}
+                        preparationKey={nextManualKey ?? nextFixture.fixture.id}
                         isPrepared={isNextFixturePrepared}
                         opponentName={opponent.name}
                         labels={{
@@ -391,7 +459,7 @@ export default async function DashboardOverviewPage({
       {/* Scouting content for that same match, split into its own cards
           instead of one long scroll inside the hero — each is skipped
           entirely when there's nothing to show. */}
-      {opponent && (
+      {opponent && opponent.id > 0 && (
         <OpponentScouting
           t={t}
           locale={locale}
