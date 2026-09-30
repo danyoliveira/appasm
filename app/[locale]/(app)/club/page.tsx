@@ -43,6 +43,7 @@ import TeamDossier, { type DossierFile, type DossierPlayer } from "./TeamDossier
 import { CLUB_DOSSIER_CATEGORIES } from "./dossierShared";
 import { loadDossierFiles } from "@/lib/dossier";
 import { loadCopyablePositions, loadPlayerProfiles } from "@/lib/playerProfiles";
+import { withProfilePhotos } from "./playerProfile";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { loadLiveGames, type LiveGameStats } from "@/lib/liveMatchHistory";
 import { aggregateLivePlayerTotals } from "@/lib/livePlayerStats";
@@ -226,7 +227,8 @@ export default async function ClubPage({
         squadPlayers.map((p) => getPlayerProfile(p.id).catch(() => [])),
       );
       squadPlayers.forEach((p, i) => {
-        const flag = resolveFlagUrl(profiles[i][0]?.player.nationality);
+        // The coach's own entry first, for players the source has none for.
+        const flag = resolveFlagUrl(playerProfiles[p.id]?.nationality ?? profiles[i][0]?.player.nationality);
         if (flag) flagUrlByPlayerId.set(p.id, flag);
       });
     } catch {
@@ -240,6 +242,8 @@ export default async function ClubPage({
   const apiSquadPlayers = squad?.[0]?.players ?? [];
   const manualRows = pre ? await pre.manualRows : [];
   if (teamId && !clubDataError) squad = withManualPlayers(squad ?? [], manualRows);
+  // A photo the coach uploaded replaces the source's everywhere below.
+  if (squad?.[0]) squad = [{ ...squad[0], players: withProfilePhotos(squad[0].players, playerProfiles) }, ...squad.slice(1)];
   manualRows.forEach((row) => {
     const flag = resolveFlagUrl(row.nationality);
     if (flag && !flagUrlByPlayerId.has(row.id)) flagUrlByPlayerId.set(row.id, flag);
@@ -430,19 +434,6 @@ export default async function ClubPage({
     } catch {
       // Bonus data — silently skip if unavailable.
     }
-  }
-
-  // TEMP preview data — the season hasn't started yet so the API has no
-  // real minutes/goals for anyone. Fake a few entries to check how the
-  // squad card stats look. Remove once real match data exists.
-  if (playerStatsById.size === 0 && squad?.[0]?.players.length) {
-    const sample = squad[0].players.slice(0, 5);
-    sample.forEach((player, i) => {
-      const isGoalkeeper = player.position === "Goalkeeper";
-      playerStatsById.set(player.id, isGoalkeeper
-        ? { appearances: 5, minutes: 450, goals: 0, assists: 0, saves: 12 + i, conceded: 3 }
-        : { appearances: 5 - i, minutes: 380 - i * 40, goals: 3 - i, assists: 2, saves: 0, conceded: 0 });
-    });
   }
 
   // Hand-entered ("internal") stats are kept apart from the API/verified

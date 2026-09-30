@@ -124,11 +124,6 @@ export default function GkLiveExplorer({
               {game.goalsFor}-{game.goalsAgainst}
             </span>
             {dayLabel(game.date)}
-            {game.isDemo && (
-              <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold uppercase text-amber-700 dark:text-amber-400">
-                demo
-              </span>
-            )}
           </div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickPositionsToCopy, type PlayerProfile, type StoredPositions } from "./playerProfile";
+import { EMPTY_PLAYER_PROFILE, pickPositionsToCopy, type PlayerProfile, type StoredPositions } from "./playerProfile";
 
 const stored = (stintId: string, playerId: number): StoredPositions => ({
   stintId,
@@ -7,8 +7,8 @@ const stored = (stintId: string, playerId: number): StoredPositions => ({
   primaryPosition: "left_back",
   secondaryPosition: null,
 });
-const withPosition: PlayerProfile = { primaryPosition: "striker", secondaryPosition: null, preferredFoot: null };
-const footOnly: PlayerProfile = { primaryPosition: null, secondaryPosition: null, preferredFoot: "left" };
+const withPosition: PlayerProfile = { ...EMPTY_PLAYER_PROFILE, primaryPosition: "striker" };
+const footOnly: PlayerProfile = { ...EMPTY_PLAYER_PROFILE, preferredFoot: "left" };
 
 describe("pickPositionsToCopy", () => {
   it("takes the most recent earlier spell that has positions", () => {

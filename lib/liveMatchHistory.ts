@@ -3,7 +3,6 @@ import type { createClient } from "@/lib/supabase/server";
 import { getFixtureById } from "@/lib/api-football/cache";
 import { resolveManualOpponent } from "@/lib/manualOpponent";
 import { computeLivePlayerLines, type LivePlayerLine } from "@/lib/livePlayerStats";
-import { LIVE_DEMO_MARK } from "@/app/[locale]/(app)/club/liveDemoShared";
 import {
   computeCollectiveStats,
   computeGkStats,
@@ -34,8 +33,6 @@ export interface LiveGameStats {
   result: "W" | "D" | "L";
   us: LiveSideStats;
   them: LiveSideStats;
-  // Created by "Simular jogos" rather than recorded live.
-  isDemo: boolean;
   // Our goalkeeper(s) in Modo GK this game — completed/incomplete actions.
   gk: GkStatsByPlayer[];
   // Our linked squad players: minutes, goals, cards… (by squad player id).
@@ -162,7 +159,6 @@ export async function loadLiveGames(
         result: goalsFor > goalsAgainst ? "W" : goalsFor < goalsAgainst ? "L" : "D",
         us: side(ourSide),
         them: side(theirSide),
-        isDemo: session.bench_notes === LIVE_DEMO_MARK,
         statConfig: effectiveSessionConfig(session, null),
         // Starting XI from the pre-game lineup (the live copy changes with subs).
         players: computeLivePlayerLines({

@@ -674,6 +674,10 @@ export default async function PlayerDetailPage({
 
   // Country list (cached) — the nationality in the app's language.
   const countries = await getCountries().catch(() => []);
+  // What the coach filled in takes the place of the external source's value
+  // (which for some players is simply missing).
+  const shownAge = ageFromBirthDate(playerProfile.birthDate) ?? bio?.age ?? null;
+  const shownNationality = playerProfile.nationality ?? bio?.nationality ?? null;
   type HeroStat = { label: string; value: React.ReactNode; hint?: string; wide?: boolean };
   const generalInfoStats: (HeroStat | null)[] = [
     // The coach's specific position once set; the external source's group
@@ -691,11 +695,11 @@ export default async function PlayerDetailPage({
       : position
         ? { label: t("squadColumnPosition"), value: translatePosition(position, t) }
         : null,
-    bio?.age != null ? { label: t("statAge"), value: bio.age } : null,
-    bio?.nationality
+    shownAge != null ? { label: t("statAge"), value: shownAge } : null,
+    shownNationality
       ? {
           label: t("statNationality"),
-          value: localizedNationality(countries, bio.nationality, locale) ?? bio.nationality,
+          value: localizedNationality(countries, shownNationality, locale) ?? shownNationality,
         }
       : null,
     resolvedHeightCm != null ? { label: t("statHeight"), value: `${resolvedHeightCm} cm` } : null,
@@ -1304,7 +1308,7 @@ export default async function PlayerDetailPage({
         <>
           <PlayerHero
             clubLogoUrl={currentClub?.logo ?? null}
-            photoUrl={squadPlayer?.photo || bio?.photo}
+            photoUrl={playerProfile.photoUrl ?? (squadPlayer?.photo || bio?.photo)}
             number={squadPlayer?.number}
             stats={filteredGeneralInfoStats.length > 0 ? filteredGeneralInfoStats : undefined}
           >
@@ -1329,7 +1333,23 @@ export default async function PlayerDetailPage({
                 />
               )}
               {squadPlayer && isCoach && (
-                <PlayerProfileEditor teamId={teamId} playerId={playerId} profile={playerProfile} />
+                <PlayerProfileEditor
+                  teamId={teamId}
+                  playerId={playerId}
+                  profile={playerProfile}
+                  photo={playerProfile.photoUrl ?? (squadPlayer?.photo || bio?.photo) ?? null}
+                  countries={countries
+                    .filter((c) => c.flag && c.name !== "World")
+                    .map((c) => ({ name: c.name, flag: c.flag, code: c.code }))}
+                  source={{
+                    nationality: bio?.nationality
+                      ? (localizedNationality(countries, bio.nationality, locale) ?? bio.nationality)
+                      : null,
+                    age: bio?.age ?? null,
+                    heightCm: parseMetricNumber(bio?.height),
+                    weightKg: apiWeightKg,
+                  }}
+                />
               )}
             </div>
           </PlayerHero>

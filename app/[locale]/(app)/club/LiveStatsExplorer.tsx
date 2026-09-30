@@ -1,8 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "@/i18n/navigation";
-import { removeDemoLiveGames, simulateLiveGames } from "./liveDemoActions";
+import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import Icon from "@/components/Icon";
 import type { CollectiveCounterKey } from "../../live/liveStatsShared";
@@ -85,64 +83,17 @@ export default function LiveStatsExplorer({
 }) {
   const t = useTranslations("dashboard");
   const locale = useLocale();
-  const router = useRouter();
   const [selected, setSelected] = useState<string[]>([]);
-  const [isPending, startTransition] = useTransition();
-  const [demoError, setDemoError] = useState<string | null>(null);
-  const hasDemo = games.some((g) => g.isDemo);
 
-  function simulate() {
-    setDemoError(null);
-    startTransition(async () => {
-      try {
-        const { created } = await simulateLiveGames(4);
-        if (created === 0) setDemoError(t("liveStatsDemoNone"));
-        router.refresh();
-      } catch {
-        setDemoError(t("liveStatsDemoError"));
-      }
-    });
-  }
-
-  function removeDemo() {
-    startTransition(async () => {
-      await removeDemoLiveGames();
-      setSelected([]);
-      router.refresh();
-    });
-  }
-
-  const demoControls = isCoach ? (
-    <div className="flex flex-wrap items-center gap-2">
-      <Link
-        href="/club/live-config"
-        className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent hover:text-accent"
-      >
-        <span aria-hidden>⚙</span>
-        {t("liveConfigOpenButton")}
-      </Link>
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={simulate}
-        className="flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-      >
-        <Icon name="plus" className="h-3.5 w-3.5" />
-        {isPending ? t("liveStatsDemoWorking") : t("liveStatsDemoButton")}
-      </button>
-      {hasDemo && (
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={removeDemo}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-red-500 disabled:opacity-50"
-        >
-          <Icon name="trash" className="h-3.5 w-3.5" />
-          {t("liveStatsDemoRemove")}
-        </button>
-      )}
-      {demoError && <span className="text-xs text-red-600 dark:text-red-400">{demoError}</span>}
-    </div>
+  // Coach only: where the fields recorded in Live Mode are set up.
+  const configLink = isCoach ? (
+    <Link
+      href="/club/live-config"
+      className="flex w-fit items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent hover:text-accent"
+    >
+      <span aria-hidden>⚙</span>
+      {t("liveConfigOpenButton")}
+    </Link>
   ) : null;
 
   const [competition, setCompetition] = useState("");
@@ -210,7 +161,7 @@ export default function LiveStatsExplorer({
           <Icon name="clipboard" />
         </span>
         <p className="text-sm text-muted">{t("liveStatsEmpty")}</p>
-        {demoControls && <div className="mt-2">{demoControls}</div>}
+        {configLink && <div className="mt-2">{configLink}</div>}
       </div>
     );
   }
@@ -238,11 +189,6 @@ export default function LiveStatsExplorer({
             </span>
             {dayLabel(game.date)}
             {!compact && game.competition && ` · ${game.competition.name}`}
-            {game.isDemo && (
-              <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold uppercase text-amber-700 dark:text-amber-400">
-                demo
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -537,7 +483,7 @@ export default function LiveStatsExplorer({
         <span className="ml-auto text-xs font-medium text-muted">
           {t("liveStatsGamesCount", { count: filtered.length })}
         </span>
-        {demoControls && <div className="w-full border-t border-border pt-2">{demoControls}</div>}
+        {configLink && <div className="w-full border-t border-border pt-2">{configLink}</div>}
       </div>
 
       {comparing && (

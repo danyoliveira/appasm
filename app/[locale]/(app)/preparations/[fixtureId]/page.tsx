@@ -405,7 +405,7 @@ export default async function PreparationDetailPage({
         id: p.id,
         name: shortenPlayerName(p.name),
         number: p.number,
-        photo: p.photo,
+        photo: ourProfiles[p.id]?.photoUrl ?? p.photo,
         position: p.position,
         status: (availabilityByPlayerId.get(p.id)?.status as PlayerStatus) ?? "available",
         role: positionsShort(ourProfiles[p.id], t),

@@ -573,6 +573,8 @@ export default function SquadSection({
               playerId={player.id}
               playerName={shortenPlayerName(player.name)}
               profile={profileByPlayerId[player.id] ?? EMPTY_PLAYER_PROFILE}
+              photo={player.photo}
+              countries={countries}
             />
           </span>
         )}
@@ -759,9 +761,17 @@ export default function SquadSection({
                       </div>
                     </td>
                     <td className="px-1 py-2">
-                      {flagUrl && (
+                      {flagUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={flagUrl} alt="" className="h-3.5 w-5 rounded-sm object-cover" />
+                      ) : (
+                        // No nationality on record — a plain grey flag, so
+                        // the column doesn't look like it failed to load.
+                        <span
+                          title={t("nationalityUnknown")}
+                          aria-label={t("nationalityUnknown")}
+                          className="block h-3.5 w-5 rounded-sm bg-border ring-1 ring-inset ring-muted/20"
+                        />
                       )}
                     </td>
                     {!isGoalkeeperTable && (
@@ -796,6 +806,8 @@ export default function SquadSection({
                             playerId={player.id}
                             playerName={shortenPlayerName(player.name)}
                             profile={profileByPlayerId[player.id] ?? EMPTY_PLAYER_PROFILE}
+                            photo={player.photo}
+                            countries={countries}
                           />
                           <button
                             type="button"

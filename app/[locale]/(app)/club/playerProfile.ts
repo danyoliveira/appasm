@@ -1,5 +1,7 @@
-// What the coach fills in about a player that the external source doesn't
-// have: the specific position(s) and the preferred foot.
+// What the coach fills in about a player: what the external source doesn't
+// have at all (specific positions, preferred foot) and what it has for some
+// players but not others (nationality, birth date, height, weight) — so
+// every player can end up with the same information.
 
 // Back to front, right before left — the order every picker lists them in.
 export const DETAILED_POSITIONS = [
@@ -24,8 +26,16 @@ export interface PlayerProfile {
   // Kept per coaching spell.
   primaryPosition: DetailedPosition | null;
   secondaryPosition: DetailedPosition | null;
-  // Kept per player, for good.
+  heightCm: number | null;
+  // Latest weigh-in at the club (weight is a history, not one value).
+  weightKg: number | null;
+  // Kept per player, for good. Nationality is a country name as the
+  // external source's country list has it; birth date is "YYYY-MM-DD".
   preferredFoot: PreferredFoot | null;
+  nationality: string | null;
+  birthDate: string | null;
+  // A photo the coach uploaded, shown instead of the source's.
+  photoUrl: string | null;
 }
 
 // One player's positions as stored for a given spell.
@@ -64,8 +74,22 @@ export function pickPositionsToCopy(
 export const EMPTY_PLAYER_PROFILE: PlayerProfile = {
   primaryPosition: null,
   secondaryPosition: null,
+  heightCm: null,
+  weightKg: null,
   preferredFoot: null,
+  nationality: null,
+  birthDate: null,
+  photoUrl: null,
 };
+
+// The coach's own photos in place of the external source's, wherever a
+// list of players is shown.
+export function withProfilePhotos<T extends { id: number; photo: string }>(
+  players: T[],
+  profiles: Record<number, PlayerProfile>,
+): T[] {
+  return players.map((p) => (profiles[p.id]?.photoUrl ? { ...p, photo: profiles[p.id].photoUrl! } : p));
+}
 
 // Which of the external source's four groups each position sits in — the
 // pickers group by it.

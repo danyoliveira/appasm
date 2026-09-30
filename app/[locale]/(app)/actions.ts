@@ -1378,13 +1378,23 @@ export async function setPlayerHeight(teamId: number, playerId: number, heightCm
   if (error) throw new Error(error.message);
 }
 
-// The coach's own read of a player. Positions go with the current spell
-// (same row as the height); the preferred foot goes with the player, for
-// good — no team, no spell.
+// Everything the coach sets about a player in one go. Positions and height
+// go with the current spell (one row); a changed weight is a new weigh-in;
+// foot, nationality and birth date go with the player, for good — no team,
+// no spell.
 export async function setPlayerProfile(
   teamId: number,
   playerId: number,
-  input: { primaryPosition: string | null; secondaryPosition: string | null; preferredFoot: string | null },
+  input: {
+    primaryPosition: string | null;
+    secondaryPosition: string | null;
+    preferredFoot: string | null;
+    nationality: string | null;
+    birthDate: string | null;
+    photoUrl: string | null;
+    heightCm: number | null;
+    weightKg: number | null;
+  },
 ) {
   const { supabase, coachId } = await requireCoach();
 
@@ -1394,6 +1404,11 @@ export async function setPlayerProfile(
       ? input.secondaryPosition
       : null;
   const foot = isPreferredFoot(input.preferredFoot) ? input.preferredFoot : null;
+  const nationality = input.nationality?.trim() || null;
+  const birthDate = input.birthDate && /^\d{4}-\d{2}-\d{2}$/.test(input.birthDate) ? input.birthDate : null;
+  const heightCm =
+    input.heightCm != null && input.heightCm > 0 && input.heightCm < 260 ? Math.round(input.heightCm) : null;
+  const weightKg = input.weightKg != null && input.weightKg > 0 && input.weightKg < 250 ? input.weightKg : null;
   const now = new Date().toISOString();
   const stintId = await getCurrentStintId(supabase, teamId);
 
@@ -1404,6 +1419,7 @@ export async function setPlayerProfile(
       stint_id: stintId,
       primary_position: primary,
       secondary_position: secondary,
+      height_cm: heightCm,
       updated_at: now,
       updated_by: coachId,
     },
@@ -1411,13 +1427,57 @@ export async function setPlayerProfile(
   );
   if (positionError) throw new Error(positionError.message);
 
-  const { error: footError } = await supabase
+  const { error: traitsError } = await supabase
     .from("player_traits")
     .upsert(
-      { player_id: playerId, preferred_foot: foot, updated_at: now, updated_by: coachId },
+      {
+        player_id: playerId,
+        preferred_foot: foot,
+        nationality,
+        birth_date: birthDate,
+        photo_url: input.photoUrl?.trim() || null,
+        updated_at: now,
+        updated_by: coachId,
+      },
       { onConflict: "player_id" },
     );
-  if (footError) throw new Error(footError.message);
+  if (traitsError) {
+    // Before migration 0057 the newer columns don't exist — the foot still
+    // has to save.
+    const { error: footError } = await supabase
+      .from("player_traits")
+      .upsert(
+        { player_id: playerId, preferred_foot: foot, updated_at: now, updated_by: coachId },
+        { onConflict: "player_id" },
+      );
+    if (footError) throw new Error(footError.message);
+    if (nationality || birthDate || input.photoUrl) throw new Error(traitsError.message);
+  }
+
+  // Weight is a history: a value different from the latest weigh-in is a
+  // new entry dated today, never an overwrite (and clearing the field
+  // deletes nothing).
+  if (weightKg != null) {
+    const { data: latest } = await supabase
+      .from("player_weight_log")
+      .select("weight_kg")
+      .eq("team_id", teamId)
+      .eq("player_id", playerId)
+      .order("recorded_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest == null || Number(latest.weight_kg) !== weightKg) {
+      const { error: weightError } = await supabase.from("player_weight_log").insert({
+        team_id: teamId,
+        player_id: playerId,
+        weight_kg: weightKg,
+        recorded_at: now.slice(0, 10),
+        created_by: coachId,
+      });
+      if (weightError) throw new Error(weightError.message);
+    }
+  }
 
   revalidatePath("/", "layout");
 }

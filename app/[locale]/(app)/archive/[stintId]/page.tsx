@@ -352,7 +352,7 @@ export default async function ArchivedStintPage({
         <span className="w-6 shrink-0 text-center text-sm font-bold tabular-nums text-muted">
           {p.number ?? "–"}
         </span>
-        <PlayerAvatar photo={p.photo} size="h-9 w-9" />
+        <PlayerAvatar photo={playerProfiles[p.player_id]?.photoUrl ?? p.photo} size="h-9 w-9" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{p.name}</div>
           {(profile?.primaryPosition || profile?.preferredFoot) && (

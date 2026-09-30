@@ -134,9 +134,15 @@ export default function OpponentSquadTable({
                           {shortenPlayerName(player.name)}
                         </div>
                         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
-                          {flagUrl && (
+                          {flagUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={flagUrl} alt="" className="h-3 w-4 rounded-sm object-cover" />
+                          ) : (
+                            <span
+                              title={t("nationalityUnknown")}
+                              aria-label={t("nationalityUnknown")}
+                              className="block h-3 w-4 rounded-sm bg-border ring-1 ring-inset ring-muted/20"
+                            />
                           )}
                           {player.age ? t("opponentPlayerAge", { age: player.age }) : "—"}
                         </div>
