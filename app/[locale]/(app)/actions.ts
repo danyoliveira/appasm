@@ -1723,3 +1723,71 @@ export async function setTeamManualStats(teamId: number, stats: TeamManualStatsI
 
   if (error) throw new Error(error.message);
 }
+
+// Every file in a bucket, full paths included — both buckets in use
+// (avatars, team-dossier) nest files inside a folder per user/team, and
+// Storage's list() only returns one level at a time. A "folder" comes back
+// as an entry with id: null, so those are the ones worth recursing into.
+async function listAllStorageFiles(
+  admin: ReturnType<typeof createAdminClient>,
+  bucketId: string,
+  path = "",
+): Promise<string[]> {
+  const { data } = await admin.storage.from(bucketId).list(path, { limit: 1000 });
+  const paths: string[] = [];
+  for (const entry of data ?? []) {
+    const entryPath = path ? `${path}/${entry.name}` : entry.name;
+    if (entry.id === null) {
+      paths.push(...(await listAllStorageFiles(admin, bucketId, entryPath)));
+    } else {
+      paths.push(entryPath);
+    }
+  }
+  return paths;
+}
+
+// Perfil → Utilização → zona de perigo. Wipes the platform back to a blank
+// slate: every table in the database, every uploaded file (avatars,
+// team-dossier PDFs), and every login account — including the caller's own.
+// Meant to be run once before going live with real users, or any time
+// there's a real need to start completely over. `requireCoach()` runs on
+// the caller's own session first; the actual wipe then goes through the
+// service-role client, since it also has to remove the coach's own auth
+// account (which a self-service RLS-scoped client could never do to itself
+// mid-request). The database function it calls is itself locked down to
+// service_role only — see 0057_admin_full_reset.sql.
+export async function resetDatabase() {
+  const { supabase } = await requireCoach();
+  const admin = createAdminClient();
+
+  const { error: truncateError } = await admin.rpc("admin_reset_all_data");
+  if (truncateError) throw new Error(truncateError.message);
+
+  const { data: buckets } = await admin.storage.listBuckets();
+  for (const bucket of buckets ?? []) {
+    const paths = await listAllStorageFiles(admin, bucket.id);
+    if (paths.length > 0) await admin.storage.from(bucket.id).remove(paths);
+  }
+
+  // Auth users, paginated: listUsers() caps out at perPage per call.
+  let page = 1;
+  for (;;) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(error.message);
+    for (const authUser of data.users) {
+      await admin.auth.admin.deleteUser(authUser.id);
+    }
+    if (data.users.length < 200) break;
+    page += 1;
+  }
+
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // The session's own user row is already gone at this point — signing
+    // out is a courtesy, not load-bearing; redirect() below is what
+    // actually gets the browser off an authenticated page.
+  }
+
+  redirect("/");
+}

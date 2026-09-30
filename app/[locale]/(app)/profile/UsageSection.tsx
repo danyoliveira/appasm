@@ -2,6 +2,7 @@ import { getTranslations } from "next-intl/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatBytes, loadUsageReport } from "@/lib/usage";
 import { SectionHeading } from "../OpponentScouting";
+import ResetDatabaseSection from "./ResetDatabaseSection";
 
 // Reference ceilings of Supabase's free plan — shown as a yardstick next to
 // the real numbers (a paid plan has higher ones).
@@ -171,6 +172,8 @@ export default async function UsageSection({ supabase, locale }: { supabase: Sup
           <p className="mt-1">{t("usagePlatformUnavailableHint")}</p>
         </section>
       )}
+
+      <ResetDatabaseSection />
     </div>
   );
 }

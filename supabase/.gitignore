@@ -1,0 +1,13 @@
+# Supabase
+.branches
+.temp
+
+# Local-only data snapshot (real production rows — names, emails, dossier
+# paths). Never commit this; see the "Ambiente de desenvolvimento local"
+# section of README.md.
+seed.sql
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

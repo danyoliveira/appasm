@@ -36,6 +36,24 @@ npm run build    # validar antes de dar como concluído
 npm test         # testes unitários (Vitest) — lógica pura em lib/, sem tocar no Supabase real
 ```
 
+Por defeito, `npm run dev` liga-se ao mesmo Supabase de produção descrito acima (via `.env.local`). Para trabalhar sem tocar em dados reais, ver a secção seguinte.
+
+## Ambiente de desenvolvimento local (Supabase via Docker)
+
+Correr um Supabase completo (Postgres, Auth, Storage, Studio) só nesta máquina, isolado por completo da produção — sem custo, sem internet a meio do trabalho, sem risco de mexer em dados reais. Precisa de [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e a correr.
+
+1. `npm run supabase:start` — na primeira vez descarrega as imagens Docker (demora um pouco), depois arranca tudo e aplica automaticamente as 57 migrações de `supabase/migrations/`. No fim imprime a "API URL", a "anon key" e a "service_role key".
+2. Copiar `.env.development.local.example` para `.env.development.local` e colar aí essas três chaves (o `NEXT_PUBLIC_SUPABASE_URL` já vem preenchido com `http://127.0.0.1:54321`).
+3. Correr `npm run dev` normalmente — este ficheiro só é lido pelo `next dev`, nunca por `npm run build`/`npm run start`, por isso não há maneira de misturar isto com produção por engano (mecanismo do próprio Next.js, não deste projeto).
+4. Criar a conta de coach local: abrir o Studio local (URL impressa no passo 1, normalmente `http://127.0.0.1:54323`) → Authentication → Users → "Add user" com "Auto Confirm User" marcado — igual ao primeiro passo de produção acima, mas aqui não tem consequências.
+
+Outros comandos úteis:
+- `npm run supabase:reset` — apaga a base local e reaplica todas as migrações do zero (equivalente local, grátis e instantâneo, do botão de reset de produção descrito abaixo). Útil sempre que os dados de teste ficarem confusos.
+- `npm run supabase:status` — mostra as URLs e chaves outra vez, sem reiniciar nada.
+- `npm run supabase:stop` — desliga os containers Docker quando não estiveres a trabalhar nisto.
+
+A chave `API_FOOTBALL_KEY` é partilhada entre dev e produção (só há uma subscrição) — mantém-se em `.env.local` e não precisa de ser repetida em `.env.development.local`.
+
 ## Como funciona o registo por convite
 
 1. André (coach) gera um convite no dashboard → link `/{locale}/register?token=...` copiável.
@@ -50,6 +68,14 @@ Cada convite tem um papel associado, `member` ou `viewer` (por agora sem diferen
 Em vez de definir o clube na base de dados à mão, o André escolhe o clube atual em dois passos (`ClubPicker.tsx`): primeiro o país (lista carregada da API-Football, cache de 90 dias), depois o clube desse país (um pedido só por país, cache de 30 dias) — filtrar por nome dentro dessa lista é só texto no browser, não faz mais pedidos à API. Isto existe porque a pesquisa livre por texto (uma chamada à API a cada pausa de escrita) esgotava depressa o limite de pedidos do plano gratuito da API-Football.
 
 Se `api_football_team_id` ainda não estiver definido, o dashboard mostra logo o ecrã de escolha em vez dos dados do clube. Pode mudar a qualquer momento na secção "Clube atual". Todos os dados (países, clubes por país, info do clube, plantel, próximos jogos) ficam em cache numa tabela Supabase (`api_football_cache`) — ver `lib/api-football/cache.ts` para os TTLs. Se a API-Football devolver erro (ex. limite de pedidos, 429), a app mostra uma mensagem em vez de rebentar, e usa dados antigos em cache se existirem em vez de nada.
+
+## Reset total (Perfil → Utilização, só coach)
+
+Um botão de "zona de perigo" que apaga a plataforma por completo: todas as tabelas (plantéis, jogos, preparações, notas, dossiers, tudo), todos os ficheiros nos buckets de Storage (avatars, PDFs do dossier de equipa) e **todas as contas de login, incluindo a de quem carregou no botão**. Pensado para correr uma vez antes de ligar a produção a utilizadores reais, ou sempre que houver mesmo necessidade de recomeçar do zero.
+
+Exige escrever a palavra-passe de confirmação exata no diálogo (não basta clicar OK) e está limitado a `role = 'coach'` em três camadas: a server action confirma o papel antes de fazer seja o que for, a função SQL (`admin_reset_all_data`, migração `0057`) só pode ser chamada pela ligação service-role (nem um coach autenticado normalmente a consegue invocar), e o próprio botão só aparece no separador "Utilização" que já é coach-only.
+
+Depois de usar, **é preciso recriar a conta manualmente no Supabase Studio** — passo 3 de "Antes de correr" acima, exatamente como no arranque inicial do projeto (o trigger que promove a primeira conta a `coach` volta a ficar ativo).
 
 ## Fora de âmbito da v1
 

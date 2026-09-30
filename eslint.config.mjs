@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Leftover dev build caches from `next dev` (see next.config.ts /
+    // generate-agent-files.js) — never committed, but lint would otherwise
+    // crawl whatever they happen to contain.
+    ".next-stale-*/**",
   ]),
 ]);
 
