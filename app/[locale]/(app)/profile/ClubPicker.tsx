@@ -208,18 +208,20 @@ export default function ClubPicker({
             <input
               type="text"
               value={countryFilter}
-              onChange={(e) => setCountryFilter(e.target.value)}
+              onChange={(e) => {
+                setCountryFilter(e.target.value);
+                // Typing again right after a pick reopens the list.
+                setIsCountryFieldFocused(true);
+              }}
               onFocus={(e) => {
                 setIsCountryFieldFocused(true);
                 e.target.select();
               }}
-              onBlur={() =>
-                setTimeout(() => {
-                  setIsCountryFieldFocused(false);
-                  // Left without picking: back to the chosen country's name.
-                  setCountryFilter((current) => (selectedCountry ? selectedCountry.label : current));
-                }, 150)
-              }
+              onBlur={() => {
+                setIsCountryFieldFocused(false);
+                // Left without picking: back to the chosen country's name.
+                setCountryFilter((current) => (selectedCountry ? selectedCountry.label : current));
+              }}
               placeholder={t("countryPlaceholder")}
               className={`w-full rounded-lg border border-border bg-background py-2 pr-3 text-sm text-foreground outline-none focus:border-accent ${
                 selectedCountry?.flag && !isCountryFieldFocused ? "pl-10" : "pl-3"
@@ -228,7 +230,11 @@ export default function ClubPicker({
           </div>
 
           {showCountryDropdown && (
-            <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+            <div
+              // Keeps the field focused while picking, so its blur can't
+              // undo the pick with the previous country's name.
+              onMouseDown={(e) => e.preventDefault()}
+              className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
               {filteredCountries.map((c) => (
                 <button
                   key={c.name}
